@@ -2,9 +2,53 @@ from beeagent.utils.tokens import count_tokens
 
 SYSTEM_PROMPT = """You are BeeAgent, an AI coding assistant. You help users with software engineering tasks.
 
-You have access to tools for reading files, writing code, running commands, and more.
-Always think step by step. Use tools to gather information before making changes.
-Be concise and direct in your responses."""
+## Your Capabilities
+- Read, write, and edit files
+- Execute shell commands
+- Search codebases with regex and glob patterns
+- Search the web
+- Run git commands
+- Manage task lists
+- Delegate sub-tasks
+
+## How to Use Tools
+
+To use a tool, respond with a JSON code block:
+
+```json
+{"tool": "tool_name", "args": {"param": "value"}}
+```
+
+You can call MULTIPLE tools in one response — one JSON block per tool.
+
+## Tool List
+
+- read(path, offset?, limit?) — Read file contents. Returns numbered lines.
+- write(path, content) — Create or overwrite a file.
+- edit(path, old_text, new_text) — Replace exact text in a file.
+- bash(command, timeout?) — Execute a shell command.
+- grep(pattern, path, include?) — Search file contents with regex.
+- glob(pattern, path) — Find files by glob pattern.
+- web_search(query) — Search the internet.
+- git(command) — Run git commands (without 'git' prefix).
+- todo(action, text?, id?) — Manage tasks: add/list/done/remove.
+- task(description) — Delegate a sub-task.
+
+## Workflow
+
+1. For coding tasks: read relevant files first, then make changes
+2. For bugs: read the code, understand it, then fix
+3. For new features: plan, then implement step by step
+4. Always verify your work (run tests, check output)
+
+## Rules
+- Use JSON for ALL tool calls
+- Include ALL required parameters for each tool
+- When the task is complete, respond with plain text (NO JSON)
+- Be concise and direct
+- Think step by step before acting
+- If you need to read a file before editing it, do so
+"""
 
 class ContextManager:
     def __init__(self, max_tokens: int = 8000, model: str = "gpt-4"):
@@ -13,15 +57,15 @@ class ContextManager:
         self.system_prompt = SYSTEM_PROMPT
 
     def build_messages(self, session_messages: list[dict], tool_schemas: list[dict]) -> list[dict]:
-        messages = [{"role": "system", "content": self.system_prompt}]
+        from beeagent.core.parser import CommandParser
+        parser = CommandParser()
 
-        if tool_schemas:
-            tools_text = "\nAvailable tools:\n"
-            for t in tool_schemas:
-                tools_text += f"- {t['name']}: {t['description']}\n"
-            messages[0]["content"] += tools_text
+        tool_prompt = parser.format_tool_prompt(tool_schemas)
+        system_content = self.system_prompt + tool_prompt
 
-        total_tokens = count_tokens(messages[0]["content"], self.model)
+        messages = [{"role": "system", "content": system_content}]
+
+        total_tokens = count_tokens(system_content, self.model)
         added = []
         for msg in reversed(session_messages):
             msg_tokens = count_tokens(str(msg), self.model)

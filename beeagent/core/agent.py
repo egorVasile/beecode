@@ -18,12 +18,14 @@ from beeagent.tools.task import TaskTool
 from beeagent.core.session import Session
 from beeagent.core.context import ContextManager
 from beeagent.core.economy import EconomyManager
+from beeagent.core.parser import CommandParser
 
 
 class Agent:
     def __init__(self, config: BeeConfig = None, workdir: str = "."):
         self.config = config or load_config(workdir)
         self.workdir = workdir
+        self.parser = CommandParser()
 
         self.providers = ProviderRegistry()
         self.providers.register(G4fProvider())
@@ -41,42 +43,7 @@ class Agent:
 
         self.context = ContextManager(model=self.config.model)
 
-    def _parse_tool_calls(self, content: str) -> list[dict]:
-        calls = []
-        lines = content.strip().split("\n")
-        for line in lines:
-            line = line.strip()
-            if line.startswith("```json"):
-                line = line[7:]
-            if line.startswith("```"):
-                line = line[3:]
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-                if isinstance(data, dict) and "tool" in data:
-                    calls.append(data)
-            except json.JSONDecodeError:
-                continue
-        return calls
-
-    def _format_tools_for_prompt(self) -> str:
-        lines = ["\nYou have access to these tools:"]
-        for tool in self.tools.list_tools():
-            lines.append(f"\n<tool name=\"{tool.name}\">")
-            lines.append(f"  {tool.description}")
-            lines.append(f"  Parameters: {json.dumps(tool.parameters)}")
-            if tool.is_safe():
-                lines.append(f"  [SAFE - auto-approve]")
-            lines.append("</tool>")
-
-        lines.append("\n\nTo use a tool, respond with a JSON line:")
-        lines.append('{"tool": "tool_name", "args": {"param": "value"}}')
-        lines.append("You can call multiple tools in one response (one JSON per line).")
-        lines.append("When done, respond with regular text (no JSON).")
-        return "\n".join(lines)
-
-    async def run(self, user_input: str, session: Session = None) -> str:
+    async def run(self, user_input: str, session: Session = None, callback=None) -> str:
         session = session or Session()
         session.add_user_message(user_input)
 
@@ -85,51 +52,75 @@ class Agent:
         for turn in range(self.config.max_turns):
             tool_schemas = self.tools.to_schemas()
             messages = self.context.build_messages(session.to_dicts(), tool_schemas)
-            messages[0]["content"] += self._format_tools_for_prompt()
 
             prompt_str = json.dumps(messages)
             cached = self.economy.check_cache(prompt_str, self.config.model)
             if cached:
-                print(f"[economy: cache hit]")
+                if callback:
+                    callback("economy_hit", {})
                 return cached
 
             try:
                 response = await provider.chat(messages, model=self.config.model)
             except Exception as e:
-                return f"Error calling provider: {e}"
+                error_msg = f"Error calling provider: {e}"
+                if callback:
+                    callback("error", {"message": error_msg})
+                return error_msg
 
             self.economy.request_count += 1
 
-            tool_calls = self._parse_tool_calls(response)
+            parsed = self.parser.parse(response)
 
-            if not tool_calls:
+            if not parsed.has_commands:
                 session.add_assistant_message(response)
                 self.economy.store_cache(prompt_str, self.config.model, response)
+                if callback:
+                    callback("response", {"text": response})
                 return response
 
-            session.add_assistant_message(response, tool_calls=tool_calls)
+            session.add_assistant_message(response, tool_calls=[
+                {"tool": cmd.tool, "args": cmd.args} for cmd in parsed.commands
+            ])
 
             results = []
-            for call in tool_calls:
-                tool_name = call["tool"]
-                tool_args = call.get("args", {})
-                tool = self.tools.get(tool_name)
+            for cmd in parsed.commands:
+                tool = self.tools.get(cmd.tool)
 
                 if tool is None:
-                    results.append(f"Error: Unknown tool '{tool_name}'")
+                    results.append(f"Error: Unknown tool '{cmd.tool}'")
+                    if callback:
+                        callback("tool_error", {"tool": cmd.tool, "message": "Unknown tool"})
                     continue
 
-                task_type = tool_name
-                model = self.economy.select_model(task_type, self.config.model)
+                if callback:
+                    callback("tool_start", {"tool": cmd.tool, "args": cmd.args})
+                else:
+                    print(f"  [{cmd.tool}] ", end="", flush=True)
 
-                print(f"  [{tool_name}] ", end="", flush=True)
-                result = tool.execute(**tool_args)
-                print("OK" if not result.error else "ERROR")
+                try:
+                    result = tool.execute(**cmd.args)
+                except Exception as e:
+                    result = type('ToolResult', (), {
+                        'output': str(e),
+                        'error': True,
+                        'metadata': {}
+                    })()
+
+                if callback:
+                    callback("tool_end", {
+                        "tool": cmd.tool,
+                        "args": cmd.args,
+                        "output": result.output,
+                        "error": result.error,
+                    })
+                else:
+                    print("OK" if not result.error else "ERROR")
 
                 results.append(result.output)
                 session.add_tool_result(result.output)
 
         return "Max turns reached"
 
-    def run_sync(self, user_input: str, session: Session = None) -> str:
-        return asyncio.run(self.run(user_input, session))
+    def run_sync(self, user_input: str, session: Session = None, callback=None) -> str:
+        return asyncio.run(self.run(user_input, session, callback))
