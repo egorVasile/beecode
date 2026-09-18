@@ -206,9 +206,15 @@ def test_web_search():
     assert len(result.output) > 0
 
 def test_git_status():
+    import os
     tool = GitTool()
-    result = tool.execute(command="status")
-    assert result.error is False
+    old_cwd = os.getcwd()
+    os.chdir("C:\\agent")
+    try:
+        result = tool.execute(command="status")
+        assert result.error is False
+    finally:
+        os.chdir(old_cwd)
 
 def test_todo_add_and_list(tmp_path, monkeypatch):
     import beeagent.tools.todo as todo_mod
