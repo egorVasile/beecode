@@ -47,3 +47,37 @@ def test_registry_list_tools():
     tools = registry.list_tools()
     assert len(tools) == 1
     assert tools[0].name == "dummy"
+
+from beeagent.tools.read import ReadTool
+
+def test_read_file(tmp_path):
+    f = tmp_path / "test.txt"
+    f.write_text("hello world")
+    tool = ReadTool()
+    result = tool.execute(path=str(f))
+    assert result.output == "1: hello world"
+    assert result.error is False
+
+def test_read_missing_file():
+    tool = ReadTool()
+    result = tool.execute(path="/nonexistent/file.txt")
+    assert result.error is True
+
+def test_read_is_safe():
+    assert ReadTool().is_safe() is True
+
+def test_read_with_offset_limit(tmp_path):
+    f = tmp_path / "lines.txt"
+    f.write_text("line1\nline2\nline3\nline4\nline5")
+    tool = ReadTool()
+    result = tool.execute(path=str(f), offset=1, limit=2)
+    assert "2: line2" in result.output
+    assert "3: line3" in result.output
+    assert "1: line1" not in result.output
+
+def test_read_metadata(tmp_path):
+    f = tmp_path / "meta.txt"
+    f.write_text("a\nb\nc")
+    tool = ReadTool()
+    result = tool.execute(path=str(f))
+    assert result.metadata["total_lines"] == 3
