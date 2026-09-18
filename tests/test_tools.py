@@ -193,3 +193,34 @@ def test_glob_no_files(tmp_path):
 
 def test_glob_is_safe():
     assert GlobTool().is_safe() is True
+
+from beeagent.tools.web_search import WebSearchTool
+from beeagent.tools.git import GitTool
+from beeagent.tools.todo import TodoTool
+from beeagent.tools.task import TaskTool
+
+def test_web_search():
+    tool = WebSearchTool()
+    result = tool.execute(query="python tutorial")
+    assert result.error is False
+    assert len(result.output) > 0
+
+def test_git_status():
+    tool = GitTool()
+    result = tool.execute(command="status")
+    assert result.error is False
+
+def test_todo_add_and_list(tmp_path, monkeypatch):
+    import beeagent.tools.todo as todo_mod
+    monkeypatch.setattr(todo_mod, "TODO_FILE", str(tmp_path / "todo.json"))
+    tool = TodoTool()
+    r1 = tool.execute(action="add", text="Buy milk")
+    assert r1.error is False
+    r2 = tool.execute(action="list")
+    assert "Buy milk" in r2.output
+
+def test_task_delegation():
+    tool = TaskTool()
+    result = tool.execute(description="Find all Python files")
+    assert result.error is False
+    assert "delegated" in result.metadata
