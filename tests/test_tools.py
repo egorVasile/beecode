@@ -153,3 +153,43 @@ def test_bash_metadata():
     tool = BashTool()
     result = tool.execute(command="echo test")
     assert result.metadata["returncode"] == 0
+
+from beeagent.tools.grep import GrepTool
+from beeagent.tools.glob_tool import GlobTool
+
+def test_grep_search(tmp_path):
+    f = tmp_path / "test.py"
+    f.write_text("def hello():\n    pass\ndef world():\n    pass\n")
+    tool = GrepTool()
+    result = tool.execute(pattern="def \\w+", path=str(tmp_path), include="*.py")
+    assert "def hello" in result.output
+    assert "def world" in result.output
+
+def test_grep_no_matches(tmp_path):
+    f = tmp_path / "test.py"
+    f.write_text("hello world")
+    tool = GrepTool()
+    result = tool.execute(pattern="xyz", path=str(f))
+    assert "No matches" in result.output
+
+def test_grep_is_safe():
+    assert GrepTool().is_safe() is True
+
+def test_glob_find(tmp_path):
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "b.txt").write_text("")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "c.py").write_text("")
+    tool = GlobTool()
+    result = tool.execute(pattern="**/*.py", path=str(tmp_path))
+    assert "a.py" in result.output
+    assert "c.py" in result.output
+    assert "b.txt" not in result.output
+
+def test_glob_no_files(tmp_path):
+    tool = GlobTool()
+    result = tool.execute(pattern="*.xyz", path=str(tmp_path))
+    assert "No files found" in result.output
+
+def test_glob_is_safe():
+    assert GlobTool().is_safe() is True
