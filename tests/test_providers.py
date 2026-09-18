@@ -44,3 +44,20 @@ def test_provider_fallback_preferred():
     registry.register(OtherProvider())
     p = registry.fallback("other")
     assert p.name == "other"
+
+
+from beeagent.providers.g4f_provider import G4fProvider
+
+def test_g4f_provider_init():
+    p = G4fProvider()
+    assert p.name == "g4f"
+    assert len(p.models) > 0
+
+def test_g4f_provider_has_models():
+    p = G4fProvider()
+    assert "gpt-4" in p.models or "gpt-3.5-turbo" in p.models
+
+def test_g4f_provider_is_base():
+    from beeagent.providers.base import BaseProvider
+    p = G4fProvider()
+    assert isinstance(p, BaseProvider)
