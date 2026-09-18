@@ -100,3 +100,35 @@ def test_write_creates_dirs(tmp_path):
 
 def test_write_is_not_safe():
     assert WriteTool().is_safe() is False
+
+from beeagent.tools.edit import EditTool
+
+def test_edit_replace(tmp_path):
+    f = tmp_path / "code.py"
+    f.write_text("def hello():\n    print('world')\n")
+    tool = EditTool()
+    result = tool.execute(
+        path=str(f),
+        old_text="print('world')",
+        new_text="print('hello')"
+    )
+    assert result.error is False
+    assert "print('hello')" in f.read_text()
+
+def test_edit_not_found(tmp_path):
+    f = tmp_path / "code.py"
+    f.write_text("aaa")
+    tool = EditTool()
+    result = tool.execute(path=str(f), old_text="bbb", new_text="ccc")
+    assert result.error is True
+
+def test_edit_ambiguous(tmp_path):
+    f = tmp_path / "code.py"
+    f.write_text("aaa\naaa")
+    tool = EditTool()
+    result = tool.execute(path=str(f), old_text="aaa", new_text="bbb")
+    assert result.error is True
+    assert "Ambiguous" in result.output
+
+def test_edit_is_not_safe():
+    assert EditTool().is_safe() is False
