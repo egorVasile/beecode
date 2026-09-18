@@ -1,0 +1,13 @@
+{
+  "model": "gpt-4",
+  "provider": "g4f",
+  "mode": "normal",
+  "max_turns": 50,
+  "custom_providers": [],
+  "economy": {
+    "cache_enabled": true,
+    "batch_tools": true,
+    "smart_routing": true,
+    "cache_dir": ".beeagent/cache"
+  }
+}

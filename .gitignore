@@ -28,5 +28,5 @@ env/
 *.swp
 *.swo
 *~
-beeagent.json
+
 .beeagent/
