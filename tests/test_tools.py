@@ -81,3 +81,22 @@ def test_read_metadata(tmp_path):
     tool = ReadTool()
     result = tool.execute(path=str(f))
     assert result.metadata["total_lines"] == 3
+
+from beeagent.tools.write import WriteTool
+
+def test_write_file(tmp_path):
+    f = tmp_path / "output.txt"
+    tool = WriteTool()
+    result = tool.execute(path=str(f), content="hello world")
+    assert result.error is False
+    assert f.read_text() == "hello world"
+
+def test_write_creates_dirs(tmp_path):
+    f = tmp_path / "sub" / "dir" / "file.txt"
+    tool = WriteTool()
+    result = tool.execute(path=str(f), content="nested")
+    assert result.error is False
+    assert f.read_text() == "nested"
+
+def test_write_is_not_safe():
+    assert WriteTool().is_safe() is False
