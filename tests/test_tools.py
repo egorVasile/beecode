@@ -132,3 +132,24 @@ def test_edit_ambiguous(tmp_path):
 
 def test_edit_is_not_safe():
     assert EditTool().is_safe() is False
+
+from beeagent.tools.bash import BashTool
+
+def test_bash_simple():
+    tool = BashTool()
+    result = tool.execute(command="echo hello")
+    assert "hello" in result.output
+    assert result.error is False
+
+def test_bash_error():
+    tool = BashTool()
+    result = tool.execute(command="exit 1")
+    assert result.error is True
+
+def test_bash_is_not_safe():
+    assert BashTool().is_safe() is False
+
+def test_bash_metadata():
+    tool = BashTool()
+    result = tool.execute(command="echo test")
+    assert result.metadata["returncode"] == 0
