@@ -25,13 +25,16 @@ def test_provider_get_missing():
     registry = ProviderRegistry()
     assert registry.get("nonexistent") is None
 
-def test_provider_fallback():
+def test_provider_select_refuses_unknown_names():
     registry = ProviderRegistry()
     registry.register(DummyProvider())
-    p = registry.fallback("nonexistent")
-    assert p.name == "dummy"
+    try:
+        registry.select("nonexistent")
+        raise AssertionError("unknown provider must not silently fall back")
+    except RuntimeError as e:
+        assert "nonexistent" in str(e) and "dummy" in str(e)
 
-def test_provider_fallback_preferred():
+def test_provider_select_returns_preferred():
     registry = ProviderRegistry()
     
     class OtherProvider(BaseProvider):
@@ -42,7 +45,7 @@ def test_provider_fallback_preferred():
     
     registry.register(DummyProvider())
     registry.register(OtherProvider())
-    p = registry.fallback("other")
+    p = registry.select("other")
     assert p.name == "other"
 
 
@@ -61,3 +64,31 @@ def test_g4f_provider_is_base():
     from beeagent.providers.base import BaseProvider
     p = G4fProvider()
     assert isinstance(p, BaseProvider)
+
+
+def test_g4f_curated_models_include_glm():
+    p = G4fProvider()
+    assert "glm-4.7-flash" in p.models
+    assert "glm-5.2" in p.models
+    # curated quick picks come first
+    assert p.models[0] == "glm-4.7-flash"
+
+
+def test_discover_models_is_full_catalog():
+    catalog = G4fProvider.discover_models()
+    # curated list first, then every model advertised by working providers
+    assert catalog[:len(G4fProvider.models)] == G4fProvider.models
+    assert "glm-4.7-flash" in catalog
+    assert len(catalog) > 100   # installed g4f advertises hundreds
+    assert len(catalog) == len(set(catalog))  # no duplicates
+
+
+def test_available_models_uses_full_catalog():
+    from beeagent.ui.commands import ReplContext, available_models
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core.session import Session
+
+    ctx = ReplContext(agent=None, config=BeeConfig(), session=Session())
+    models = available_models(ctx)
+    assert "glm-4.7-flash" in models
+    assert "gpt-4" in models

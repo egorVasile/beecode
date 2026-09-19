@@ -1,49 +1,62 @@
 import argparse
+import asyncio
+import os
 import sys
+
 from beeagent.core.agent import Agent
 from beeagent.core.session import Session
 from beeagent.config.loader import load_config
 from beeagent.providers.g4f_provider import G4fProvider
 from beeagent.ui.components import (
     console, print_banner, print_welcome,
-    render_tool_start, render_tool_end,
-    render_response, render_error,
-    render_economy_hit, render_model_info,
-    print_models, print_providers,
+    render_model_info, print_models, print_providers,
 )
+from beeagent.ui.repl import run_repl, handle_callback
 
-def handle_callback(event: str, data: dict):
-    if event == "tool_start":
-        render_tool_start(data["tool"], data["args"])
-    elif event == "tool_end":
-        render_tool_end(data["tool"], data["args"], data["output"], data["error"])
-    elif event == "response":
-        render_response(data["text"])
-    elif event == "error":
-        render_error(data["message"])
-    elif event == "economy_hit":
-        render_economy_hit()
+_PLUGIN_ACTIONS = ("list", "install", "remove", "uninstall", "enable", "disable")
+_MCP_ACTIONS = ("list", "add", "remove", "connect", "tools")
+
+
+def _run_command(action_words, prefix, known, fallback_line):
+    """Reuse the slash-command handlers for the non-interactive CLI."""
+    from beeagent.ui.commands import ReplContext, dispatch
+    words = " ".join(action_words or [])
+    first = words.split(maxsplit=1)[0] if words else ""
+    line = f"{prefix} {words}" if first in known else fallback_line
+    result = dispatch(ReplContext(), line)
+    if result.output is not None:
+        console.print(result.output)
+
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="beeagent",
-        description="BeeAgent — Free AI coding agent powered by g4f",
+        prog="beecode",
+        description="BeeCode — free AI coding agent powered by g4f",
     )
     parser.add_argument("-p", "--prompt", help="One-shot prompt (non-interactive)")
     parser.add_argument("--model", help="Model to use")
     parser.add_argument("--provider", help="Provider to use")
     parser.add_argument("--mode", choices=["normal", "economy"], help="Operating mode")
+    parser.add_argument("--lang", choices=["en", "ru"], help="Interface language (default: en)")
     parser.add_argument("--continue", dest="continue_session", action="store_true", help="Continue last session")
+    parser.add_argument("--classic", action="store_true", help="Force the classic line REPL (default)")
+    parser.add_argument("--tui", action="store_true", help="Launch the full-screen Textual TUI")
 
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("models", help="List available models")
     sub.add_parser("providers", help="List available providers")
+    sub.add_parser("tui", help="Launch the full-screen mouse-driven TUI")
+    plugins = sub.add_parser("plugins", help="Browse/install the extension catalog")
+    plugins.add_argument("action", nargs="*",
+                         help="list | install <name> | remove <name> | enable <name> | disable <name>")
+    mcp = sub.add_parser("mcp", help="Inspect configured MCP servers")
+    mcp.add_argument("action", nargs="*",
+                     help="list | add <name> <command> [args] | remove <name> | connect <name> | tools")
 
     args = parser.parse_args()
 
     if args.command == "models":
-        p = G4fProvider()
-        print_models(p.models)
+        print_models(G4fProvider.discover_models())
         return
 
     if args.command == "providers":
@@ -54,7 +67,17 @@ def main():
         ])
         return
 
+    if args.command == "plugins":
+        _run_command(args.action, "/plugin", _PLUGIN_ACTIONS, "/plugins")
+        return
+
+    if args.command == "mcp":
+        _run_command(args.action, "/mcp", _MCP_ACTIONS, "/mcp list")
+        return
+
     config = load_config()
+    from beeagent.i18n import set_lang
+    set_lang(args.lang or os.environ.get("BEECODE_LANG") or config.language)
     if args.model:
         config.model = args.model
     if args.provider:
@@ -62,9 +85,9 @@ def main():
     if args.mode:
         config.mode = args.mode
 
-    agent = Agent(config=config)
-
+    # One-shot mode: no UI chrome beyond a banner.
     if args.prompt:
+        agent = Agent(config=config)
         print_banner()
         render_model_info(config.model, config.provider, config.mode)
         console.print()
@@ -76,35 +99,19 @@ def main():
         sessions = Session.list_sessions()
         if sessions:
             session = Session.load(sessions[-1])
-            console.print(f"  [dim]Continuing session: {session.session_id}[/]")
 
-    print_banner()
-    render_model_info(config.model, config.provider, config.mode)
-    print_welcome()
+    # Interactive: classic REPL by default; full-screen TUI only when asked.
+    want_tui = args.command == "tui" or (args.tui and not args.classic)
+    if want_tui:
+        from beeagent.ui.tui import run_tui
+        run_tui(config=config, session=session)
+    else:
+        agent = Agent(config=config)
+        print_banner()
+        render_model_info(config.model, config.provider, config.mode)
+        print_welcome()
+        asyncio.run(run_repl(agent, config, session=session))
 
-    session = session or Session()
-
-    try:
-        while True:
-            try:
-                console.print()
-                user_input = console.input("[bold green]🐝 > [/]").strip()
-            except EOFError:
-                break
-
-            if not user_input:
-                continue
-            if user_input.lower() in ("quit", "exit", "q"):
-                console.print("\n  [dim]Goodbye! 🐝[/]\n")
-                break
-
-            agent.run_sync(user_input, session=session, callback=handle_callback)
-
-    except KeyboardInterrupt:
-        console.print("\n  [dim]Goodbye! 🐝[/]\n")
-
-    finally:
-        session.save()
 
 if __name__ == "__main__":
     main()

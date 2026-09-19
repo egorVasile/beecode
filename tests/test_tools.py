@@ -197,7 +197,7 @@ def test_glob_is_safe():
 from beeagent.tools.web_search import WebSearchTool
 from beeagent.tools.git import GitTool
 from beeagent.tools.todo import TodoTool
-from beeagent.tools.task import TaskTool
+from beeagent.tools.list_dir import ListDirectoryTool
 
 def test_web_search():
     tool = WebSearchTool()
@@ -225,8 +225,91 @@ def test_todo_add_and_list(tmp_path, monkeypatch):
     r2 = tool.execute(action="list")
     assert "Buy milk" in r2.output
 
-def test_task_delegation():
-    tool = TaskTool()
-    result = tool.execute(description="Find all Python files")
+def test_todo_add_needs_text_and_ids_must_exist(tmp_path, monkeypatch):
+    import beeagent.tools.todo as todo_mod
+    monkeypatch.setattr(todo_mod, "TODO_FILE", str(tmp_path / "todo.json"))
+    tool = TodoTool()
+    assert tool.execute(action="add").error is True          # no silent empty task
+    assert tool.execute(action="done", id=99).error is True  # no fake success
+    assert tool.execute(action="remove", id=99).error is True
+    assert tool.execute(action="nope").error is True
+    # a corrupt list file must not raise out of the tool
+    (tmp_path / "todo.json").write_text("{not json", encoding="utf-8")
+    assert tool.execute(action="list").output == "No tasks"
+
+
+def test_list_directory_shows_dirs_and_sizes(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "a.py").write_text("print(1)")
+    result = ListDirectoryTool().execute(str(tmp_path))
     assert result.error is False
-    assert "delegated" in result.metadata
+    lines = result.output.split("\n")
+    assert any(l == "sub/" for l in lines)
+    assert any(l.startswith("a.py") and l.endswith("B") for l in lines)
+
+
+def test_list_directory_recursive_and_errors(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "b.txt").write_text("x")
+    deep = ListDirectoryTool().execute(str(tmp_path), recursive=True)
+    assert "sub/b.txt" in deep.output
+    file_arg = ListDirectoryTool().execute(str(tmp_path / "sub" / "b.txt"))
+    assert file_arg.error is True and "read tool" in file_arg.output
+    assert ListDirectoryTool().execute(str(tmp_path / "missing")).error is True
+
+
+def test_read_on_a_directory_points_at_list_directory(tmp_path):
+    from beeagent.tools.read import ReadTool
+    result = ReadTool().execute(str(tmp_path))
+    assert result.error is True
+    assert "list_directory" in result.output
+
+
+def test_tools_report_truncation(tmp_path):
+    from beeagent.tools.glob_tool import GlobTool
+    for i in range(120):
+        (tmp_path / f"f{i:03d}.py").write_text("x")
+    out = GlobTool().execute("*.py", str(tmp_path)).output
+    assert "more files not shown" in out
+
+
+def test_loose_args_are_coerced_onto_parameters():
+    from beeagent.tools.read import ReadTool
+    from beeagent.tools.grep import GrepTool
+    # the tag-style parser emits input/arg1 keys no tool declares
+    assert ReadTool().coerce_args({"input": "a.py"}) == {"path": "a.py"}
+    assert ReadTool().missing_args(ReadTool().coerce_args({"input": "a.py"})) == []
+    assert GrepTool().coerce_args({"arg1": "def x", "arg2": "."}) == {
+        "pattern": "def x", "path": "."}
+    assert GrepTool().missing_args({"pattern": "x"}) == ["path"]
+
+
+def test_open_kwargs_tools_pass_arguments_through():
+    from beeagent.tools.base import BaseTool
+
+    class Passthrough(BaseTool):
+        name = "passthrough"
+        parameters = {"type": "object", "properties": {"q": {"type": "string"}},
+                      "required": ["q"]}
+
+        def execute(self, **kwargs):
+            return ToolResult(output=str(kwargs), error=False)
+
+    tool = Passthrough()
+    assert tool.coerce_args({"q": "hello"}) == {"q": "hello"}
+    assert tool.params() == ["q"]
+    assert tool.missing_args({}) == ["q"]
+
+
+def test_registry_resolves_typos_only(capsys):
+    from beeagent.tools.registry import ToolRegistry
+    from beeagent.tools.read import ReadTool
+
+    reg = ToolRegistry()
+    reg.register(ReadTool())
+    assert reg.resolve("reads") == "read"
+    assert reg.resolve("reaid") == "read"
+    assert reg.resolve("reed") is None      # too far away to guess
+    # an invented tool with a plausible meaning must NOT be silently remapped
+    assert reg.resolve("read_directory") is None
+    assert reg.resolve("web_search") is None
