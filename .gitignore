@@ -38,3 +38,6 @@ beeagent.json
 site/
 space_shooter.py
 -p
+
+# local working notes, not part of the release
+docs/superpowers/
