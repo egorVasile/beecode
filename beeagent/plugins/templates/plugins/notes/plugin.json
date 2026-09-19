@@ -1,0 +1,7 @@
+{
+    "name": "notes",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Persistent quick notes: save and list short reminders in .beeagent/notes.md",
+    "entry": "plugin.py"
+}
