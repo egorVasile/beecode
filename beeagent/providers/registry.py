@@ -14,9 +14,17 @@ class ProviderRegistry:
     def list_names(self) -> list[str]:
         return list(self._providers.keys())
     
-    def fallback(self, preferred: str) -> BaseProvider:
-        if preferred in self._providers:
-            return self._providers[preferred]
-        for p in self._providers.values():
-            return p
-        raise RuntimeError("No providers available")
+    def select(self, preferred: str) -> BaseProvider:
+        """The provider the user asked for, or a clear error.
+
+        This used to hand back the first registered provider when the name was
+        unknown, so a typo in `provider` — or a custom provider nobody
+        configured — silently kept sending everything to g4f.
+        """
+        provider = self._providers.get(preferred)
+        if provider is None:
+            available = ", ".join(self._providers) or "нет"
+            raise RuntimeError(
+                f"провайдер '{preferred}' не настроен — доступны: {available}"
+            )
+        return provider

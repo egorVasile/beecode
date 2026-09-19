@@ -18,6 +18,7 @@ class BeeConfig(BaseModel):
     model: str = "gpt-4"
     provider: str = "g4f"
     mode: str = "normal"  # "normal" | "economy"
+    language: str = "en"  # "en" | "ru"
     max_turns: int = 50
     custom_providers: list[CustomProvider] = Field(default_factory=list)
     economy: EconomyConfig = Field(default_factory=EconomyConfig)

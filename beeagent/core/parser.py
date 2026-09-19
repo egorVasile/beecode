@@ -1,13 +1,19 @@
+"""BeeAgent command parser.
+
+Extracts tool calls from model output. The XML-style tag is built dynamically
+to avoid embedding the raw closing tag in this source file.
+"""
 import re
 import json
 from dataclasses import dataclass
 from typing import Optional
 
+
 @dataclass
 class ParsedCommand:
     tool: str
     args: dict
-    raw: str
+
 
 @dataclass
 class ParsedResponse:
@@ -15,57 +21,77 @@ class ParsedResponse:
     commands: list[ParsedCommand]
     has_commands: bool
 
+
+_TAG_NAME = "tool" + "_" + "call"
+_TAG_OPEN = "<" + _TAG_NAME
+_TAG_CLOSE = "</" + _TAG_NAME + ">"
+_TAG_PATTERN = re.compile(
+    _TAG_OPEN + r"\s*(\w+)\s*\n(.*?)" + _TAG_CLOSE,
+    re.DOTALL,
+)
+
+# A backslash that cannot start a JSON escape — typical for a Windows path the
+# model wrote as "C:\Users\proj" instead of "C:\\Users\\proj".
+_STRAY_BACKSLASH = re.compile(r'\\(?!["\\/bfnrtu])')
+
+
+def loads_lenient(payload: str):
+    """json.loads that survives single-backslash Windows paths."""
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError:
+        return json.loads(_STRAY_BACKSLASH.sub(r"\\\\", payload))
+
+
 class CommandParser:
 
     def parse(self, response: str) -> ParsedResponse:
         commands = []
         remaining = response
 
-        code_block_pattern = re.compile(r'```json\s*\n?\s*(\{.*?\})\s*\n?```', re.DOTALL)
+        # 1. ```json fenced blocks (primary format).
+        code_block_pattern = re.compile(r'```(?:json)?\s*\n?(\{.*?\})\s*\n?```', re.DOTALL)
         for match in code_block_pattern.finditer(response):
             try:
-                json_str = match.group(1)
-                data = json.loads(json_str)
+                data = loads_lenient(match.group(1))
                 if isinstance(data, dict) and "tool" in data:
-                    tool_name = data["tool"]
                     args = data.get("args", {})
-                    commands.append(ParsedCommand(
-                        tool=tool_name,
-                        args=args,
-                        raw=match.group(0),
-                    ))
-                    remaining = remaining.replace(match.group(0), "", 1)
+                    if isinstance(args, dict):
+                        commands.append(ParsedCommand(
+                            tool=str(data["tool"]),
+                            args=args,
+                        ))
+                        remaining = remaining.replace(match.group(0), "", 1)
             except (json.JSONDecodeError, KeyError):
                 continue
 
-        plain_json_pattern = re.compile(r'\{"tool"\s*:\s*"(\w+)"\s*,\s*"args"\s*:\s*(\{[^}]*\})\s*\}')
+        # 2. Bare JSON objects with "tool" key (e.g. inline in prose).
+        plain_json_pattern = re.compile(r'\{"tool"\s*:\s*"(\w+)"\s*,\s*"args"\s*:\s*(\{.*?\})\s*\}')
         for match in plain_json_pattern.finditer(remaining):
             try:
                 tool_name = match.group(1)
-                args_str = match.group(2)
-                args = json.loads(args_str)
-                commands.append(ParsedCommand(
-                    tool=tool_name,
-                    args=args,
-                    raw=match.group(0),
-                ))
-                remaining = remaining.replace(match.group(0), "", 1)
+                args = loads_lenient(match.group(2))
+                if isinstance(args, dict):
+                    commands.append(ParsedCommand(
+                        tool=tool_name,
+                        args=args,
+                    ))
+                    remaining = remaining.replace(match.group(0), "", 1)
             except json.JSONDecodeError:
                 continue
 
-        tool_call_pattern = re.compile(r'<tool_call>\s*(\w+)\s*\n(.*?)\s*</tool_call>', re.DOTALL)
-        for match in tool_call_pattern.finditer(remaining):
+        # 3. <tool_call>TAG\nargs\n> tag fallback.
+        for match in _TAG_PATTERN.finditer(remaining):
             tool_name = match.group(1)
             args_str = match.group(2).strip()
             args = self._parse_simple_args(args_str)
             commands.append(ParsedCommand(
                 tool=tool_name,
                 args=args,
-                raw=match.group(0),
             ))
             remaining = remaining.replace(match.group(0), "", 1)
 
-        text_parts = [line.strip() for line in remaining.strip().split("\n") if line.strip()]
+        text_parts = [line.rstrip() for line in remaining.strip().split("\n") if line.strip()]
         clean_text = "\n".join(text_parts)
 
         return ParsedResponse(
@@ -93,17 +119,13 @@ class CommandParser:
         return args
 
     def format_tool_prompt(self, tools: list[dict]) -> str:
+        close = "</" + _TAG_NAME + ">"
         lines = [
-            "\n## Available Tools",
-            "",
-            "You have access to the following tools. To use a tool, respond with EXACTLY this format:",
+            "You can use these tools. Respond with EXACTLY one JSON code block:",
             "",
             '```json',
-            '{"tool": "tool_name", "args": {"param1": "value1", "param2": "value2"}}',
+            '{"tool": "tool_name", "args": {"param": "value"}}',
             '```',
-            "",
-            "You can call multiple tools in one response (one JSON block per tool).",
-            "When done, respond with regular text (no JSON blocks).",
             "",
         ]
 
