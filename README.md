@@ -2,6 +2,11 @@
   <img src="docs/screenshots/01-banner.png" alt="BeeCode banner" width="720">
 </p>
 
+<p align="center">
+  <a href="https://t.me/beecodee"><img src="https://img.shields.io/badge/Telegram-BeeCode-2CA5E0?logo=telegram&logoColor=white" alt="Telegram channel"></a>
+  <a href="https://github.com/egorVasile/beecode/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-green" alt="GPL-3.0 license"></a>
+</p>
+
 # BeeCode
 
 **A free AI coding agent for your terminal.** No API key, no account, no subscription —
@@ -312,3 +317,9 @@ GNU General Public License v3.0 — see [LICENSE](LICENSE).
 BeeCode was written in a terminal, with an AI agent, on Windows. It is a young project:
 expect rough edges, and please [open an issue](https://github.com/egorVasile/beecode/issues)
 when you find one.
+
+---
+
+<p align="center">
+  News, releases and screenshots: <a href="https://t.me/beecodee">t.me/beecodee</a>
+</p>
