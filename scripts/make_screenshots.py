@@ -29,11 +29,11 @@ BG = (11, 22, 14)          # deep hive green, like the terminal in the screensho
 DEFAULT_FG = (226, 238, 224)
 
 SGR = re.compile(r"\x1b\[([0-9;:?]*)m")
-# Sequences the painter ignores. Note `[A-Za-df-z]`: dropping `m` here is what
-# lets the SGR colour codes above survive to be parsed.
+# Sequences the painter ignores. The letter class deliberately stops short of
+# `m`: that is what lets the SGR colour codes above survive to be parsed.
 OTHER = re.compile(
     r"\x1b[\]>][^\x07\x1b]*(?:\x07|\x1b\\)"
-    r"|\x1b\[[0-9;:?]*[A-Za-df-z]"
+    r"|\x1b\[[0-9;:?]*(?:[A-Z]|[a-ln-z])"
     r"|\x1b[()][0-9A-B]"
 )
 
