@@ -30,3 +30,11 @@ env/
 *~
 
 .beeagent/
+
+# user config and local state (keep the example in git)
+beeagent.json
+.beeagent/
+.pytest_cache/
+site/
+space_shooter.py
+-p

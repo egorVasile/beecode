@@ -2,6 +2,7 @@
   "model": "gpt-4",
   "provider": "g4f",
   "mode": "normal",
+  "language": "en",
   "max_turns": 50,
   "custom_providers": [],
   "economy": {

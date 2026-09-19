@@ -1,22 +1,49 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "beeagent"
 version = "0.1.0"
-description = "Free AI coding agent powered by g4f"
+description = "BeeCode — a free AI coding agent for your terminal, powered by g4f (no API key)"
+readme = "README.md"
+license = "GPL-3.0-or-later"
 requires-python = ">=3.10"
+authors = [{ name = "BeeCode contributors" }]
+keywords = ["ai", "agent", "coding-assistant", "cli", "terminal", "g4f", "llm", "mcp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Utilities",
+]
 dependencies = [
     "g4f>=0.3.0",
     "rich>=13.0",
     "pydantic>=2.0",
     "httpx>=0.25",
     "tiktoken",
+    "prompt_toolkit>=3.0",
+    "textual>=0.60",
 ]
+
+[project.urls]
+Homepage = "https://github.com/qoder-buzz/beecode"
+Repository = "https://github.com/qoder-buzz/beecode"
+Issues = "https://github.com/qoder-buzz/beecode/issues"
 
 [project.scripts]
 beeagent = "beeagent.cli:main"
+beecode = "beeagent.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["beeagent*"]
+
+[tool.setuptools.package-data]
+# The extension catalog and its builtin templates ship inside the wheel.
+"beeagent.plugins" = ["data/*.json", "templates/**/*"]
