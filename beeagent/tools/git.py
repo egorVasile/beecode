@@ -1,5 +1,6 @@
 import subprocess
 from .base import BaseTool, ToolResult
+from .shell import run_text
 
 class GitTool(BaseTool):
     name = "git"
@@ -14,17 +15,14 @@ class GitTool(BaseTool):
     
     def execute(self, command: str) -> ToolResult:
         try:
-            full_cmd = f"git {command}"
-            result = subprocess.run(
-                full_cmd, shell=True, capture_output=True, text=True, timeout=30
-            )
-            output = result.stdout
-            if result.stderr:
-                output += f"\n[stderr]\n{result.stderr}"
+            stdout, stderr, returncode = run_text(f"git {command}", timeout=30)
+            output = stdout
+            if stderr:
+                output += f"\n[stderr]\n{stderr}"
             return ToolResult(
                 output=output or "(no output)",
-                error=result.returncode != 0,
-                metadata={"returncode": result.returncode},
+                error=returncode != 0,
+                metadata={"returncode": returncode},
             )
         except Exception as e:
             return ToolResult(output=str(e), error=True)

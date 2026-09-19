@@ -13,7 +13,6 @@ from __future__ import annotations
 import io
 import re
 import sys
-from contextlib import redirect_stdout
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -30,7 +29,13 @@ BG = (11, 22, 14)          # deep hive green, like the terminal in the screensho
 DEFAULT_FG = (226, 238, 224)
 
 SGR = re.compile(r"\x1b\[([0-9;:?]*)m")
-OTHER = re.compile(r"\x1b[\]>][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;:?]*[A-Za-z]|\x1b[()][0-9A-B]")
+# Sequences the painter ignores. Note `[A-Za-df-z]`: dropping `m` here is what
+# lets the SGR colour codes above survive to be parsed.
+OTHER = re.compile(
+    r"\x1b[\]>][^\x07\x1b]*(?:\x07|\x1b\\)"
+    r"|\x1b\[[0-9;:?]*[A-Za-df-z]"
+    r"|\x1b[()][0-9A-B]"
+)
 
 XTERM = [i * 255 // 5 for i in range(6)]
 
@@ -93,15 +98,27 @@ def _is_emoji(char: str) -> bool:
 
 
 def capture(render, width: int = 96) -> str:
-    """ANSI produced by the real UI for `render` (a callable or a renderable)."""
+    """ANSI produced by the real UI for `render` (a callable or a renderable).
+
+    The UI modules print through their module-level `console`, so that name is
+    swapped for a truecolour console writing into a buffer. Redirecting
+    sys.stdout instead would strip every colour: rich would see a non-terminal.
+    """
+    import beeagent.ui.components as comp
+    import beeagent.ui.repl as repl
     from rich.console import Console
 
     buffer = io.StringIO()
     console = Console(file=buffer, width=width, color_system="truecolor", force_terminal=True)
-    if callable(render):
-        render(console)
-    else:
-        console.print(render)
+    originals = (comp.console, repl.console)
+    comp.console = repl.console = console
+    try:
+        if callable(render):
+            render(console)
+        else:
+            console.print(render)
+    finally:
+        comp.console, repl.console = originals
     return buffer.getvalue()
 
 
@@ -140,7 +157,6 @@ def paint(rows, path: Path) -> None:
 def main() -> None:
     from rich.text import Text
     from beeagent.ui import components as comp
-    from beeagent.ui.components import banner_frame, bee_title
     from beeagent.ui.repl import PROMPT, handle_callback
     from beeagent.ui.commands import COMMANDS, ReplContext, dispatch
     from beeagent.config.schema import BeeConfig
@@ -153,31 +169,24 @@ def main() -> None:
     ctx = ReplContext(agent=Agent(config=BeeConfig()), config=BeeConfig(), session=Session())
 
     def logo(console):
-        console.print()
-        console.print(banner_frame(0.32), justify="center")
-        console.print()
-        console.print(bee_title("BeeCode — free AI coding agent powered by g4f"), justify="center")
-        console.print(Text("v0.1.0 · GPL-3.0 · no API key, no account", style="dim"), justify="center")
-        console.print()
+        """The real startup banner, exactly as print_banner draws it at rest."""
+        comp.print_banner(animate=False)
 
     def session(console):
         console.print(Text(f"{prompt_line}create a test file and run it", style="bold #8fbf6f"))
-        buffer = io.StringIO()
-        with redirect_stdout(buffer):
-            handle_callback("status", {})
-            handle_callback("reasoning_delta", {"text": "The user wants a test file.\n"})
-            handle_callback("stream_delta", {"text": "Creating tests/test_demo.py first.\n"})
-            handle_callback("tool_start", {"tool": "write",
-                                           "args": {"path": "tests/test_demo.py",
-                                                    "content": "def test_demo():\n    assert 2 + 2 == 4\n"}})
-            handle_callback("tool_end", {"tool": "write",
-                                         "args": {"path": "tests/test_demo.py", "content": ""},
-                                         "output": "", "error": False})
-            handle_callback("tool_start", {"tool": "bash", "args": {"command": "pytest tests/test_demo.py -q"}})
-            handle_callback("tool_end", {"tool": "bash", "args": {"command": "pytest"},
-                                         "output": "1 passed in 0.12s", "error": False})
-            handle_callback("done", {})
-        console.print(buffer.getvalue().rstrip())
+        handle_callback("status", {})
+        handle_callback("reasoning_delta", {"text": "The user wants a test file.\n"})
+        handle_callback("stream_delta", {"text": "Creating tests/test_demo.py first.\n"})
+        handle_callback("tool_start", {"tool": "write",
+                                       "args": {"path": "tests/test_demo.py",
+                                                "content": "def test_demo():\n    assert 2 + 2 == 4\n"}})
+        handle_callback("tool_end", {"tool": "write",
+                                     "args": {"path": "tests/test_demo.py", "content": ""},
+                                     "output": "", "error": False})
+        handle_callback("tool_start", {"tool": "bash", "args": {"command": "pytest tests/test_demo.py -q"}})
+        handle_callback("tool_end", {"tool": "bash", "args": {"command": "pytest"},
+                                     "output": "1 passed in 0.12s", "error": False})
+        handle_callback("done", {})
 
     frames = {
         "01-banner.png": logo,

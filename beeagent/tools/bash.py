@@ -1,5 +1,6 @@
 import subprocess
 from .base import BaseTool, ToolResult
+from .shell import run_text
 
 class BashTool(BaseTool):
     name = "bash"
@@ -15,20 +16,14 @@ class BashTool(BaseTool):
     
     def execute(self, command: str, timeout: int = 60) -> ToolResult:
         try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-            output = result.stdout
-            if result.stderr:
-                output += f"\n[stderr]\n{result.stderr}"
+            stdout, stderr, returncode = run_text(command, timeout=timeout)
+            output = stdout
+            if stderr:
+                output += f"\n[stderr]\n{stderr}"
             return ToolResult(
                 output=output or "(no output)",
-                error=result.returncode != 0,
-                metadata={"returncode": result.returncode},
+                error=returncode != 0,
+                metadata={"returncode": returncode},
             )
         except subprocess.TimeoutExpired:
             return ToolResult(output=f"Command timed out after {timeout}s", error=True)

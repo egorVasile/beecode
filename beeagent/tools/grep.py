@@ -17,7 +17,7 @@ class GrepTool(BaseTool):
     
     def execute(self, pattern: str, path: str, include: str = None) -> ToolResult:
         try:
-            p = Path(path)
+            p = Path(str(path)).expanduser()
             if not p.exists():
                 return ToolResult(output=f"Path not found: {path}", error=True)
             
@@ -32,7 +32,8 @@ class GrepTool(BaseTool):
                     files = [f for f in files if f.match(include)]
                 files = [f for f in files if f.is_file()]
             
-            for f in files[:100]:
+            scanned = files[:100]
+            for f in scanned:
                 try:
                     lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
                     for i, line in enumerate(lines, 1):
@@ -42,10 +43,18 @@ class GrepTool(BaseTool):
                     continue
             
             if not matches:
-                return ToolResult(output="No matches found", error=False)
-            return ToolResult(output="\n".join(matches[:50]), error=False, metadata={"count": len(matches)})
+                return ToolResult(output="No matches found", error=False, metadata={"count": 0})
+            shown = matches[:50]
+            output = "\n".join(shown)
+            if len(matches) > len(shown):
+                output += f"\n… and {len(matches) - len(shown)} more matches not shown"
+            elif len(files) > len(scanned):
+                output += f"\n… only the first 100 of {len(files)} files were searched"
+            return ToolResult(output=output, error=False, metadata={"count": len(matches)})
         except re.error as e:
             return ToolResult(output=f"Invalid regex: {e}", error=True)
+        except (OSError, TypeError) as e:
+            return ToolResult(output=f"grep failed: {e}", error=True)
     
     def is_safe(self) -> bool:
         return True
