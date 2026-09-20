@@ -32,7 +32,7 @@ def main() -> None:
                         help="measure every model on the curated list")
     parser.add_argument("--ceiling", type=int, default=windows.LADDER[-1],
                         help="largest size to try, tokens")
-    parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument("--timeout", type=float, default=240.0)
     args = parser.parse_args()
 
     config = load_config(str(ROOT))

@@ -123,6 +123,33 @@ def test_an_unhealthy_endpoint_is_not_mistaken_for_a_small_window(message):
     assert broken.calls == 1, "it stops at the first unrelated error"
 
 
+class Slow:
+    """Replies, but only after whatever patience the caller brings."""
+
+    def __init__(self, delay):
+        self.delay = delay
+        self.calls = 0
+
+    async def chat(self, messages, model=""):
+        self.calls += 1
+        await asyncio.sleep(self.delay)
+        return "ok"
+
+
+def test_our_own_patience_running_out_is_reported_as_slowness():
+    # str(asyncio.TimeoutError()) is "", so the naive message came out as
+    # "not a size problem: " — the live reason glm-4.7-flash stopped at 4096.
+    slow = Slow(0.05)
+    result = asyncio.run(windows.probe("sluggish", slow, ceiling=8192, timeout=5))
+    assert result.window == 8192 and "no refusal" in result.note
+
+    impatient = asyncio.run(windows.probe("sluggish", Slow(30), ceiling=8192, timeout=1))
+    assert impatient.window is None, "a timeout proves nothing about size"
+    assert "2048 tokens" in impatient.note and "slow" in impatient.note
+    assert "not a size problem" not in impatient.note
+    assert windows.measured("sluggish") == 8192, "it must not overwrite a real measurement"
+
+
 # --- the command ------------------------------------------------------------
 
 def test_window_command_reports_the_source_of_the_number():

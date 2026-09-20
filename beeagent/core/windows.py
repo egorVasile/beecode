@@ -99,7 +99,18 @@ class ProbeResult:
         return bool(self.window)
 
 
-async def probe(model: str, provider, ceiling: int = LADDER[-1], timeout: int = 120,
+def _describe(error: Exception) -> str:
+    """Something printable for any exception, including the empty ones.
+
+    `asyncio.TimeoutError` carries no message at all, and a probe that reports
+    "not a size problem: " with nothing after the colon teaches the user
+    nothing about why the measurement stopped.
+    """
+    text = str(error).strip()
+    return text or type(error).__name__
+
+
+async def probe(model: str, provider, ceiling: int = LADDER[-1], timeout: int = 240,
                 on_step=None) -> ProbeResult:
     """Climb the ladder until the endpoint refuses because of the size.
 
@@ -118,8 +129,15 @@ async def probe(model: str, provider, ceiling: int = LADDER[-1], timeout: int = 
             await asyncio.wait_for(provider.chat(messages, model=model), timeout)
         except asyncio.CancelledError:
             raise
+        except asyncio.TimeoutError:
+            # Our own patience ran out. A free upstream can spend minutes on a
+            # big prompt it will answer perfectly well — the least useful thing
+            # to do is call that a small window.
+            return ProbeResult(
+                None, f"{size} tokens went unanswered in {timeout}s — that is a slow "
+                      f"endpoint, not a small window. Retry with a longer --timeout.")
         except Exception as e:
-            message = str(e)
+            message = _describe(e)
             named = limit_from_error(message)
             if named:
                 remember(model, named)
