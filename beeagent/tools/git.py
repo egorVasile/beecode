@@ -4,7 +4,11 @@ from .shell import run_text
 
 class GitTool(BaseTool):
     name = "git"
-    description = "Execute git commands"
+    description = (
+        "Run git — pass the command without the leading 'git'. Commit, push, amend or open PRs "
+        "only when the user asks: look at status, diff and recent log first, stage only intended "
+        "files, never commit secrets, force-push, skip hooks or rewrite published history."
+    )
     parameters = {
         "type": "object",
         "properties": {

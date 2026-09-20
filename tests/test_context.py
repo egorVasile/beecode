@@ -203,3 +203,21 @@ def test_build_messages_never_grows_the_callers_history():
         built = cm.build_messages(history, [])
         assert any("SYSTEM:" in m["content"] for m in built)     # reminder is sent
     assert history == before                                     # but not stored
+
+
+def test_the_prompt_still_leaves_room_for_the_conversation():
+    """Identity + behaviour + tool catalog must stay a fraction of the window.
+
+    The prompt grows by accretion, and every token of it is a token taken from
+    history, so the budget is asserted rather than hoped for.
+    """
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core.agent import Agent
+    from beeagent.core.context import SYSTEM_PROMPT
+    from beeagent.core.parser import CommandParser
+    from beeagent.utils.tokens import count_tokens
+
+    catalog = CommandParser().format_tool_prompt(Agent(config=BeeConfig()).tools.to_schemas())
+    header = count_tokens(SYSTEM_PROMPT + "\n" + catalog, "gpt-4")
+    assert header < 3000, f"prompt header costs {header} tokens"
+    assert header < ContextManager(model="glm-4-9b-32k").max_tokens // 2

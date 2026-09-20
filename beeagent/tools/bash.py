@@ -4,7 +4,11 @@ from .shell import run_text
 
 class BashTool(BaseTool):
     name = "bash"
-    description = "Execute a shell command"
+    description = (
+        "Run a shell command: builds, tests, installs, docker, git plumbing. Do not use it for "
+        "files — read, write, edit, grep, glob and list_directory exist for that. Quote paths "
+        "that contain spaces, and chain steps that must happen in order with && ."
+    )
     parameters = {
         "type": "object",
         "properties": {

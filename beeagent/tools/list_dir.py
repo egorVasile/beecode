@@ -24,8 +24,9 @@ class ListDirectoryTool(BaseTool):
     name = "list_directory"
     aliases = ("read_directory", "read_files", "list_files", "list_dir")
     description = (
-        "List a directory: subdirectories end with '/', files show their size. "
-        "Use this to see what is in a folder; use `read` for one file."
+        "List a directory: subdirectories end with '/', files show their size. Use this to see "
+        "what is in a folder, `read` for one file, and check a parent with it before creating a "
+        "new directory inside."
     )
     parameters = {
         "type": "object",

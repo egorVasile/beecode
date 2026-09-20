@@ -3,7 +3,11 @@ from .base import BaseTool, ToolResult
 
 class EditTool(BaseTool):
     name = "edit"
-    description = "Replace exact text in a file"
+    description = (
+        "Replace one exact, unique piece of text in a file. Read the file first and copy the text "
+        "with its real indentation; when the match is ambiguous, include more surrounding lines. "
+        "Prefer editing an existing file over creating a new one."
+    )
     parameters = {
         "type": "object",
         "properties": {

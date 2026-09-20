@@ -4,8 +4,9 @@ from .base import BaseTool, ToolResult
 class GlobTool(BaseTool):
     name = "glob"
     description = (
-        "Find FILES by name pattern under a directory. Directories are not "
-        "listed here — use list_directory for that."
+        "Find files by name pattern under a directory, e.g. **/*.py or src/**/*.ts. Returns "
+        "files only — use list_directory to see a folder. When unsure where something lives, "
+        "search several plausible patterns in one answer instead of guessing one at a time."
     )
     parameters = {
         "type": "object",

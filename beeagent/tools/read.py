@@ -4,8 +4,9 @@ from .base import BaseTool, ToolResult
 class ReadTool(BaseTool):
     name = "read"
     description = (
-        "Read a text file and return its lines numbered from 1. "
-        "offset is a 0-based line index, limit is how many lines to return."
+        "Read a text file and return its lines numbered from 1. offset is a 0-based line index, "
+        "limit is how many lines to return. Read a file before editing it; to see a folder use "
+        "list_directory."
     )
     parameters = {
         "type": "object",

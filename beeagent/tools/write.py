@@ -3,7 +3,11 @@ from .base import BaseTool, ToolResult
 
 class WriteTool(BaseTool):
     name = "write"
-    description = "Create or overwrite a file with content"
+    description = (
+        "Create a new file or rewrite one completely (missing parent directories are created). "
+        "Use edit for changes to existing code, and do not create files the task does not need — "
+        "no notes, summaries or logs unless someone asked for them."
+    )
     parameters = {
         "type": "object",
         "properties": {
