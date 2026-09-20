@@ -57,6 +57,21 @@ class Agent:
             except Exception as e:
                 self.provider_errors.append(f"{custom.name}: {e}")
 
+        # Free-tier endpoints the user signed up for themselves. Registered only
+        # when a key exists, so /providers can show what is ready to use.
+        from beeagent.providers.presets import ENDPOINTS, key_for
+        self.ready_presets: list[str] = []
+        for endpoint in ENDPOINTS:
+            key = key_for(endpoint, self.config.api_keys)
+            if not key:
+                continue
+            self.providers.register(OpenAICompatProvider(
+                base_url=endpoint.url, api_key=key,
+                model=endpoint.models[0] if endpoint.models else "gpt-4",
+                name=endpoint.name, models=endpoint.models,
+            ))
+            self.ready_presets.append(endpoint.name)
+
         self.tools = ToolRegistry()
         for tool_cls in [ReadTool, WriteTool, EditTool, BashTool,
                          GrepTool, GlobTool, ListDirectoryTool, WebSearchTool,

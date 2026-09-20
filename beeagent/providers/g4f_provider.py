@@ -82,6 +82,36 @@ class G4fProvider(BaseProvider):
         cls._discovered = found
         return list(found)
 
+    _upstream_map: dict[str, list[str]] | None = None
+
+    @classmethod
+    def upstream_map(cls) -> dict[str, list[str]]:
+        """model -> the g4f providers that advertise it (offline, cached)."""
+        if cls._upstream_map is not None:
+            return cls._upstream_map
+        mapping: dict[str, list[str]] = {}
+        try:
+            import g4f.Provider as P
+            for pr in P.__providers__:
+                if not getattr(pr, "working", False):
+                    continue
+                for model in getattr(pr, "models", None) or []:
+                    if isinstance(model, str):
+                        mapping.setdefault(model, []).append(pr.__name__)
+        except Exception:
+            pass
+        cls._upstream_map = mapping
+        return mapping
+
+    @classmethod
+    def upstreams(cls) -> list[str]:
+        """Provider names usable as a /models filter, most models first."""
+        counts: dict[str, int] = {}
+        for providers in cls.upstream_map().values():
+            for name in providers:
+                counts[name] = counts.get(name, 0) + 1
+        return [name for name, _ in sorted(counts.items(), key=lambda kv: -kv[1])]
+
     @staticmethod
     def _sanitize_messages(messages: list[dict]) -> list[dict]:
         """Make history provider-safe.

@@ -153,6 +153,52 @@ plugins and MCP servers):
 | `todo` | Keep a task list while working |
 | `skill` | Load the full instructions of an installed skill |
 
+## Providers and models
+
+BeeCode ships with one working provider — **g4f**, keyless — and can use any
+free-tier endpoint that speaks the OpenAI API once **you** add your own key.
+
+```
+/providers            what can serve requests right now, and what still needs a key
+/key groq <token>     store a key you obtained yourself (saved to beeagent.json, never echoed)
+/provider groq        switch; the model list and the default model follow the provider
+/models               the models of the provider you selected — for g4f, with its upstreams
+/models Cloudflare    filter by name or by g4f upstream
+/model glm-4.7-flash  pick one
+```
+
+`/providers` lists the built-in free-tier endpoints with the page where each key is issued:
+
+| Provider | Where the free key comes from | What the free tier gives |
+| --- | --- | --- |
+| `g4f` | no key at all | public endpoints routed by g4f, ~630 models |
+| `openrouter` | openrouter.ai/settings/keys | a shelf of `:free` models, no card |
+| `groq` | console.groq.com/keys | very fast llama/qwen, generous free quota |
+| `gemini` | aistudio.google.com/apikey | flash/mini models free per minute |
+| `huggingface` | huggingface.co/settings/tokens | free inference credits |
+| `github` | github.com/settings/tokens | gpt-4o/llama endpoints for your own account |
+| `cerebras` | cloud.cerebras.ai | qwen/llama at high speed, free tier |
+| `mistral` | console.mistral.ai | experiment tier, rate limited |
+| `together` | api.together.xyz/settings/api-keys | one-time credit, some open models free |
+
+Keys are read from `beeagent.json` (`api_keys`) or the matching environment
+variable, and `beeagent.json` is gitignored — the repository ships
+`beeagent.example.json` instead. **Only your own keys**: BeeCode does not ship,
+harvest or share other people's credentials, and using leaked ones gets the key,
+the account and often the user's IP banned.
+
+### Is a model actually working?
+
+Free endpoints come and go, so ask the code instead of a README:
+
+```bat
+python scripts\probe_models.py            :: the curated picks
+python scripts\probe_models.py --all      :: every model g4f advertises
+```
+
+Each model gets one tiny request; the script prints `✅`/`❌`, latency and the
+reply, and `--json` writes the raw results.
+
 ## Slash commands
 
 Type `/` in the REPL and the menu filters as you type; `Tab` completes, arguments
@@ -168,12 +214,13 @@ mouse-clickable picker.
 
 | Command | What it does | Usage |
 | --- | --- | --- |
+| `/key` | Store your own API key for a provider | `/key <provider> <token>` |
 | `/lang` | Switch the interface language | `/lang <en|ru>` |
 | `/mode` | Switch between normal and economy | `/mode <normal|economy>` |
 | `/model` | Switch the active model | `/model <name>` |
 | `/models` | List available models | `/models` |
 | `/provider` | Switch the active provider | `/provider <name>` |
-| `/providers` | List available providers | `/providers` |
+| `/providers` | List providers and which ones have a key | `/providers` |
 
 ### Skills, Plugins, Mcp
 

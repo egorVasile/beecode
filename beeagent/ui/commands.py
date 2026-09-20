@@ -29,11 +29,6 @@ THEMES = [
     "monokai", "solarized-light", "flexoki",
 ]
 
-PROVIDER_META = {
-    "g4f": ("free", "GPT4Free — no account needed"),
-    "openai_compat": ("api", "OpenAI-compatible endpoint"),
-    "ollama": ("local", "Local models via Ollama"),
-}
 
 
 @dataclass
@@ -58,7 +53,8 @@ COMMANDS: list[Command] = [
     Command("model", "Switch the active model", arg="model", usage="/model <name>", category="engine"),
     Command("models", "List available models", category="engine"),
     Command("provider", "Switch the active provider", arg="provider", usage="/provider <name>", category="engine"),
-    Command("providers", "List available providers", category="engine"),
+    Command("providers", "List providers and which ones have a key", category="engine"),
+    Command("key", "Store your own API key for a provider", usage="/key <provider> <token>", category="engine"),
     Command("mode", "Switch between normal and economy", arg="mode", usage="/mode <normal|economy>", category="engine"),
     Command("lang", "Switch the interface language", usage="/lang <en|ru>", category="engine"),
     # direct tool commands
@@ -119,30 +115,68 @@ class ReplContext:
 
 # --- dynamic completion sources ------------------------------------------
 
-def available_models(ctx: ReplContext) -> list[str]:
-    models: list[str] = []
-    agent = ctx.agent
-    if agent is not None:
-        provider = agent.providers.get(getattr(ctx.config, "provider", ""))
-        if provider is not None:
-            # Full cross-provider catalog first (curated picks up front),
-            # then anything else the provider itself declares.
-            discover = getattr(provider, "discover_models", None)
-            if callable(discover):
-                models.extend(discover())
-            for m in getattr(provider, "models", None) or []:
-                if m not in models:
-                    models.append(m)
-    for cp in getattr(ctx.config, "custom_providers", []) or []:
-        if getattr(cp, "model", None) and cp.model not in models:
-            models.append(cp.model)
+def _cached_models(name: str, fetch, allow_fetch: bool, fallback: list[str]) -> list[str]:
+    """Model list for an endpoint that reports its own catalogue.
+
+    Completion runs on every keystroke, so it must never touch the network:
+    only an explicit /models (or the picker) may fetch, everything else reads
+    the cache the last explicit call wrote.
+    """
+    from time import time
+
+    path = Path(".beeagent") / f"models_{name}.json"
+    cached: list[str] = []
+    fresh = False
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            cached = list(data.get("models", []))
+            fresh = time() - float(data.get("saved_at", 0)) < 3600
+        except (json.JSONDecodeError, OSError, ValueError):
+            cached = []
+    if cached and (fresh or not allow_fetch):
+        return cached
+    if not allow_fetch:
+        return cached or fallback          # completion must work before any fetch
+    try:
+        from beeagent.plugins.mcp import run_coro_blocking
+
+        models = run_coro_blocking(fetch, timeout=25)
+    except Exception:
+        return cached or fallback
     if not models:
-        from beeagent.providers.g4f_provider import G4fProvider
-        models = G4fProvider.discover_models()
+        return cached or fallback
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"saved_at": time(), "models": models}), encoding="utf-8")
+    except OSError:
+        pass
     return models
 
 
+def available_models(ctx: ReplContext, fetch: bool = False) -> list[str]:
+    """The models of the provider that is currently selected."""
+    agent = ctx.agent
+    if agent is None:
+        from beeagent.providers.g4f_provider import G4fProvider
+        return G4fProvider.discover_models()
+    name = getattr(ctx.config, "provider", "") or "g4f"
+    provider = agent.providers.get(name)
+    if provider is None:
+        return []
+    discover = getattr(provider, "discover_models", None)
+    if callable(discover):
+        return list(discover())
+    list_models = getattr(provider, "list_models", None)
+    if callable(list_models):
+        declared = list(getattr(provider, "models", None) or [])
+        return _cached_models(name, lambda: list_models(), allow_fetch=fetch, fallback=declared)
+    return list(getattr(provider, "models", None) or [])
+
+
 def available_providers(ctx: ReplContext) -> list[str]:
+    from beeagent.providers.presets import BY_NAME
+
     names: list[str] = []
     agent = ctx.agent
     if agent is not None:
@@ -150,6 +184,11 @@ def available_providers(ctx: ReplContext) -> list[str]:
     for builtin in ("g4f", "openai_compat", "ollama"):
         if builtin not in names:
             names.append(builtin)
+    # Free-tier endpoints are always offered: picking one without a key gets a
+    # message that says where to get the key.
+    for name in BY_NAME:
+        if name not in names:
+            names.append(name)
     for cp in getattr(ctx.config, "custom_providers", []) or []:
         if cp.name not in names:
             names.append(cp.name)
@@ -310,17 +349,114 @@ def _cmd_about(ctx, args):
 
 
 def _cmd_models(ctx, args):
+    from beeagent.providers.g4f_provider import G4fProvider
     from beeagent.ui.components import models_table
-    return CommandResult(output=models_table(available_models(ctx)))
+
+    provider_name = getattr(ctx.config, "provider", "") or "g4f"
+    models = available_models(ctx, fetch=True)
+    if not models:
+        return _err(L("this provider reported no models — /providers shows what is configured",
+                      "провайдер не вернул моделей — что настроено, видно в /providers"))
+
+    query = (args[0] if args else "").lower()
+    if query in ("--upstream", "-u") and len(args) > 1:
+        query = args[1].lower()
+    upstream_map = G4fProvider.upstream_map()
+    if query:
+        models = [m for m in models
+                  if query in m.lower() or any(query == p.lower() for p in upstream_map.get(m, []))]
+        if not models:
+            return _err(L(f"nothing matches “{query}” — /models lists every model",
+                          f"ничего не подходит под «{query}» — /models покажет все модели"))
+
+    if provider_name != "g4f":
+        return CommandResult(output=models_table(models))
+
+    table = Table(title=bee_title(f"🐝 g4f models ({len(models)})"), box=box.ROUNDED,
+                  border_style=BORDER, header_style="bold " + HONEY, expand=False)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("model", style="bold #ffcc00")
+    table.add_column("served by", style="dim")
+    for i, model in enumerate(models, 1):
+        table.add_row(str(i), model, ", ".join(upstream_map.get(model, [])[:3]) or "—")
+    table.caption = Text(
+        L("filter: /models <name|upstream> · pick with the mouse: /models · switch: /model <name>",
+          "фильтр: /models <имя|провайдер> · выбор мышью: /models · переключить: /model <имя>"),
+        style="dim")
+    return CommandResult(output=table)
 
 
 def _cmd_providers(ctx, args):
+    """What can serve requests right now, and what still needs a key."""
+    from beeagent.providers.presets import ENDPOINTS, key_for
     from beeagent.ui.components import providers_table
-    rows = []
-    for name in available_providers(ctx):
-        kind, desc = PROVIDER_META.get(name, ("custom", "Custom provider from config"))
-        rows.append({"name": name, "type": kind, "desc": desc})
+
+    rows = [{"name": "g4f", "type": L("free, keyless", "бесплатно, без ключа"),
+             "desc": L("public endpoints routed by g4f — works out of the box",
+                       "публичные эндпоинты через g4f — работает сразу")}]
+    active = getattr(ctx.config, "provider", "g4f")
+    for endpoint in ENDPOINTS:
+        ready = bool(key_for(endpoint, ctx.config.api_keys))
+        mark = "  ←" if active == endpoint.name else ""
+        detail = (L("✅ ready — ", "✅ готов — ") if ready
+                  else L("⚪ no key, run: /key ", "⚪ нет ключа, добавь: /key "))
+        rows.append({
+            "name": endpoint.name + mark,
+            "type": L("free tier + your own key", "бесплатный тариф + твой ключ"),
+            "desc": detail + endpoint.name + " <token> · " + endpoint.free + " · " + endpoint.signup,
+        })
+    if ctx.agent is not None:
+        for name in ctx.agent.providers.list_names():
+            if name != "g4f" and not any(name == e.name for e in ENDPOINTS):
+                rows.append({"name": name, "type": L("configured", "настроен"),
+                             "desc": L("registered from beeagent.json",
+                                       "зарегистрирован в beeagent.json")})
     return CommandResult(output=providers_table(rows))
+
+
+def _cmd_key(ctx, args):
+    """Store a key the user obtained themselves. The token is never echoed."""
+    from beeagent.config.loader import save_config
+    from beeagent.providers.openai_compat import OpenAICompatProvider
+    from beeagent.providers.presets import BY_NAME
+
+    def persist():
+        try:
+            save_config(ctx.config, ctx.agent.workdir if ctx.agent is not None else ".")
+        except OSError:
+            pass
+
+    if not args:
+        stored = sorted((ctx.config.api_keys or {}).keys())
+        return CommandResult(output=Text(
+            L(f"keys stored for: {', '.join(stored) or 'nobody yet'}   add one: /key <provider> <token>",
+              f"ключи сохранены для: {', '.join(stored) or 'пока никого'}   добавить: /key <провайдер> <токен>"),
+            style="dim"))
+
+    name = args[0].lower()
+    if name not in BY_NAME:
+        return _err(L(f"unknown provider '{name}'. /providers lists them.",
+                      f"неизвестный провайдер '{name}'. Список — /providers."))
+    endpoint = BY_NAME[name]
+
+    if len(args) < 2 or args[1] in ("remove", "rm", "delete"):
+        ctx.config.api_keys.pop(name, None)
+        if ctx.agent is not None:
+            ctx.agent.providers._providers.pop(name, None)
+        persist()
+        return _ok(L(f"🗑 key for {endpoint.label} removed", f"🗑 ключ {endpoint.label} удалён"))
+
+    token = args[1].strip()
+    ctx.config.api_keys[name] = token
+    if ctx.agent is not None:
+        ctx.agent.providers.register(OpenAICompatProvider(
+            base_url=endpoint.url, api_key=token,
+            model=endpoint.models[0] if endpoint.models else "gpt-4",
+            name=name, models=endpoint.models))
+        ctx.agent.ready_presets = list(dict.fromkeys(list(ctx.agent.ready_presets) + [name]))
+    persist()
+    return _ok(L(f"🔑 saved a key for {endpoint.label} (…{token[-4:]}). Activate: /provider {name}",
+                 f"🔑 ключ {endpoint.label} сохранён (…{token[-4:]}). Включить: /provider {name}"))
 
 
 def _cmd_model(ctx, args):
@@ -336,13 +472,29 @@ def _cmd_model(ctx, args):
 
 
 def _cmd_provider(ctx, args):
+    from beeagent.providers.presets import BY_NAME, key_for
+
     if not args:
-        return CommandResult(output=Text(f"current provider: {ctx.config.provider}", style="dim"))
-    name = args[0]
-    if name not in available_providers(ctx):
-        return _err(f"Unknown provider '{name}'. Run /providers to see the list.")
+        return CommandResult(output=Text(
+            L(f"current provider: {ctx.config.provider}  — /providers shows the rest",
+              f"текущий провайдер: {ctx.config.provider}  — остальные в /providers"), style="dim"))
+    name = args[0].lower()
+    if name in BY_NAME and not key_for(BY_NAME[name], ctx.config.api_keys):
+        return _err(L(f"{BY_NAME[name].label} needs a key of your own: /key {name} <token> "
+                      f"(free at {BY_NAME[name].signup})",
+                      f"{BY_NAME[name].label} нужен твой ключ: /key {name} <токен> "
+                      f"(бесплатно на {BY_NAME[name].signup})"))
+    if ctx.agent is not None and ctx.agent.providers.get(name) is None:
+        return _err(L(f"provider '{name}' is not registered — /providers shows what works",
+                      f"провайдер '{name}' не зарегистрирован — список в /providers"))
     ctx.config.provider = name
-    return _ok(f"provider → {name}")
+    if ctx.agent is not None and name != "g4f":
+        models = getattr(ctx.agent.providers.get(name), "models", None) or []
+        if models:
+            ctx.config.model = models[0]
+            ctx.agent.context.model = models[0]
+    return _ok(L(f"provider → {name}   its models: /models",
+                 f"провайдер → {name}   его модели: /models"))
 
 
 def _cmd_lang(ctx, args):
@@ -837,6 +989,7 @@ HANDLERS: dict[str, Callable] = {
     "about": _cmd_about,
     "models": _cmd_models,
     "providers": _cmd_providers,
+    "key": _cmd_key,
     "model": _cmd_model,
     "provider": _cmd_provider,
     "lang": _cmd_lang,

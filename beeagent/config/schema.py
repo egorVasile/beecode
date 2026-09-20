@@ -21,4 +21,6 @@ class BeeConfig(BaseModel):
     language: str = "en"  # "en" | "ru"
     max_turns: int = 50
     custom_providers: list[CustomProvider] = Field(default_factory=list)
+    # Keys the user obtained themselves, by provider name (see /providers).
+    api_keys: dict[str, str] = Field(default_factory=dict)
     economy: EconomyConfig = Field(default_factory=EconomyConfig)

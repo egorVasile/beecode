@@ -181,9 +181,9 @@ class BeeCompleter(Completer):
 # the chosen value, callable returning the currently active value).
 def _picker_specs(ctx: ReplContext):
     return {
-        "models":    (L("🐝 Select model", "🐝 Выбрать модель"),    lambda: available_models(ctx),      "/model",
+        "models":    (L("🐝 Select model", "🐝 Выбрать модель"),    lambda: available_models(ctx, fetch=True),      "/model",
                       lambda: ctx.config.model),
-        "model":     (L("🐝 Select model", "🐝 Выбрать модель"),    lambda: available_models(ctx),      "/model",
+        "model":     (L("🐝 Select model", "🐝 Выбрать модель"),    lambda: available_models(ctx, fetch=True),      "/model",
                       lambda: ctx.config.model),
         "providers": (L("🐝 Select provider", "🐝 Выбрать провайдер"), lambda: available_providers(ctx), "/provider",
                       lambda: ctx.config.provider),
