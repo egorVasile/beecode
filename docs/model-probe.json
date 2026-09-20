@@ -1,0 +1,4517 @@
+[
+  {
+    "model": "gpt-4.5",
+    "ok": true,
+    "ms": 11687,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "glm-4.7-flash",
+    "ok": true,
+    "ms": 16625,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt-4.1",
+    "ok": true,
+    "ms": 13828,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt-4",
+    "ok": true,
+    "ms": 14391,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt-4.1-mini",
+    "ok": true,
+    "ms": 15172,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt-4o",
+    "ok": true,
+    "ms": 15782,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt-4o-mini",
+    "ok": true,
+    "ms": 16985,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "glm-5.2",
+    "ok": true,
+    "ms": 18234,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek-r1",
+    "ok": true,
+    "ms": 11608,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o4-mini",
+    "ok": true,
+    "ms": 12954,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek-chat",
+    "ok": true,
+    "ms": 10905,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek-v3",
+    "ok": true,
+    "ms": 13858,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-2.5-pro",
+    "ok": true,
+    "ms": 11264,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "grok-3",
+    "ok": true,
+    "ms": 10686,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-3.8-pro",
+    "ok": true,
+    "ms": 12093,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen-3-235b",
+    "ok": true,
+    "ms": 11358,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "kimi-k2",
+    "ok": true,
+    "ms": 13188,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-3.5-flash",
+    "ok": true,
+    "ms": 23000,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen-3-32b",
+    "ok": true,
+    "ms": 12735,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-2.5-flash",
+    "ok": true,
+    "ms": 27250,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen-72b",
+    "ok": true,
+    "ms": 11672,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-3.1-70b",
+    "ok": true,
+    "ms": 11686,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt-oss-120b",
+    "ok": true,
+    "ms": 38015,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-4-maverick",
+    "ok": true,
+    "ms": 11920,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistral-small-3.1-24b",
+    "ok": true,
+    "ms": 10640,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "sonar",
+    "ok": true,
+    "ms": 12577,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-3.5-sonnet",
+    "ok": true,
+    "ms": 11686,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-3-haiku",
+    "ok": true,
+    "ms": 10781,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt-3.5-turbo",
+    "ok": true,
+    "ms": 11297,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-pro",
+    "ok": true,
+    "ms": 11985,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-opus-4-1-20250805",
+    "ok": true,
+    "ms": 11500,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-3-7-sonnet-20250219",
+    "ok": true,
+    "ms": 10328,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-sonnet-4-20250514",
+    "ok": true,
+    "ms": 15077,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-opus-4-20250522",
+    "ok": true,
+    "ms": 14625,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-3-opus-20240229",
+    "ok": true,
+    "ms": 9921,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-3-5-sonnet-20241022",
+    "ok": true,
+    "ms": 13218,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-4-scout",
+    "ok": true,
+    "ms": 38030,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-3-5-haiku-20241022",
+    "ok": true,
+    "ms": 16562,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-3-sonnet-20240229",
+    "ok": true,
+    "ms": 16391,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-3-haiku-20240307",
+    "ok": true,
+    "ms": 15155,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-sonnet-4-latest",
+    "ok": true,
+    "ms": 13531,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-opus-4-1-latest",
+    "ok": true,
+    "ms": 16844,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-3-5-haiku-latest",
+    "ok": true,
+    "ms": 12516,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-3-opus-latest",
+    "ok": true,
+    "ms": 9688,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude-3-5-sonnet-latest",
+    "ok": true,
+    "ms": 16890,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "brave",
+    "ok": true,
+    "ms": 10608,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "brave-deep-research",
+    "ok": true,
+    "ms": 10860,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "dall-e-3",
+    "ok": true,
+    "ms": 13750,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "flux-kontext-dev",
+    "ok": true,
+    "ms": 11108,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "flux",
+    "ok": true,
+    "ms": 14812,
+    "reply": "What would you like me to help you with?",
+    "error": ""
+  },
+  {
+    "model": "",
+    "ok": true,
+    "ms": 12797,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "flux-dev",
+    "ok": true,
+    "ms": 18312,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-5",
+    "ok": true,
+    "ms": 13827,
+    "reply": "I'll check the time and reply as requested.<tool_call>mcp-Te",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-sonnet-4.5",
+    "ok": true,
+    "ms": 11280,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-chat-v3.1",
+    "ok": true,
+    "ms": 12467,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-2.5-pro-preview-03-25",
+    "ok": true,
+    "ms": 9718,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "x-ai/grok-4",
+    "ok": true,
+    "ms": 16782,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "x-ai/grok-code-fast-1",
+    "ok": true,
+    "ms": 11014,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-r1-0528",
+    "ok": true,
+    "ms": 13983,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-sonnet-4",
+    "ok": true,
+    "ms": 12875,
+    "reply": "Ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-oss-120b",
+    "ok": true,
+    "ms": 11922,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-opus-4.1",
+    "ok": true,
+    "ms": 12250,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3.7-sonnet",
+    "ok": true,
+    "ms": 10406,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "x-ai/grok-3-beta",
+    "ok": true,
+    "ms": 15250,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-r1",
+    "ok": true,
+    "ms": 14233,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-large",
+    "ok": true,
+    "ms": 11297,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-4-maverick:free",
+    "ok": true,
+    "ms": 13157,
+    "reply": "OK",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4.1-mini",
+    "ok": true,
+    "ms": 11936,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4.1-nano",
+    "ok": true,
+    "ms": 12063,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-2.5-coder-32b-instruct",
+    "ok": true,
+    "ms": 18390,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3.7-sonnet:thinking",
+    "ok": true,
+    "ms": 17483,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3.7-sonnet:beta",
+    "ok": true,
+    "ms": 16094,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3.5-haiku:beta",
+    "ok": true,
+    "ms": 17203,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3.5-haiku-20241022:beta",
+    "ok": true,
+    "ms": 15562,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3.5-haiku",
+    "ok": true,
+    "ms": 17327,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3.5-sonnet:beta",
+    "ok": true,
+    "ms": 15468,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "x-ai/grok-3-mini-beta",
+    "ok": true,
+    "ms": 13016,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3.5-haiku-20241022",
+    "ok": true,
+    "ms": 20657,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-2.0-flash-lite-001",
+    "ok": true,
+    "ms": 12000,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-4-scout:free",
+    "ok": true,
+    "ms": 9171,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3.5-sonnet",
+    "ok": true,
+    "ms": 17282,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-4-scout",
+    "ok": true,
+    "ms": 9828,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nvidia/llama-3.1-nemotron-70b-instruct:free",
+    "ok": true,
+    "ms": 12062,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nvidia/llama-3.1-nemotron-70b-instruct",
+    "ok": true,
+    "ms": 10311,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "x-ai/grok-2-vision-1212",
+    "ok": true,
+    "ms": 11375,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "x-ai/grok-2-1212",
+    "ok": true,
+    "ms": 11671,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-4-maverick",
+    "ok": true,
+    "ms": 24327,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "alfredpros/codellama-7b-instruct-solidity",
+    "ok": true,
+    "ms": 14031,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "eleutherai/llemma_7b",
+    "ok": true,
+    "ms": 14906,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "arliai/qwq-32b-arliai-rpr-v1:free",
+    "ok": true,
+    "ms": 16030,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "agentica-org/deepcoder-14b-preview:free",
+    "ok": true,
+    "ms": 13921,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "moonshotai/kimi-vl-a3b-thinking:free",
+    "ok": true,
+    "ms": 13032,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nvidia/llama-3.1-nemotron-nano-8b-v1:free",
+    "ok": true,
+    "ms": 13313,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
+    "ok": true,
+    "ms": 14389,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "tokyotech-llm/llama-3.1-swallow-8b-instruct-v0.3",
+    "ok": true,
+    "ms": 14282,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nvidia/llama-3.3-nemotron-super-49b-v1:free",
+    "ok": true,
+    "ms": 17625,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "all-hands/openhands-lm-32b-v0.1",
+    "ok": true,
+    "ms": 12233,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistral/ministral-8b",
+    "ok": true,
+    "ms": 11547,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openrouter/optimus-alpha",
+    "ok": true,
+    "ms": 26375,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-v3-base:free",
+    "ok": true,
+    "ms": 16515,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openrouter/quasar-alpha",
+    "ok": true,
+    "ms": 27532,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "bytedance-research/ui-tars-72b:free",
+    "ok": true,
+    "ms": 14422,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen2.5-vl-3b-instruct:free",
+    "ok": true,
+    "ms": 15108,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "scb10x/llama3.1-typhoon2-70b-instruct",
+    "ok": true,
+    "ms": 20561,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen2.5-vl-32b-instruct:free",
+    "ok": true,
+    "ms": 13812,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "scb10x/llama3.1-typhoon2-8b-instruct",
+    "ok": true,
+    "ms": 23016,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen2.5-vl-32b-instruct",
+    "ok": true,
+    "ms": 14343,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "allenai/molmo-7b-d:free",
+    "ok": true,
+    "ms": 25702,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "featherless/qwerky-72b:free",
+    "ok": true,
+    "ms": 11983,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-chat-v3-0324",
+    "ok": true,
+    "ms": 16109,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-small-3.1-24b-instruct:free",
+    "ok": true,
+    "ms": 17296,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-chat-v3-0324:free",
+    "ok": true,
+    "ms": 21781,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-small-3.1-24b-instruct",
+    "ok": true,
+    "ms": 19281,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/o1-pro",
+    "ok": true,
+    "ms": 22750,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "open-r1/olympiccoder-7b:free",
+    "ok": true,
+    "ms": 18202,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "open-r1/olympiccoder-32b:free",
+    "ok": true,
+    "ms": 19063,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "steelskull/l3.3-electra-r1-70b",
+    "ok": true,
+    "ms": 16797,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "allenai/olmo-2-0325-32b-instruct",
+    "ok": true,
+    "ms": 14733,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemma-3-4b-it:free",
+    "ok": true,
+    "ms": 12077,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemma-3-4b-it",
+    "ok": true,
+    "ms": 10484,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "ai21/jamba-1.6-large",
+    "ok": true,
+    "ms": 11547,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "ai21/jamba-1.6-mini",
+    "ok": true,
+    "ms": 11500,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemma-3-12b-it:free",
+    "ok": true,
+    "ms": 10047,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemma-3-12b-it",
+    "ok": true,
+    "ms": 12671,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4.1-mini-search-preview",
+    "ok": true,
+    "ms": 10516,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "tokyotech-llm/llama-3.1-swallow-70b-instruct-v0.3",
+    "ok": true,
+    "ms": 10578,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemma-3-1b-it:free",
+    "ok": true,
+    "ms": 26422,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "rekaai/reka-flash-3:free",
+    "ok": true,
+    "ms": 12467,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cohere/command-a",
+    "ok": true,
+    "ms": 20844,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemma-3-27b-it",
+    "ok": true,
+    "ms": 13561,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemma-3-27b-it:free",
+    "ok": true,
+    "ms": 15719,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "thedrummer/anubis-pro-105b-v1",
+    "ok": true,
+    "ms": 13344,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "latitudegames/wayfarer-large-70b-llama-3.3",
+    "ok": true,
+    "ms": 13890,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "thedrummer/skyfall-36b-v2",
+    "ok": true,
+    "ms": 13500,
+    "reply": "Ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-r1-zero:free",
+    "ok": true,
+    "ms": 10407,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "microsoft/phi-4-multimodal-instruct",
+    "ok": true,
+    "ms": 13468,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwq-32b:free",
+    "ok": true,
+    "ms": 13046,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen2.5-32b-instruct",
+    "ok": true,
+    "ms": 10875,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwq-32b",
+    "ok": true,
+    "ms": 14234,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "moonshotai/moonlight-16b-a3b-instruct:free",
+    "ok": true,
+    "ms": 21280,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/o3-mini-high",
+    "ok": true,
+    "ms": 11656,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cognitivecomputations/dolphin3.0-r1-mistral-24b:free",
+    "ok": true,
+    "ms": 20703,
+    "reply": "One word coming right up. ok.",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/deephermes-3-llama-3-8b-preview:free",
+    "ok": true,
+    "ms": 25172,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-guard-3-8b",
+    "ok": true,
+    "ms": 18750,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-saba",
+    "ok": true,
+    "ms": 23390,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cognitivecomputations/dolphin3.0-mistral-24b:free",
+    "ok": true,
+    "ms": 21015,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "allenai/llama-3.1-tulu-3-405b",
+    "ok": true,
+    "ms": 9313,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4.5-preview",
+    "ok": true,
+    "ms": 28593,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-r1-distill-llama-8b",
+    "ok": true,
+    "ms": 11202,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-2.0-flash-001",
+    "ok": true,
+    "ms": 12858,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-vl-plus",
+    "ok": true,
+    "ms": 11921,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "aion-labs/aion-1.0-mini",
+    "ok": true,
+    "ms": 10766,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "aion-labs/aion-rp-llama-3.1-8b",
+    "ok": true,
+    "ms": 11657,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-vl-max",
+    "ok": true,
+    "ms": 12656,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "aion-labs/aion-1.0",
+    "ok": true,
+    "ms": 16780,
+    "reply": "Received",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-turbo",
+    "ok": true,
+    "ms": 13545,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen2.5-vl-72b-instruct",
+    "ok": true,
+    "ms": 8827,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen2.5-vl-72b-instruct:free",
+    "ok": true,
+    "ms": 15031,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-plus",
+    "ok": true,
+    "ms": 11016,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-max",
+    "ok": true,
+    "ms": 10968,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/o3-mini",
+    "ok": true,
+    "ms": 12265,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-small-24b-instruct-2501:free",
+    "ok": true,
+    "ms": 13063,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-small-24b-instruct-2501",
+    "ok": true,
+    "ms": 12266,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-r1-distill-qwen-14b",
+    "ok": true,
+    "ms": 10592,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-r1-distill-qwen-32b:free",
+    "ok": true,
+    "ms": 13797,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-r1-distill-qwen-1.5b",
+    "ok": true,
+    "ms": 17921,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-r1-distill-qwen-32b",
+    "ok": true,
+    "ms": 12063,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "liquid/lfm-7b",
+    "ok": true,
+    "ms": 10016,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-r1-distill-llama-70b:free",
+    "ok": true,
+    "ms": 11219,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-r1-distill-llama-70b",
+    "ok": true,
+    "ms": 9172,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "sophosympatheia/rogue-rose-103b-v0.2:free",
+    "ok": true,
+    "ms": 9936,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-2.0-flash-thinking-exp:free",
+    "ok": true,
+    "ms": 11125,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-r1:free",
+    "ok": true,
+    "ms": 11312,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-r1-distill-qwen-14b:free",
+    "ok": true,
+    "ms": 23953,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/codestral-2501",
+    "ok": true,
+    "ms": 8936,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "microsoft/phi-4",
+    "ok": true,
+    "ms": 10516,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "minimax/minimax-01",
+    "ok": true,
+    "ms": 18186,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "liquid/lfm-3b",
+    "ok": true,
+    "ms": 24686,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-2.0-flash-thinking-exp-1219:free",
+    "ok": true,
+    "ms": 11139,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-chat:free",
+    "ok": true,
+    "ms": 13530,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-chat",
+    "ok": true,
+    "ms": 12984,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "inflatebot/mn-mag-mell-r1",
+    "ok": true,
+    "ms": 8702,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "sao10k/l3.3-euryale-70b",
+    "ok": true,
+    "ms": 11797,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/o1",
+    "ok": true,
+    "ms": 10593,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "eva-unit-01/eva-llama-3.33-70b",
+    "ok": true,
+    "ms": 11703,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-2.0-flash-exp:free",
+    "ok": true,
+    "ms": 10750,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cohere/command-r7b-12-2024",
+    "ok": true,
+    "ms": 13094,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.3-70b-instruct:free",
+    "ok": true,
+    "ms": 12500,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "sao10k/l3.1-70b-hanami-x1",
+    "ok": true,
+    "ms": 28077,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "amazon/nova-lite-v1",
+    "ok": true,
+    "ms": 11577,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "amazon/nova-pro-v1",
+    "ok": true,
+    "ms": 9421,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "amazon/nova-micro-v1",
+    "ok": true,
+    "ms": 12094,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwq-32b-preview:free",
+    "ok": true,
+    "ms": 10297,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-exp-1121",
+    "ok": true,
+    "ms": 9390,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/learnlm-1.5-pro-experimental:free",
+    "ok": true,
+    "ms": 8875,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "eva-unit-01/eva-qwen-2.5-72b",
+    "ok": true,
+    "ms": 8391,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwq-32b-preview",
+    "ok": true,
+    "ms": 13218,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4o-2024-11-20",
+    "ok": true,
+    "ms": 8938,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-large-2411",
+    "ok": true,
+    "ms": 10093,
+    "reply": "I'll write \"ok\" to the text resource as requested. text_reso",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.3-70b-instruct",
+    "ok": true,
+    "ms": 26047,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-large-2407",
+    "ok": true,
+    "ms": 9718,
+    "reply": "Ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-exp-1114",
+    "ok": true,
+    "ms": 9297,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "x-ai/grok-vision-beta",
+    "ok": true,
+    "ms": 10204,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/pixtral-large-2411",
+    "ok": true,
+    "ms": 11218,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "infermatic/mn-inferor-12b",
+    "ok": true,
+    "ms": 10702,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-2.5-coder-32b-instruct:free",
+    "ok": true,
+    "ms": 11781,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "eva-unit-01/eva-qwen-2.5-32b",
+    "ok": true,
+    "ms": 9500,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "raifle/sorcererlm-8x22b",
+    "ok": true,
+    "ms": 10952,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "neversleep/llama-3.1-lumimaid-70b",
+    "ok": true,
+    "ms": 10811,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "x-ai/grok-beta",
+    "ok": true,
+    "ms": 10936,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthracite-org/magnum-v4-72b",
+    "ok": true,
+    "ms": 12155,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/ministral-8b",
+    "ok": true,
+    "ms": 10250,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "thedrummer/unslopnemo-12b",
+    "ok": true,
+    "ms": 16031,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/ministral-3b",
+    "ok": true,
+    "ms": 10718,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-2.5-7b-instruct:free",
+    "ok": true,
+    "ms": 12125,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "x-ai/grok-2-mini",
+    "ok": true,
+    "ms": 8858,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-2.5-7b-instruct",
+    "ok": true,
+    "ms": 13467,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "x-ai/grok-2",
+    "ok": true,
+    "ms": 9954,
+    "reply": "{\"tool\":\"writeText\",\"parameters\":{\"text\":\"ok\"}}",
+    "error": ""
+  },
+  {
+    "model": "inflection/inflection-3-productivity",
+    "ok": true,
+    "ms": 8922,
+    "reply": "mcp__blitz__complete({\"text\": \"ok\"})",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-flash-1.5-8b",
+    "ok": true,
+    "ms": 9125,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "inflection/inflection-3-pi",
+    "ok": true,
+    "ms": 10766,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "eva-unit-01/eva-qwen-2.5-14b",
+    "ok": true,
+    "ms": 13327,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthracite-org/magnum-v2-72b",
+    "ok": true,
+    "ms": 11032,
+    "reply": "Ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.2-3b-instruct:free",
+    "ok": true,
+    "ms": 11233,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "thedrummer/rocinante-12b",
+    "ok": true,
+    "ms": 13141,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.2-1b-instruct:free",
+    "ok": true,
+    "ms": 11265,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "liquid/lfm-40b",
+    "ok": true,
+    "ms": 19967,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.2-3b-instruct",
+    "ok": true,
+    "ms": 14077,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.2-90b-vision-instruct",
+    "ok": true,
+    "ms": 13766,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.2-11b-vision-instruct:free",
+    "ok": true,
+    "ms": 9092,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.2-11b-vision-instruct",
+    "ok": true,
+    "ms": 9031,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.2-1b-instruct",
+    "ok": true,
+    "ms": 11047,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-2.5-72b-instruct",
+    "ok": true,
+    "ms": 8532,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-2.5-vl-72b-instruct",
+    "ok": true,
+    "ms": 9609,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/o1-mini",
+    "ok": true,
+    "ms": 9936,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/o1-preview",
+    "ok": true,
+    "ms": 8860,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/o1-preview-2024-09-12",
+    "ok": true,
+    "ms": 10109,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/o1-mini-2024-09-12",
+    "ok": true,
+    "ms": 9983,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "neversleep/llama-3.1-lumimaid-8b",
+    "ok": true,
+    "ms": 16141,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/pixtral-12b",
+    "ok": true,
+    "ms": 10906,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-2.5-72b-instruct:free",
+    "ok": true,
+    "ms": 21765,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cohere/command-r-plus-08-2024",
+    "ok": true,
+    "ms": 8657,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mattshumer/reflection-70b",
+    "ok": true,
+    "ms": 11717,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-2.5-vl-7b-instruct:free",
+    "ok": true,
+    "ms": 9280,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "sao10k/l3.1-euryale-70b",
+    "ok": true,
+    "ms": 9890,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cohere/command-r-08-2024",
+    "ok": true,
+    "ms": 13108,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-flash-1.5-exp",
+    "ok": true,
+    "ms": 11061,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-2.5-vl-7b-instruct",
+    "ok": true,
+    "ms": 13312,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-flash-1.5-8b-exp",
+    "ok": true,
+    "ms": 12032,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "lynn/soliloquy-v3",
+    "ok": true,
+    "ms": 13672,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "01-ai/yi-1.5-34b-chat",
+    "ok": true,
+    "ms": 12282,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "ai21/jamba-1-5-large",
+    "ok": true,
+    "ms": 11046,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "ai21/jamba-1-5-mini",
+    "ok": true,
+    "ms": 11625,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "microsoft/phi-3.5-mini-128k-instruct",
+    "ok": true,
+    "ms": 12343,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/hermes-3-llama-3.1-70b",
+    "ok": true,
+    "ms": 11093,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "aetherwiing/mn-starcannon-12b",
+    "ok": true,
+    "ms": 11390,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4o-2024-08-06",
+    "ok": true,
+    "ms": 12312,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.1-405b",
+    "ok": true,
+    "ms": 13063,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "sao10k/l3-lunaris-8b",
+    "ok": true,
+    "ms": 17327,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/hermes-3-llama-3.1-405b",
+    "ok": true,
+    "ms": 20391,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nothingiisreal/mn-celeste-12b",
+    "ok": true,
+    "ms": 13141,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "01-ai/yi-vision",
+    "ok": true,
+    "ms": 12172,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "01-ai/yi-large-turbo",
+    "ok": true,
+    "ms": 12952,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "01-ai/yi-large-fc",
+    "ok": true,
+    "ms": 20875,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-pro-1.5-exp",
+    "ok": true,
+    "ms": 13218,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.1-70b-instruct",
+    "ok": true,
+    "ms": 10436,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.1-8b-instruct",
+    "ok": true,
+    "ms": 10718,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.1-8b-instruct:free",
+    "ok": true,
+    "ms": 11031,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3.1-405b-instruct",
+    "ok": true,
+    "ms": 12483,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cognitivecomputations/dolphin-llama-3-70b",
+    "ok": true,
+    "ms": 12593,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-nemo:free",
+    "ok": true,
+    "ms": 9672,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemma-2-27b-it",
+    "ok": true,
+    "ms": 10452,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/codestral-mamba",
+    "ok": true,
+    "ms": 13750,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4.1-mini-2024-07-18",
+    "ok": true,
+    "ms": 13688,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "alpindale/magnum-72b",
+    "ok": true,
+    "ms": 12577,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/hermes-2-theta-llama-3-8b",
+    "ok": true,
+    "ms": 12515,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemma-2-9b-it:free",
+    "ok": true,
+    "ms": 14750,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemma-2-9b-it",
+    "ok": true,
+    "ms": 8641,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "sao10k/l3-stheno-8b",
+    "ok": true,
+    "ms": 9327,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "ai21/jamba-instruct",
+    "ok": true,
+    "ms": 10140,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-2-7b-instruct",
+    "ok": true,
+    "ms": 24295,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "01-ai/yi-large",
+    "ok": true,
+    "ms": 8844,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nvidia/nemotron-4-340b-instruct",
+    "ok": true,
+    "ms": 9516,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3.5-sonnet-20240620",
+    "ok": true,
+    "ms": 9031,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "sao10k/l3-euryale-70b",
+    "ok": true,
+    "ms": 9016,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-nemo",
+    "ok": true,
+    "ms": 35953,
+    "reply": "openai_generate_chat\n{\"message\": \"ok\"}",
+    "error": ""
+  },
+  {
+    "model": "microsoft/phi-3-medium-4k-instruct",
+    "ok": true,
+    "ms": 13093,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cognitivecomputations/dolphin-mixtral-8x22b",
+    "ok": true,
+    "ms": 14280,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "bigcode/starcoder2-15b-instruct",
+    "ok": true,
+    "ms": 15407,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3.5-sonnet-20240620:beta",
+    "ok": true,
+    "ms": 21609,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-2-72b-instruct",
+    "ok": true,
+    "ms": 16672,
+    "reply": "Ok",
+    "error": ""
+  },
+  {
+    "model": "openchat/openchat-8b",
+    "ok": true,
+    "ms": 14250,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-7b-instruct-v0.3",
+    "ok": true,
+    "ms": 17031,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/hermes-2-pro-llama-3-8b",
+    "ok": true,
+    "ms": 14671,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-7b-instruct:free",
+    "ok": true,
+    "ms": 14531,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "microsoft/phi-3-medium-128k-instruct",
+    "ok": true,
+    "ms": 12467,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-chat-v2.5",
+    "ok": true,
+    "ms": 11250,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "neversleep/llama-3-lumimaid-70b",
+    "ok": true,
+    "ms": 12780,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "microsoft/phi-3-mini-128k-instruct",
+    "ok": true,
+    "ms": 17750,
+    "reply": "{\"tool\": \"mcp_tool_response\", \"parameters\": {\"reply\": \"ok\"}}",
+    "error": ""
+  },
+  {
+    "model": "deepseek/deepseek-coder",
+    "ok": true,
+    "ms": 12594,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-flash-1.5",
+    "ok": true,
+    "ms": 14172,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4o-2024-05-13",
+    "ok": true,
+    "ms": 9813,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-guard-2-8b",
+    "ok": true,
+    "ms": 12422,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4o:extended",
+    "ok": true,
+    "ms": 10390,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4o",
+    "ok": true,
+    "ms": 14203,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3-8b",
+    "ok": true,
+    "ms": 13875,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "liuhaotian/llava-yi-34b",
+    "ok": true,
+    "ms": 12702,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "allenai/olmo-7b-instruct",
+    "ok": true,
+    "ms": 13047,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-7b-chat",
+    "ok": true,
+    "ms": 11483,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-7b-instruct",
+    "ok": false,
+    "ms": 40000,
+    "reply": "",
+    "error": "TimeoutError: "
+  },
+  {
+    "model": "qwen/qwen-4b-chat",
+    "ok": true,
+    "ms": 11891,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-32b-chat",
+    "ok": true,
+    "ms": 12155,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3-70b",
+    "ok": true,
+    "ms": 31516,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-110b-chat",
+    "ok": true,
+    "ms": 10281,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-72b-chat",
+    "ok": true,
+    "ms": 12718,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen/qwen-14b-chat",
+    "ok": true,
+    "ms": 11813,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "neversleep/llama-3-lumimaid-8b",
+    "ok": true,
+    "ms": 9608,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "neversleep/llama-3-lumimaid-8b:extended",
+    "ok": true,
+    "ms": 12327,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "snowflake/snowflake-arctic-instruct",
+    "ok": true,
+    "ms": 11561,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "fireworks/firellava-13b",
+    "ok": true,
+    "ms": 11641,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "lynn/soliloquy-l3",
+    "ok": true,
+    "ms": 11686,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "sao10k/fimbulvetr-11b-v2",
+    "ok": true,
+    "ms": 11187,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "microsoft/wizardlm-2-7b",
+    "ok": true,
+    "ms": 12125,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "huggingfaceh4/zephyr-orpo-141b-a35b",
+    "ok": true,
+    "ms": 10844,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mixtral-8x22b",
+    "ok": true,
+    "ms": 10782,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3-8b-instruct",
+    "ok": true,
+    "ms": 21108,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-pro-1.5",
+    "ok": true,
+    "ms": 12156,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mixtral-8x22b-instruct",
+    "ok": true,
+    "ms": 20704,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "microsoft/wizardlm-2-8x22b",
+    "ok": true,
+    "ms": 19907,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-3-70b-instruct",
+    "ok": true,
+    "ms": 22875,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cohere/command-r-plus",
+    "ok": true,
+    "ms": 10811,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "databricks/dbrx-instruct",
+    "ok": true,
+    "ms": 10297,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "sophosympatheia/midnight-rose-70b",
+    "ok": true,
+    "ms": 10641,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cohere/command",
+    "ok": true,
+    "ms": 10233,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3-haiku:beta",
+    "ok": true,
+    "ms": 9577,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cohere/command-r",
+    "ok": true,
+    "ms": 10811,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4-turbo",
+    "ok": true,
+    "ms": 21313,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3-haiku",
+    "ok": true,
+    "ms": 13047,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3-opus:beta",
+    "ok": true,
+    "ms": 12125,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3-sonnet",
+    "ok": true,
+    "ms": 11858,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3-sonnet:beta",
+    "ok": true,
+    "ms": 13718,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-3-opus",
+    "ok": true,
+    "ms": 16045,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cohere/command-r-03-2024",
+    "ok": true,
+    "ms": 13578,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cohere/command-r-plus-04-2024",
+    "ok": true,
+    "ms": 32202,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/codellama-70b-instruct",
+    "ok": true,
+    "ms": 11375,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemma-7b-it",
+    "ok": true,
+    "ms": 17093,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/nous-hermes-2-mistral-7b-dpo",
+    "ok": true,
+    "ms": 15141,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "recursal/eagle-7b",
+    "ok": true,
+    "ms": 11500,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4-turbo-preview",
+    "ok": true,
+    "ms": 11891,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "01-ai/yi-34b-200k",
+    "ok": true,
+    "ms": 11812,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/nous-hermes-2-mixtral-8x7b-dpo",
+    "ok": true,
+    "ms": 10577,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-small",
+    "ok": true,
+    "ms": 8782,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-medium",
+    "ok": true,
+    "ms": 10217,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-3.5-turbo-0613",
+    "ok": true,
+    "ms": 20983,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-tiny",
+    "ok": true,
+    "ms": 11343,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/nous-hermes-2-mixtral-8x7b-sft",
+    "ok": true,
+    "ms": 14561,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/nous-hermes-yi-34b",
+    "ok": true,
+    "ms": 9860,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "jondurbin/bagel-34b",
+    "ok": true,
+    "ms": 13953,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "austism/chronos-hermes-13b",
+    "ok": true,
+    "ms": 14828,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-pro-vision",
+    "ok": true,
+    "ms": 9032,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cognitivecomputations/dolphin-mixtral-8x7b",
+    "ok": true,
+    "ms": 12188,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/gemini-pro",
+    "ok": true,
+    "ms": 12265,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-7b-instruct-v0.2",
+    "ok": true,
+    "ms": 15985,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "neversleep/noromaid-mixtral-8x7b-instruct",
+    "ok": true,
+    "ms": 16406,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "recursal/rwkv-5-3b-ai-town",
+    "ok": true,
+    "ms": 11858,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mixtral-8x7b-instruct",
+    "ok": true,
+    "ms": 10359,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "rwkv/rwkv-5-world-3b",
+    "ok": true,
+    "ms": 11436,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "togethercomputer/stripedhyena-nous-7b",
+    "ok": true,
+    "ms": 11015,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "koboldai/psyfighter-13b-2",
+    "ok": true,
+    "ms": 9905,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gryphe/mythomist-7b",
+    "ok": true,
+    "ms": 10110,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "01-ai/yi-34b",
+    "ok": true,
+    "ms": 10093,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "01-ai/yi-6b",
+    "ok": true,
+    "ms": 9484,
+    "reply": "tool\ncommand: mcp://tasklist/tasklist_complete_finish\nparame",
+    "error": ""
+  },
+  {
+    "model": "togethercomputer/stripedhyena-hessian-7b",
+    "ok": true,
+    "ms": 13250,
+    "reply": "Got it! I'm here whenever you need help.",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/nous-hermes-2-vision-7b",
+    "ok": true,
+    "ms": 9952,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/nous-capybara-7b",
+    "ok": true,
+    "ms": 11407,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openrouter/cinematika-7b",
+    "ok": true,
+    "ms": 13000,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "jebcarter/psyfighter-13b",
+    "ok": true,
+    "ms": 11593,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openchat/openchat-7b",
+    "ok": true,
+    "ms": 12108,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "neversleep/noromaid-20b",
+    "ok": true,
+    "ms": 11640,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-2:beta",
+    "ok": true,
+    "ms": 10219,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "intel/neural-chat-7b",
+    "ok": true,
+    "ms": 12608,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "01-ai/yi-34b-chat",
+    "ok": true,
+    "ms": 22358,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-2",
+    "ok": true,
+    "ms": 8515,
+    "reply": "mcp_tools.complete(...)",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-instant-1.1",
+    "ok": true,
+    "ms": 10655,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-2.1:beta",
+    "ok": true,
+    "ms": 11358,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-2.1",
+    "ok": true,
+    "ms": 12406,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "teknium/openhermes-2.5-mistral-7b",
+    "ok": true,
+    "ms": 13562,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "liuhaotian/llava-13b",
+    "ok": true,
+    "ms": 14030,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/nous-capybara-34b",
+    "ok": true,
+    "ms": 15922,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4-vision-preview",
+    "ok": true,
+    "ms": 18108,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "lizpreciatior/lzlv-70b-fp16-hf",
+    "ok": true,
+    "ms": 18563,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "alpindale/goliath-120b",
+    "ok": true,
+    "ms": 14672,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-3.5-turbo-1106",
+    "ok": true,
+    "ms": 10500,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4-1106-preview",
+    "ok": true,
+    "ms": 12375,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "undi95/toppy-m-7b",
+    "ok": true,
+    "ms": 17875,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openrouter/auto",
+    "ok": true,
+    "ms": 16187,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/palm-2-codechat-bison-32k",
+    "ok": true,
+    "ms": 12375,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/palm-2-chat-bison-32k",
+    "ok": true,
+    "ms": 10250,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "teknium/openhermes-2-mistral-7b",
+    "ok": true,
+    "ms": 13514,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/nous-hermes-llama2-70b",
+    "ok": true,
+    "ms": 13125,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "open-orca/mistral-7b-openorca",
+    "ok": true,
+    "ms": 15343,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "jondurbin/airoboros-l2-70b",
+    "ok": true,
+    "ms": 16360,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "xwin-lm/xwin-lm-70b",
+    "ok": true,
+    "ms": 15454,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistralai/mistral-7b-instruct-v0.1",
+    "ok": true,
+    "ms": 13967,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "migtissera/synthia-70b",
+    "ok": true,
+    "ms": 13608,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-3.5-turbo-instruct",
+    "ok": true,
+    "ms": 16077,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4-32k-0314",
+    "ok": true,
+    "ms": 10047,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "pygmalionai/mythalion-13b",
+    "ok": true,
+    "ms": 12625,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-3.5-turbo-16k",
+    "ok": true,
+    "ms": 13156,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/codellama-34b-instruct",
+    "ok": true,
+    "ms": 15140,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nousresearch/nous-hermes-llama2-13b",
+    "ok": true,
+    "ms": 12672,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4-32k",
+    "ok": true,
+    "ms": 15764,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "huggingfaceh4/zephyr-7b-beta:free",
+    "ok": true,
+    "ms": 14141,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "phind/phind-codellama-34b",
+    "ok": true,
+    "ms": 18094,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-instant-1",
+    "ok": true,
+    "ms": 15188,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mancer/weaver",
+    "ok": true,
+    "ms": 18358,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-instant-1.0",
+    "ok": true,
+    "ms": 14546,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-1",
+    "ok": true,
+    "ms": 18233,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-2.0:beta",
+    "ok": true,
+    "ms": 14438,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-2.0",
+    "ok": true,
+    "ms": 13858,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "anthropic/claude-1.2",
+    "ok": true,
+    "ms": 17625,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "undi95/remm-slerp-l2-13b",
+    "ok": true,
+    "ms": 16593,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/palm-2-codechat-bison",
+    "ok": true,
+    "ms": 14390,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-2-70b-chat",
+    "ok": true,
+    "ms": 11186,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "google/palm-2-chat-bison",
+    "ok": true,
+    "ms": 16922,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4",
+    "ok": true,
+    "ms": 10375,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "meta-llama/llama-2-13b-chat",
+    "ok": true,
+    "ms": 14734,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-3.5-turbo",
+    "ok": true,
+    "ms": 11858,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-4-0314",
+    "ok": true,
+    "ms": 11296,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gryphe/mythomax-l2-13b",
+    "ok": true,
+    "ms": 20922,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-3.5-turbo-0301",
+    "ok": true,
+    "ms": 11907,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama3.1-8b",
+    "ok": true,
+    "ms": 10437,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama3.1-70b",
+    "ok": true,
+    "ms": 12250,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openai/gpt-3.5-turbo-0125",
+    "ok": true,
+    "ms": 23186,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek-coder-6.7b-base",
+    "ok": true,
+    "ms": 10172,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek-r1-distill-llama-70b",
+    "ok": true,
+    "ms": 14250,
+    "reply": "I'll respond with \"ok\" as requested.\n\nok",
+    "error": ""
+  },
+  {
+    "model": "deepseek-coder-6.7b",
+    "ok": true,
+    "ms": 12625,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek-math-7b",
+    "ok": true,
+    "ms": 9342,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "falcon-7b",
+    "ok": true,
+    "ms": 9000,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "discolm-german-7b-v1",
+    "ok": true,
+    "ms": 10233,
+    "reply": "How can I help you today?",
+    "error": ""
+  },
+  {
+    "model": "deepseek-distill-qwen-32b",
+    "ok": true,
+    "ms": 17156,
+    "reply": "<think>\nOkay, so I just read this user message. It says, \"Yo",
+    "error": ""
+  },
+  {
+    "model": "gemma-4-26b-a4b-it",
+    "ok": true,
+    "ms": 11156,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemma-7b",
+    "ok": true,
+    "ms": 9969,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemma-3-12b",
+    "ok": true,
+    "ms": 13282,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemma-7b-it-lora",
+    "ok": true,
+    "ms": 11016,
+    "reply": "Ok.\n\nI have received your message and understand. My respons",
+    "error": ""
+  },
+  {
+    "model": "gpt-oss-20b",
+    "ok": true,
+    "ms": 9718,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "granite-4.0-h-micro",
+    "ok": true,
+    "ms": 8686,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "hermes-2-pro-mistral-7b",
+    "ok": true,
+    "ms": 9905,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-3.3-70b",
+    "ok": false,
+    "ms": 40000,
+    "reply": "",
+    "error": "TimeoutError: "
+  },
+  {
+    "model": "kimi-k2.6",
+    "ok": true,
+    "ms": 11186,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "kimi-k2.7-code",
+    "ok": true,
+    "ms": 11438,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-2-13b",
+    "ok": true,
+    "ms": 10172,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-2-7b",
+    "ok": true,
+    "ms": 10907,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-3-8b",
+    "ok": true,
+    "ms": 9328,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemma-2b-lora",
+    "ok": true,
+    "ms": 37655,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-3.1-8b",
+    "ok": true,
+    "ms": 12156,
+    "reply": "I need more information to answer your question. Please prov",
+    "error": ""
+  },
+  {
+    "model": "llama-3.2-1b",
+    "ok": true,
+    "ms": 8562,
+    "reply": "{\\\"name\\\":\\\" ARRAY\\\",\\\"parameters\\\":[]}",
+    "error": ""
+  },
+  {
+    "model": "gemma-sea-lion-v4-27b",
+    "ok": true,
+    "ms": 37359,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llamaguard-7b",
+    "ok": true,
+    "ms": 9125,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-2-7b-fp16",
+    "ok": true,
+    "ms": 24875,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistral-7b-v0.1",
+    "ok": true,
+    "ms": 9000,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistral-7b-v0.2",
+    "ok": true,
+    "ms": 9125,
+    "reply": "Understood: I will reply \"ok\".",
+    "error": ""
+  },
+  {
+    "model": "llama-2-7b-lora",
+    "ok": true,
+    "ms": 28077,
+    "reply": "student MY세хи alter improved Haťarct engineusersюзадьownrit",
+    "error": ""
+  },
+  {
+    "model": "neural-7b-v3-1",
+    "ok": true,
+    "ms": 8796,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nemotron-3-120b",
+    "ok": true,
+    "ms": 11813,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openhermes-2.5-mistral-7b",
+    "ok": true,
+    "ms": 8797,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "openchat-3.5-0106",
+    "ok": true,
+    "ms": 13906,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-3.2-11b-vision",
+    "ok": true,
+    "ms": 38358,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "phi-2",
+    "ok": true,
+    "ms": 11000,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen-1.5-14b",
+    "ok": true,
+    "ms": 10311,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-3.2-3b",
+    "ok": true,
+    "ms": 37327,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen-1.5-7b",
+    "ok": true,
+    "ms": 11514,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen-1.5-1.8b",
+    "ok": true,
+    "ms": 17061,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-guard-3-8b",
+    "ok": true,
+    "ms": 38781,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen-2.5-coder-32b",
+    "ok": true,
+    "ms": 12891,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen1.5-0.5b",
+    "ok": true,
+    "ms": 13391,
+    "reply": "Ok",
+    "error": ""
+  },
+  {
+    "model": "qwq-32b",
+    "ok": true,
+    "ms": 14500,
+    "reply": "Alright, the user wants me to reply with exactly one word: \"",
+    "error": ""
+  },
+  {
+    "model": "sqlcoder-7b-2",
+    "ok": true,
+    "ms": 10500,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistral-7b-v0.2-lora",
+    "ok": true,
+    "ms": 39655,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "una-cybertron-7b-v2-bf16",
+    "ok": true,
+    "ms": 9670,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "tinyllama-1.1b-v1.0",
+    "ok": true,
+    "ms": 15500,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "zephyr-7b-beta",
+    "ok": true,
+    "ms": 9625,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "starling-lm-7b-beta",
+    "ok": true,
+    "ms": 17985,
+    "reply": "Ok",
+    "error": ""
+  },
+  {
+    "model": "command-a-03-2025",
+    "ok": true,
+    "ms": 10077,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "command-r-08-2024",
+    "ok": true,
+    "ms": 11969,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "command-r-plus-08-2024",
+    "ok": true,
+    "ms": 14391,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3-30b-a3b",
+    "ok": true,
+    "ms": 39483,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "command-r",
+    "ok": true,
+    "ms": 21922,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "command-r7b-12-2024",
+    "ok": true,
+    "ms": 24092,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "command-r-plus",
+    "ok": true,
+    "ms": 26344,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "Copilot",
+    "ok": true,
+    "ms": 24985,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "Smart (GPT-5)",
+    "ok": true,
+    "ms": 23172,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "command-r7b-arabic-02-2025",
+    "ok": true,
+    "ms": 35671,
+    "reply": "I will reply with exactly one word: ok.",
+    "error": ""
+  },
+  {
+    "model": "chat",
+    "ok": true,
+    "ms": 13187,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "smart",
+    "ok": true,
+    "ms": 17405,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "reasoning",
+    "ok": true,
+    "ms": 16016,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "search",
+    "ok": true,
+    "ms": 12672,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "Study",
+    "ok": true,
+    "ms": 28079,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "Think Deeper",
+    "ok": true,
+    "ms": 39875,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "study",
+    "ok": true,
+    "ms": 19530,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-3.5-flash-lite",
+    "ok": true,
+    "ms": 10687,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-3.1-pro",
+    "ok": true,
+    "ms": 12375,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-3.6-flash",
+    "ok": true,
+    "ms": 20531,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-3.7-flash",
+    "ok": true,
+    "ms": 18391,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-3.8-flash",
+    "ok": true,
+    "ms": 17686,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-2.0-flash",
+    "ok": true,
+    "ms": 17375,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-3.1-flash-lite",
+    "ok": true,
+    "ms": 12282,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-2.0",
+    "ok": true,
+    "ms": 22077,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-2.0-flash-thinking-with-apps",
+    "ok": true,
+    "ms": 20046,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-2.0-flash-thinking",
+    "ok": true,
+    "ms": 22797,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-3.5-flash-thinking",
+    "ok": true,
+    "ms": 17968,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-3.6-flash-thinking",
+    "ok": true,
+    "ms": 18265,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-3.5-flash-thinking-lite",
+    "ok": true,
+    "ms": 13155,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-3.5-flash-lite-thinking",
+    "ok": true,
+    "ms": 14672,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "GigaChat-2",
+    "ok": true,
+    "ms": 13983,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-auto",
+    "ok": true,
+    "ms": 22047,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini-flash-lite",
+    "ok": true,
+    "ms": 19703,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "GigaChat-2-Pro",
+    "ok": true,
+    "ms": 18202,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "GigaChat-Pro",
+    "ok": true,
+    "ms": 15875,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "GigaChat-2-Max",
+    "ok": true,
+    "ms": 18342,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "GigaChat",
+    "ok": true,
+    "ms": 17797,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "grok-4",
+    "ok": true,
+    "ms": 12546,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "GigaChat-Max",
+    "ok": true,
+    "ms": 19920,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "ai-mode",
+    "ok": true,
+    "ms": 22719,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "grok-4-reasoning",
+    "ok": true,
+    "ms": 16266,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "grok-3-mini-reasoning",
+    "ok": true,
+    "ms": 15843,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "grok-3-reasoning",
+    "ok": true,
+    "ms": 18188,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "grok-2-image",
+    "ok": true,
+    "ms": 13047,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "grok-2",
+    "ok": true,
+    "ms": 17719,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "grok-4-heavy",
+    "ok": true,
+    "ms": 27030,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "grok-latest",
+    "ok": true,
+    "ms": 11812,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "1024x1024",
+    "ok": true,
+    "ms": 12172,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "grok-3-mini",
+    "ok": true,
+    "ms": 23704,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "1024x1792",
+    "ok": true,
+    "ms": 10891,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "MiniMax-M3",
+    "ok": true,
+    "ms": 10766,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "1792x1024",
+    "ok": true,
+    "ms": 12108,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "MiniMax-M2.7",
+    "ok": true,
+    "ms": 12171,
+    "reply": "Ok",
+    "error": ""
+  },
+  {
+    "model": "friendly",
+    "ok": true,
+    "ms": 9656,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "default",
+    "ok": true,
+    "ms": 12000,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "MiniMax-M2.7-highspeed",
+    "ok": true,
+    "ms": 14078,
+    "reply": "Ok",
+    "error": ""
+  },
+  {
+    "model": "patient_teacher",
+    "ok": true,
+    "ms": 12015,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "noir_detective",
+    "ok": true,
+    "ms": 9108,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "cowboy",
+    "ok": true,
+    "ms": 10031,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "calm",
+    "ok": true,
+    "ms": 10141,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "alloy",
+    "ok": true,
+    "ms": 9843,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "ash",
+    "ok": true,
+    "ms": 9312,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "ballad",
+    "ok": true,
+    "ms": 9202,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "scientific_style",
+    "ok": true,
+    "ms": 13453,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "coral",
+    "ok": true,
+    "ms": 10546,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "echo",
+    "ok": true,
+    "ms": 11218,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "fable",
+    "ok": true,
+    "ms": 9766,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "onyx",
+    "ok": true,
+    "ms": 12125,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "nova",
+    "ok": true,
+    "ms": 10281,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "sage",
+    "ok": true,
+    "ms": 10296,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "shimmer",
+    "ok": true,
+    "ms": 10343,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt-5-2",
+    "ok": true,
+    "ms": 8812,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "auto",
+    "ok": true,
+    "ms": 9781,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "verse",
+    "ok": true,
+    "ms": 11468,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt-5-1",
+    "ok": true,
+    "ms": 11264,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt-5",
+    "ok": true,
+    "ms": 12031,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o1",
+    "ok": true,
+    "ms": 10704,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o1-mini",
+    "ok": true,
+    "ms": 12358,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o3-mini",
+    "ok": true,
+    "ms": 13547,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o3-mini-high",
+    "ok": true,
+    "ms": 12952,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt-image",
+    "ok": true,
+    "ms": 12952,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o4-mini-high",
+    "ok": true,
+    "ms": 14141,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "aria",
+    "ok": true,
+    "ms": 15829,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "turbo",
+    "ok": true,
+    "ms": 15420,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "aria-legacy",
+    "ok": true,
+    "ms": 16905,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt5",
+    "ok": true,
+    "ms": 14952,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o3pro",
+    "ok": true,
+    "ms": 12811,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt5_thinking",
+    "ok": true,
+    "ms": 16156,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt41",
+    "ok": true,
+    "ms": 18829,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o3",
+    "ok": true,
+    "ms": 16453,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude2",
+    "ok": true,
+    "ms": 14358,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude37sonnetthinking",
+    "ok": true,
+    "ms": 12891,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude40opusthinking",
+    "ok": true,
+    "ms": 12608,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude40opus",
+    "ok": true,
+    "ms": 15766,
+    "reply": "Understood.",
+    "error": ""
+  },
+  {
+    "model": "claude41opusthinking",
+    "ok": true,
+    "ms": 14813,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude45sonnetthinking",
+    "ok": true,
+    "ms": 13031,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude45sonnet",
+    "ok": true,
+    "ms": 15405,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "experimental",
+    "ok": true,
+    "ms": 14296,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "grok",
+    "ok": true,
+    "ms": 11891,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "grok4",
+    "ok": true,
+    "ms": 14250,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "pplx_beta",
+    "ok": true,
+    "ms": 11047,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "pplx_pro_upgraded",
+    "ok": true,
+    "ms": 15250,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "pplx_alpha",
+    "ok": true,
+    "ms": 15233,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o3_research",
+    "ok": true,
+    "ms": 14545,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "comet_max_assistant",
+    "ok": true,
+    "ms": 18797,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini2flash",
+    "ok": true,
+    "ms": 24469,
+    "reply": "I'll acknowledge your message. How can I help you today?",
+    "error": ""
+  },
+  {
+    "model": "pplx_pro",
+    "ok": true,
+    "ms": 26858,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o3pro_research",
+    "ok": true,
+    "ms": 16203,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude40sonnet_research",
+    "ok": true,
+    "ms": 16500,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude40opus_research",
+    "ok": true,
+    "ms": 15312,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude40opusthinking_research",
+    "ok": true,
+    "ms": 15188,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude40sonnetthinking_research",
+    "ok": true,
+    "ms": 19968,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o3_labs",
+    "ok": true,
+    "ms": 14765,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude40sonnetthinking_labs",
+    "ok": true,
+    "ms": 13203,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude40opusthinking_labs",
+    "ok": true,
+    "ms": 14343,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o4mini",
+    "ok": true,
+    "ms": 11968,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o3pro_labs",
+    "ok": true,
+    "ms": 20952,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt4o",
+    "ok": true,
+    "ms": 16312,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt4",
+    "ok": true,
+    "ms": 13953,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama_x_large",
+    "ok": true,
+    "ms": 10858,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude35haiku",
+    "ok": true,
+    "ms": 12296,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "mistral",
+    "ok": true,
+    "ms": 11563,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "claude3opus",
+    "ok": true,
+    "ms": 12484,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemini",
+    "ok": true,
+    "ms": 10077,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "pplx_reasoning",
+    "ok": true,
+    "ms": 10936,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-3-sonar-small-32k-chat",
+    "ok": true,
+    "ms": 11219,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "r1",
+    "ok": true,
+    "ms": 12875,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-3-sonar-large-32k-chat",
+    "ok": true,
+    "ms": 10250,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-3-sonar-large-32k-online",
+    "ok": true,
+    "ms": 12092,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "o3mini",
+    "ok": true,
+    "ms": 30937,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gpt45",
+    "ok": true,
+    "ms": 34858,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-3-8b-instruct",
+    "ok": true,
+    "ms": 11375,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "llama-3-70b-instruct",
+    "ok": true,
+    "ms": 12343,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "deepseek",
+    "ok": true,
+    "ms": 11983,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "pi",
+    "ok": true,
+    "ms": 12656,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.7-max",
+    "ok": true,
+    "ms": 12359,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.6-27b",
+    "ok": true,
+    "ms": 10218,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.7-plus",
+    "ok": true,
+    "ms": 13609,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.6-plus",
+    "ok": true,
+    "ms": 16358,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.6-max-preview",
+    "ok": true,
+    "ms": 16375,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.5-plus",
+    "ok": true,
+    "ms": 13421,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.6-35b-a3b",
+    "ok": true,
+    "ms": 10078,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen-latest-series-invite-beta-v16",
+    "ok": true,
+    "ms": 15984,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.5-flash",
+    "ok": true,
+    "ms": 11453,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen-latest-series-invite-beta-v24",
+    "ok": true,
+    "ms": 18438,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.5-omni-plus",
+    "ok": true,
+    "ms": 16733,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.5-max-2026-03-08",
+    "ok": true,
+    "ms": 14858,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.6-plus-preview",
+    "ok": true,
+    "ms": 17702,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.5-omni-flash",
+    "ok": true,
+    "ms": 13156,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.5-35b-a3b",
+    "ok": true,
+    "ms": 11717,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.5-397b-a17b",
+    "ok": true,
+    "ms": 14031,
+    "reply": "Ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.5-27b",
+    "ok": true,
+    "ms": 13405,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3.5-122b-a10b",
+    "ok": true,
+    "ms": 16264,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3-max-2026-01-23",
+    "ok": true,
+    "ms": 13233,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen-plus-2025-07-28",
+    "ok": true,
+    "ms": 12750,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3-omni-flash-2025-12-01",
+    "ok": true,
+    "ms": 10438,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3-coder-plus",
+    "ok": true,
+    "ms": 11407,
+    "reply": "mcp__test_string(\"ok\")",
+    "error": ""
+  },
+  {
+    "model": "meta/meta-llama-3-70b-instruct",
+    "ok": true,
+    "ms": 10484,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "qwen3-vl-plus",
+    "ok": true,
+    "ms": 11811,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "sd-3.5-large",
+    "ok": true,
+    "ms": 11078,
+    "reply": "ok",
+    "error": ""
+  },
+  {
+    "model": "gemma",
+    "ok": true,
+    "ms": 11235,
+    "reply": "ok",
+    "error": ""
+  }
+]

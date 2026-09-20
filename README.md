@@ -199,6 +199,10 @@ python scripts\probe_models.py --all      :: every model g4f advertises
 Each model gets one tiny request; the script prints `✅`/`❌`, latency and the
 reply, and `--json` writes the raw results.
 
+Last full run: **620 of 645** g4f models obeyed a one-word instruction
+(median 12.7 s) — [docs/MODELS.md](docs/MODELS.md) has the breakdown, including
+which single upstream carries half the catalog.
+
 ## Slash commands
 
 Type `/` in the REPL and the menu filters as you type; `Tab` completes, arguments
