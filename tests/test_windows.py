@@ -120,7 +120,34 @@ def test_an_unhealthy_endpoint_is_not_mistaken_for_a_small_window(message):
     assert result.window is None
     assert "not a size problem" in result.note
     assert windows.measured("sick-model") is None, "nothing may be cached"
-    assert broken.calls == 1, "it stops at the first unrelated error"
+    assert broken.calls == 3, "it gets its retries, then stops"
+
+
+class Flaky:
+    """Drops the first requests of every step, like a guest upstream does."""
+
+    def __init__(self, failures):
+        self.failures = failures
+        self.left = failures
+        self.calls = 0
+
+    async def chat(self, messages, model=""):
+        self.calls += 1
+        if self.left > 0:
+            self.left -= 1
+            raise RuntimeError("401: HTML content")
+        from beeagent.utils.tokens import count_tokens
+
+        content = str(messages[0]["content"])
+        return content.split("\n", 1)[0] if content.startswith("BEE-") else "ok"
+
+
+def test_a_flaky_endpoint_is_retried_instead_of_ending_the_measurement():
+    flaky = Flaky(2)
+    result = asyncio.run(windows.probe("flaky", flaky, ceiling=2048))
+    assert result.window == 2048, "the step completes on the third try"
+    assert flaky.calls == 3
+    assert windows.measured("flaky") == 2048
 
 
 class Slow:
@@ -143,10 +170,13 @@ def test_our_own_patience_running_out_is_reported_as_slowness():
     result = asyncio.run(windows.probe("sluggish", slow, ceiling=8192, timeout=5))
     assert result.window == 8192 and "no refusal" in result.note
 
-    impatient = asyncio.run(windows.probe("sluggish", Slow(30), ceiling=8192, timeout=1))
+    impatient_endpoint = Slow(30)
+    impatient = asyncio.run(windows.probe("sluggish", impatient_endpoint,
+                                          ceiling=8192, timeout=1))
     assert impatient.window is None, "a timeout proves nothing about size"
     assert "2048 tokens" in impatient.note and "slow" in impatient.note
     assert "not a size problem" not in impatient.note
+    assert impatient_endpoint.calls == 1, "a slow step is not retried — it already waited"
     assert windows.measured("sluggish") == 8192, "it must not overwrite a real measurement"
 
 

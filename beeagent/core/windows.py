@@ -122,8 +122,35 @@ def _describe(error: Exception) -> str:
     return text or type(error).__name__
 
 
+async def _send(provider, model: str, content: str, timeout: int, attempts: int):
+    """One probe request, retried while the failure says nothing about size.
+
+    A free endpoint drops ordinary requests constantly — 401 from a guest
+    upstream, a rotated provider that needs a key, a quota error — and one such
+    hiccup must not end a measurement that is three steps in. A real refusal is
+    not retried: it is the answer we came for. A step that ran out of patience
+    is not retried either — it already cost `timeout` seconds, and repeating
+    that would only make the honest conclusion arrive later.
+    """
+    error = None
+    for _ in range(max(1, attempts)):
+        try:
+            return "ok", await asyncio.wait_for(
+                provider.chat([{"role": "user", "content": content}], model=model), timeout)
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError as e:
+            return "timeout", e
+        except Exception as e:
+            error = e
+            message = _describe(e)
+            if limit_from_error(message) or _OVERFLOW_HINT.search(message):
+                return "error", e
+    return "error", error
+
+
 async def probe(model: str, provider, ceiling: int = LADDER[-1], timeout: int = 240,
-                on_step=None) -> ProbeResult:
+                attempts: int = 3, on_step=None) -> ProbeResult:
     """Climb the ladder until the endpoint stops really taking the prompt.
 
     Two ways to fail are measured. The endpoint may refuse, ideally naming its
@@ -142,30 +169,28 @@ async def probe(model: str, provider, ceiling: int = LADDER[-1], timeout: int = 
         content = _filler(size, needle) + (RECALL_ASK if needle else PLAIN_ASK)
         if on_step:
             on_step(size, accepted)
-        try:
-            reply = await asyncio.wait_for(
-                provider.chat([{"role": "user", "content": content}], model=model), timeout)
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError:
+        kind, value = await _send(provider, model, content, timeout, attempts)
+        if kind == "timeout":
             # Our own patience ran out. A free upstream can spend minutes on a
             # big prompt it will answer perfectly well — the least useful thing
             # to do is call that a small window.
             return ProbeResult(
                 None, f"{size} tokens went unanswered in {timeout}s — that is a slow "
                       f"endpoint, not a small window. Retry with a longer --timeout.")
-        except Exception as e:
-            message = _describe(e)
+        if kind == "error":
+            message = _describe(value)
             named = limit_from_error(message)
             if named:
                 remember(model, named)
                 return ProbeResult(named, f"endpoint named the limit: {named}")
             if not _OVERFLOW_HINT.search(message):
-                return ProbeResult(None, f"not a size problem: {message[:140]}")
+                return ProbeResult(None, f"not a size problem after {attempts} tries: "
+                                         f"{message[:140]}")
             if accepted:
                 remember(model, accepted)
                 return ProbeResult(accepted, f"refused between {accepted} and {size} tokens")
             return ProbeResult(None, "the very first request was refused")
+        reply = value
 
         if needle and needle.lower() not in (reply or "").lower():
             if not accepted:
