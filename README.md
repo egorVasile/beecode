@@ -114,14 +114,36 @@ BeeCode runs a plain, inspectable loop — no hidden orchestration:
 
 ### Context window
 
-A single huge tool output (a big file read, a recursive glob) used to evict the whole
-conversation and the model would answer as if the chat had just started. Now oversized
-messages are **clipped** (head + tail kept, middle marked as truncated), messages that
-still do not fit are skipped individually, and the request you are working on is always
-pulled back into the window. When something is dropped you see it:
+A model with a small window used to lose the thread for one turn and then "remember" it
+after you repeated yourself. Two causes, both fixed:
+
+* **The budget follows the model, not a constant.** A request is built to fit the
+  model's own context window minus room for its reply — 8k for a `llama-3.1-8b`,
+  12k for a `gpt-4o` — instead of a flat 12 000 tokens that a small endpoint then
+  trimmed on its own side, silently cutting the oldest history.
+* **Tokens are counted, not guessed.** `gpt-4`-style names aside, every g4f model id
+  fell back to "four characters per token", which read Russian text as half its real
+  size — so an oversized request looked like it fit.
+
+When the conversation still does not fit, nothing is thrown away in silence:
+
+* oversized messages are **clipped** (head + tail kept, the cut marked in tokens);
+* the request you are working on is **shrunk rather than dropped** — it always travels;
+* everything else is **compressed into a digest that rides in the system prompt**, so
+  the model sees the shape of the chat instead of a blank page:
 
 ```
-✂ history did not fit the context: dropped 3 older messages, big outputs are clipped — the task stays in view
+# CONVERSATION SO FAR — 42 earlier message(s) were compressed to fit the context window.
+user: разбери проект и найди все проблемы в beeagent/core
+bee: пункт 0: подробное обоснование найденной проблемы…
+tool: → read
+user: а теперь почини их и прогони pytest
+```
+
+You see it happen, and `/token` shows the window it was fitted to:
+
+```
+✂ history did not fit the context: compressed 42 messages into a summary in the system prompt, big outputs are clipped — the task stays in view
 ```
 
 ### Mistakes are recovered, not fatal
@@ -203,6 +225,28 @@ Last full run: **620 of 645** g4f models obeyed a one-word instruction
 (median 12.7 s) — [docs/MODELS.md](docs/MODELS.md) has the breakdown, including
 which single upstream carries half the catalog.
 
+### How big is the context window, really?
+
+g4f does not publish window sizes — its `Model` carries a name and providers, and
+provider classes keep `max_tokens = None` — so BeeCode **measures** them: it sends
+a growing prompt until the endpoint refuses, and reads the limit out of the refusal.
+
+```
+/window                      what BeeCode believes about the current model, and why
+/window measure gpt-4o-mini  ask the endpoint (a minute or two of real requests)
+```
+
+```bat
+python scripts\probe_window.py glm-4.7-flash --ceiling 32768
+python scripts\probe_window.py --all-candidates
+```
+
+Measurements are cached in `.beeagent/windows.json` (never committed) and then win
+over the guess taken from the model name, so the request ceiling follows the model
+you actually picked. A refusal that names its limit (`maximum context length is
+8192 tokens`) is used as stated; a refusal that only says "too long" still narrows
+the window to the largest prompt that fitted.
+
 ## Slash commands
 
 Type `/` in the REPL and the menu filters as you type; `Tab` completes, arguments
@@ -218,11 +262,13 @@ mouse-clickable picker.
 
 | Command | What it does | Usage |
 | --- | --- | --- |
+| `/allow` | Grant one unsafe tool for this session | `/allow <tool>` |
 | `/key` | Store your own API key for a provider | `/key <provider> <token>` |
 | `/lang` | Switch the interface language | `/lang <en|ru>` |
 | `/mode` | Switch between normal and economy | `/mode <normal|economy>` |
 | `/model` | Switch the active model | `/model <name>` |
 | `/models` | List available models | `/models` |
+| `/permissions` | Who may touch the machine: ask, auto or readonly | `/permissions <ask|auto|readonly>` |
 | `/provider` | Switch the active provider | `/provider <name>` |
 | `/providers` | List providers and which ones have a key | `/providers` |
 
@@ -255,6 +301,7 @@ mouse-clickable picker.
 | `/thinking` | Show the last model reasoning (scrollable) | `/thinking` |
 | `/token` | Show current context token usage | `/token` |
 | `/tools` | List registered tools | `/tools` |
+| `/window` | Show or measure the model context window | `/window [measure] [model]` |
 
 ### Sessions
 
@@ -318,11 +365,48 @@ startup loads cached schemas only, and `/mcp connect` does the rest explicitly.
 | `provider` | `g4f` | Which registered provider to use |
 | `mode` | `normal` | `economy` enables answer caching |
 | `max_turns` | `50` | Tool-loop iterations per request |
+| `max_context_tokens` | `0` | Ceiling for one request; `0` takes the window from the model |
 | `language` | `en` | Interface language, `en` or `ru` |
 | `custom_providers` | `[]` | `openai_compat` / `ollama` endpoints |
+| `api_keys` | `{}` | Your own keys per provider, added with `/key` (never printed in full) |
+| `permissions.mode` | `ask` | `ask` · `auto` · `readonly` — see [Permissions](#permissions) |
+| `permissions.allowed` | `[]` | Tools pre-approved for every session, e.g. `["bash", "write"]` |
+| `economy.cache_enabled` | `true` | Turn answer caching off even in economy mode |
 | `economy.cache_dir` | `.beeagent/cache` | Where answers and sessions live |
+| `economy.cache_ttl_minutes` | `30` | How long a cached answer may stand before it is re-asked |
 
 `BEECODE_LANG=ru` and `BEECODE_NO_ANIM=1` are also honoured.
+
+## Permissions
+
+BeeCode edits real files and runs real commands, so **the model does not decide
+what is allowed — you do.** A reply from a free endpoint is a guess; guessing
+`rm -rf` should not be enough to run it.
+
+| Mode | What runs without asking | Switch |
+| --- | --- | --- |
+| `ask` (default) | Reading tools: `read`, `grep`, `glob`, `list_directory`, `web_search`, `todo`, `skill` | `/permissions ask` |
+| `auto` | Everything | `/permissions auto` |
+| `readonly` | Only the reading tools, even tools you granted | `/permissions readonly` |
+
+In `ask` mode a tool that changes the machine — `write`, `edit`, `bash`, `git`,
+and anything a plugin or MCP server adds — is refused, and you see why:
+
+```
+⛔ bash command='pytest -q'  blocked — no permission
+   allow it: /allow bash   or /permissions auto to trust the model
+```
+
+`/allow <tool>` grants one tool for the session (`/allow remove <tool>` takes it
+back), and the model is told the rules too, so it asks you instead of retrying.
+Put names in `permissions.allowed` in `beeagent.json` to keep a grant forever.
+
+The same rule covers extensions: `/plugin install <git-url>` clones code that
+later runs inside BeeCode, so it needs `--trust` — after you have read it.
+
+The economy cache keeps only final plain-text answers, never a half-finished
+tool step, and expires entries after `cache_ttl_minutes` because a reply about
+a file stops being true when the file changes.
 
 ## Language
 

@@ -139,6 +139,9 @@ DEFAULT_WINDOW = 8192
 # skills and huge dumps make cost grow fast.
 MAX_WINDOW = 32768
 
+# A measured limit may be trusted further than a guess from the model name.
+MEASURED_MAX_WINDOW = 262144
+
 # The "… N tokens truncated …" marker is part of a clipped message's cost.
 CLIP_MARKER_TOKENS = 40
 
@@ -157,9 +160,17 @@ _MODEL_FAMILIES = (
 def window_for(model: str) -> int:
     """The context window a model id advertises, conservative when unknown.
 
-    Sizes written into the id win ("llama-3.1-8b-128k", "glm-4-9b-32k"); the
-    "8b" form is parameter count, not window, so only k/m markers are read.
+    A measured value wins: it came from the endpoint refusing a real prompt,
+    while everything below is a guess from the model's name.
+    Sizes written into the id take precedence over the family table
+    ("llama-3.1-8b-128k", "glm-4-9b-32k"); the "8b" form is parameter count,
+    not window, so only k/m markers are read.
     """
+    from beeagent.core import windows
+
+    measured = windows.measured(model or "")
+    if measured:
+        return max(1024, min(MEASURED_MAX_WINDOW, measured))
     name = (model or "").lower()
     for pattern, unit in ((_WINDOW_MARKERS, 1024), (_WINDOW_MARKERS_M, 1024 * 1024)):
         match = pattern.search(name)

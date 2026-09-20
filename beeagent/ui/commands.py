@@ -18,6 +18,7 @@ from rich import box
 
 from beeagent.core.session import Session
 from beeagent.i18n import L
+from beeagent.core.permissions import AUTO, MODE_HELP, MODES as PERMISSION_MODES, READONLY
 from beeagent.plugins.catalog import TYPE_ICON
 from beeagent.ui.components import BORDER, HONEY, bee_title
 
@@ -49,6 +50,7 @@ COMMANDS: list[Command] = [
     Command("stats", "Show economy/request stats", category="info"),
     Command("token", "Show current context token usage", category="info"),
     Command("thinking", "Show the last model reasoning (scrollable)", category="info"),
+    Command("window", "Show or measure the model context window", usage="/window [measure] [model]", category="info"),
     # model / provider / mode
     Command("model", "Switch the active model", arg="model", usage="/model <name>", category="engine"),
     Command("models", "List available models", category="engine"),
@@ -56,6 +58,10 @@ COMMANDS: list[Command] = [
     Command("providers", "List providers and which ones have a key", category="engine"),
     Command("key", "Store your own API key for a provider", usage="/key <provider> <token>", category="engine"),
     Command("mode", "Switch between normal and economy", arg="mode", usage="/mode <normal|economy>", category="engine"),
+    Command("permissions", "Who may touch the machine: ask, auto or readonly", arg="permission",
+            usage="/permissions <ask|auto|readonly>", category="engine"),
+    Command("allow", "Grant one unsafe tool for this session", arg="tool",
+            usage="/allow <tool>", category="engine"),
     Command("lang", "Switch the interface language", usage="/lang <en|ru>", category="engine"),
     # direct tool commands
     Command("run", "Run a shell command", usage="/run <command>", category="tools"),
@@ -240,11 +246,20 @@ def mcp_choices(ctx: ReplContext) -> list[tuple[str, str]]:
     return out
 
 
+def unsafe_tool_names(ctx: ReplContext) -> list[str]:
+    """Tools `/allow` can grant — the ones that change the machine."""
+    if ctx.agent is None:
+        return []
+    return [t.name for t in ctx.agent.tools.list_tools() if not t.is_safe()]
+
+
 def build_sources(ctx: ReplContext) -> dict[str, list[str]]:
     return {
         "model": available_models(ctx),
         "provider": available_providers(ctx),
         "mode": list(AVAILABLE_MODES),
+        "permission": list(PERMISSION_MODES),
+        "tool": unsafe_tool_names(ctx),
         "session": Session.list_sessions(),
         "theme": list(THEMES),
         "path": available_paths(ctx),
@@ -439,11 +454,31 @@ def _cmd_key(ctx, args):
                       f"неизвестный провайдер '{name}'. Список — /providers."))
     endpoint = BY_NAME[name]
 
-    if len(args) < 2 or args[1] in ("remove", "rm", "delete"):
+    def drop():
         ctx.config.api_keys.pop(name, None)
         if ctx.agent is not None:
-            ctx.agent.providers._providers.pop(name, None)
+            ctx.agent.providers.unregister(name)
+            ctx.agent.ready_presets = [p for p in ctx.agent.ready_presets if p != name]
         persist()
+
+    # Bare `/key groq` reports the state instead of deleting anything: a missing
+    # argument must never cost the user their key.
+    if len(args) < 2:
+        current = (ctx.config.api_keys or {}).get(name)
+        if current:
+            return CommandResult(output=Text(L(
+                f"{endpoint.label}: key saved (…{current[-4:]}) — "
+                f"replace it with /key {name} <token>, delete with /key {name} remove",
+                f"{endpoint.label}: ключ сохранён (…{current[-4:]}) — "
+                f"заменить: /key {name} <токен>, удалить: /key {name} remove"), style="dim"))
+        return CommandResult(output=Text(L(
+            f"{endpoint.label}: no key yet — get one at {endpoint.signup} "
+            f"and run /key {name} <token>",
+            f"{endpoint.label}: ключа нет — возьми на {endpoint.signup} "
+            f"и выполни /key {name} <токен>"), style="dim"))
+
+    if args[1] in ("remove", "rm", "delete"):
+        drop()
         return _ok(L(f"🗑 key for {endpoint.label} removed", f"🗑 ключ {endpoint.label} удалён"))
 
     token = args[1].strip()
@@ -537,6 +572,93 @@ def _cmd_mode(ctx, args):
     return _ok(f"mode → {mode}")
 
 
+def _permissions_of(ctx: ReplContext):
+    """The live gate when an agent is up; the config is its source of truth."""
+    return ctx.agent.permissions if ctx.agent is not None else None
+
+
+def _cmd_permissions(ctx, args):
+    from beeagent.config.loader import save_config
+
+    perms = _permissions_of(ctx)
+    mode = perms.mode if perms is not None else ctx.config.permissions.mode
+
+    if not args:
+        table = Table(title=bee_title(f"🐝 permissions — {mode}"), box=box.ROUNDED,
+                      border_style=BORDER, expand=False)
+        table.add_column("mode", style="bold #ffcc00")
+        table.add_column("what it does")
+        for name in PERMISSION_MODES:
+            table.add_row(name + ("  ←" if name == mode else ""), MODE_HELP[name])
+        granted = sorted(perms.granted if perms is not None else ctx.config.permissions.allowed)
+        table.add_row(L("granted by hand", "разрешено вручную"),
+                      ", ".join(granted) or L("nothing yet", "пока ничего"))
+        table.caption = Text(L("switch: /permissions <mode> · one tool at a time: /allow <tool>",
+                               "переключить: /permissions <режим> · точечно: /allow <инструмент>"),
+                             style="dim")
+        return CommandResult(output=table)
+
+    wanted = args[0].lower()
+    if wanted not in PERMISSION_MODES:
+        return _err(L(f"unknown mode '{wanted}' — choose between {', '.join(PERMISSION_MODES)}",
+                      f"неизвестный режим '{wanted}' — выбирай между {', '.join(PERMISSION_MODES)}"))
+    ctx.config.permissions.mode = wanted
+    if perms is not None:
+        perms.set_mode(wanted)
+    try:
+        save_config(ctx.config, ctx.agent.workdir if ctx.agent is not None else ".")
+    except OSError:
+        pass
+    return _ok(L(f"permissions → {wanted} · {MODE_HELP[wanted]}",
+                 f"разрешения → {wanted} · {MODE_HELP[wanted]}"))
+
+
+def _cmd_allow(ctx, args):
+    perms = _permissions_of(ctx)
+    if perms is None:
+        return _err(L("no agent here — permissions are read from beeagent.json "
+                      "(permissions.allowed)",
+                      "агента нет — разрешения читаются из beeagent.json "
+                      "(permissions.allowed)"))
+
+    if not args:
+        granted = ", ".join(sorted(perms.granted)) or L("nothing yet", "пока ничего")
+        return CommandResult(output=Text(L(
+            f"allowed this session: {granted}   grant: /allow <tool> · "
+            f"revoke: /allow remove <tool>",
+            f"разрешено в сессии: {granted}   выдать: /allow <инструмент> · "
+            f"отозвать: /allow remove <инструмент>"), style="dim"))
+
+    name = args[0].lower()
+    if name in ("remove", "rm", "delete"):
+        if len(args) < 2:
+            return _err(L("usage: /allow remove <tool>", "использование: /allow remove <инструмент>"))
+        target = args[1].lower()
+        if perms.revoke(target):
+            ctx.agent.sync_config_permissions()
+            return _ok(L(f"🗑 {target} is not allowed any more", f"🗑 {target} больше нельзя"))
+        return _err(L(f"{target} was never granted", f"{target} и не был разрешён"))
+
+    tool = ctx.agent.tools.get(name)
+    if tool is None:
+        return _err(L(f"no tool '{name}'. The ones that need a grant: "
+                      f"{', '.join(unsafe_tool_names(ctx)) or '—'}",
+                      f"нет инструмента '{name}'. Нужного в: "
+                      f"{', '.join(unsafe_tool_names(ctx)) or '—'}"))
+    if tool.is_safe():
+        return _ok(L(f"{name} only reads — it never needed a grant",
+                     f"{name} только читает — разрешение ему не нужно"))
+    if perms.mode == READONLY:
+        return _err(L("read-only mode ignores grants — run /permissions ask first",
+                      "режим только чтения игнорирует разрешения — сначала /permissions ask"))
+    perms.grant(name)
+    ctx.agent.sync_config_permissions()
+    return _ok(L(f"✅ {name} allowed for this session; write it into "
+                 f"permissions.allowed in beeagent.json to keep it",
+                 f"✅ {name} разрешён на эту сессию; впиши в permissions.allowed "
+                 f"в beeagent.json, чтобы осталось"))
+
+
 def _cmd_tools(ctx, args):
     if ctx.agent is None:
         return _err("No agent available.")
@@ -544,11 +666,25 @@ def _cmd_tools(ctx, args):
     return CommandResult(output=tools_table(ctx.agent.tools.list_tools()))
 
 
+def _redact_secrets(data: dict) -> dict:
+    """`/config` output ends up in screenshots and chat logs — never print a token."""
+    out = dict(data)
+    keys = out.get("api_keys") or {}
+    if keys:
+        out["api_keys"] = {name: f"…{str(token)[-4:]}" for name, token in keys.items()}
+    providers = out.get("custom_providers") or []
+    out["custom_providers"] = [
+        {**p, "key": f"…{str(p['key'])[-4:]}" if p.get("key") else ""}
+        for p in providers
+    ]
+    return out
+
+
 def _cmd_config(ctx, args):
     table = Table(title=bee_title("Configuration"), box=box.ROUNDED, border_style=BORDER, expand=False)
     table.add_column("Key", style="bold #ffcc00")
     table.add_column("Value")
-    for k, v in ctx.config.model_dump().items():
+    for k, v in _redact_secrets(ctx.config.model_dump()).items():
         table.add_row(k, str(v))
     return CommandResult(output=table)
 
@@ -598,15 +734,26 @@ def _cmd_token(ctx, args):
     if ctx.agent is None:
         return _err("No agent available.")
     from beeagent.utils.tokens import count_tokens
-    msgs = ctx.agent.context.build_messages(ctx.session.to_dicts(), ctx.agent.tools.to_schemas())
-    n = count_tokens(json.dumps(msgs), ctx.config.model)
-    limit = ctx.agent.context.max_tokens
+    context = ctx.agent.context
+    msgs = context.build_messages(ctx.session.to_dicts(), ctx.agent.tools.to_schemas())
+    # Sum the messages themselves: counting json.dumps() charges ~3 tokens per
+    # Cyrillic letter for the \\uXXXX escaping the model never sees.
+    n = sum(count_tokens(str(m.get("content") or ""), ctx.config.model) for m in msgs)
+    limit = context.max_tokens
     pct = int(100 * n / limit) if limit else 0
     text = Text()
     text.append(f"context tokens: ", style="dim")
     text.append(f"{n}", style="bold #ffcc00")
     text.append(f" / {limit}  ({pct}%)\n", style="dim")
-    text.append(f"messages: {len(ctx.session.messages)}", style="dim")
+    text.append(L(f"model {ctx.config.model} · window {context.window} · "
+                  f"messages: {len(ctx.session.messages)}",
+                  f"модель {ctx.config.model} · окно {context.window} · "
+                  f"сообщений: {len(ctx.session.messages)}"), style="dim")
+    if context.trimmed:
+        text.append("\n" + L(f"{context.trimmed} of them are compressed into the "
+                             f"summary in the system prompt",
+                             f"{context.trimmed} из них сжаты в конспект в системном промпте"),
+                    style="dim")
     return CommandResult(output=text)
 
 
@@ -660,6 +807,58 @@ def _cmd_history(ctx, args):
                   f"  📜 история: {len(msgs)} сообщений — листай колесом, q закрывает"), style="dim"),
         action="history_pager",
     )
+
+
+def _cmd_window(ctx, args):
+    """What we believe about this model's context window, or measure it."""
+    from beeagent.core import windows
+    from beeagent.core.context import window_for
+
+    if args and args[0] == "measure":
+        rest = args[1:]
+        model = " ".join(rest) if rest else ctx.config.model
+        if ctx.agent is None:
+            return _err(L("measuring needs a running agent (start beecode)",
+                          "замер нужен работающий агент (запусти beecode)"))
+        try:
+            provider = ctx.agent.providers.select(ctx.config.provider)
+        except Exception as e:
+            return _err(str(e))
+
+        def progress(size, accepted):
+            console.print(L(f"  ⏳ probe {size} tokens (last accepted {accepted})...",
+                            f"  ⏳ пробуем {size} токенов (последнее влезшее {accepted})..."),
+                        style="dim")
+
+        from beeagent.plugins.mcp import run_coro_blocking
+
+        try:
+            found = run_coro_blocking(
+                lambda: windows.probe(model, provider, on_step=progress), timeout=1800)
+        except Exception as e:
+            return _err(L(f"measurement failed: {e}", f"замер не удался: {e}"))
+        if not found:
+            return _err(L("the endpoint never refused the prompt, so no limit was seen",
+                          "эндпоинт ни разу не отказал, предел не найден"))
+        return _ok(L(f"📏 {model}: window ≈ {found} tokens (measured, saved to "
+                     f"{windows.CACHE})",
+                     f"📏 {model}: окно ≈ {found} токенов (замерено, сохранено в {windows.CACHE})"))
+
+    model = " ".join(args) if args else ctx.config.model
+    measured = windows.measured(model)
+    used = window_for(model)
+    source = (L("measured at this endpoint", "замерено на этом эндпоинте") if measured
+              else L("guessed from the model name", "угадано по имени модели"))
+    ceiling = ctx.agent.context.max_tokens if ctx.agent is not None else used
+    lines = Text()
+    lines.append(f"{model}\n", style="bold #ffcc00")
+    lines.append(L(f"  context window: {used} tokens  ({source})\n",
+                   f"  контекстное окно: {used} токенов  ({source})\n"))
+    lines.append(L(f"  request ceiling : {ceiling}\n", f"  потолок запроса  : {ceiling}\n"),
+                 style="dim")
+    lines.append(L("  measure it: /window measure <model>",
+                   "  померить: /window measure <модель>"), style="dim")
+    return CommandResult(output=lines)
 
 
 def _cmd_session(ctx, args):
@@ -803,9 +1002,21 @@ def _cmd_plugin(ctx, args):
 
     if not rest:
         return _err(f"usage: /plugin {sub} <name|git-url>")
-    target = " ".join(rest)
+    # --trust is a flag, not part of the name or the URL.
+    trusted = "--trust" in rest
+    target = " ".join(w for w in rest if w != "--trust")
 
     if sub == "install":
+        # A git source is someone else's Python: the loader exec_module()s it on
+        # the next start, so cloning it needs an explicit act of trust.
+        if not target:
+            return _err("usage: /plugin install <name|git-url> [--trust]")
+        item = manager.catalog.get(target) or manager.catalog.find_git(target)
+        if item is not None and item.source.get("kind") == "git" and not trusted:
+            return _err(L(f"“{target}” installs external code that runs inside BeeCode as tools. "
+                          f"Read it first, then re-run: /plugin install {target} --trust",
+                          f"«{target}» ставит чужой код, который исполняется внутри BeeCode "
+                          f"как инструменты. Прочитай его, потом: /plugin install {target} --trust"))
         try:
             report = manager.install(target)
         except Exception as e:
@@ -994,7 +1205,10 @@ HANDLERS: dict[str, Callable] = {
     "provider": _cmd_provider,
     "lang": _cmd_lang,
     "mode": _cmd_mode,
+    "permissions": _cmd_permissions,
+    "allow": _cmd_allow,
     "thinking": _cmd_thinking,
+    "window": _cmd_window,
     "tools": _cmd_tools,
     "plugins": _cmd_plugins,
     "plugin": _cmd_plugin,
