@@ -74,6 +74,34 @@ def test_g4f_curated_models_include_glm():
     assert p.models[0] == "glm-4.7-flash"
 
 
+def test_a_stream_g4f_returns_unwrapped_survives_the_provider():
+    """Auto-routing hands back an async generator, not a coroutine.
+
+    Awaiting that raised "object async_generator can't be used in 'await'
+    expression" for every streamed answer, and the provider turned it into
+    "g4f streamed nothing" — so no token ever reached the terminal.
+    """
+    import asyncio
+
+    from beeagent.providers.g4f_provider import _await_or_keep
+
+    async def as_generator():
+        yield "chunk"
+
+    async def as_coroutine():
+        return "value"
+
+    async def main():
+        stream = as_generator()
+        try:
+            assert await _await_or_keep(stream) is stream, "a stream must not be awaited"
+            assert await _await_or_keep(as_coroutine()) == "value"
+        finally:
+            await stream.aclose()
+
+    asyncio.run(main())
+
+
 def test_discover_models_is_full_catalog():
     catalog = G4fProvider.discover_models()
     # curated list first, then every model advertised by working providers

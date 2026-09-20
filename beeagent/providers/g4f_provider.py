@@ -9,6 +9,8 @@ Streaming yields (kind, text) tuples:
   ("reasoning", str)  -- thinking-block tokens (model-dependent)
 """
 from typing import AsyncIterator
+import inspect
+
 from .base import BaseProvider
 
 
@@ -33,6 +35,18 @@ def _reasoning_text(delta) -> str:
         if isinstance(val, str) and val:
             return val
     return ""
+
+
+async def _await_or_keep(response):
+    """Await g4f's reply, unless it already handed back the stream itself.
+
+    `AsyncClient.create(stream=True)` returns a coroutine for some providers and
+    an async generator for others — auto-routing gives the generator. Awaiting
+    that raised "object async_generator can't be used in 'await' expression",
+    which failed every streamed answer and left the agent silently re-asking
+    without tokens.
+    """
+    return await response if inspect.isawaitable(response) else response
 
 
 class G4fProvider(BaseProvider):
@@ -166,11 +180,11 @@ class G4fProvider(BaseProvider):
         for cls in provider_classes:
             client = AsyncClient(provider=cls) if cls else AsyncClient()
             try:
-                response = await client.chat.completions.create(
+                response = await _await_or_keep(client.chat.completions.create(
                     model=model,
                     messages=messages,
                     stream=stream,
-                )
+                ))
                 if stream:
                     parts = []
                     async for chunk in response:
@@ -200,15 +214,16 @@ class G4fProvider(BaseProvider):
 
         messages = self._sanitize_messages(messages)
         provider_classes = _keyless_providers() + [None]
+        last_error = None
 
         for cls in provider_classes:
             client = AsyncClient(provider=cls) if cls else AsyncClient()
             try:
-                stream = await client.chat.completions.create(
+                stream = await _await_or_keep(client.chat.completions.create(
                     model=model,
                     messages=messages,
                     stream=True,
-                )
+                ))
                 got_any = False
                 async for chunk in stream:
                     if not chunk.choices:
@@ -223,6 +238,11 @@ class G4fProvider(BaseProvider):
                         yield ("reasoning", reasoning)
                 if got_any:
                     return
+                last_error = "empty stream"
                 # empty stream -> try next provider
-            except Exception:
-                continue
+            except Exception as e:
+                # Swallowing this left the user staring at "empty response" while
+                # the real cause (rate limit, dead endpoint) went unsaid.
+                last_error = f"{getattr(cls, '__name__', 'auto')}: {e}"
+
+        raise RuntimeError(f"g4f streamed nothing for '{model}': {last_error}")
