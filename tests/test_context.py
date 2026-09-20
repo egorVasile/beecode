@@ -1,4 +1,13 @@
 from beeagent.core.context import ContextManager, REMINDER_SUFFIX
+from beeagent.i18n import set_lang
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _english():
+    """Language is process-global; every test here states the one it quotes."""
+    set_lang("en")
 
 
 def _msgs(*pairs):
@@ -6,6 +15,7 @@ def _msgs(*pairs):
 
 
 def test_huge_tool_result_is_clipped_not_evicting():
+    set_lang("ru")                            # the assertion below quotes the RU marker
     cm = ContextManager(max_tokens=12000)
     built = cm.build_messages(_msgs(
         ("user", "проанализируй C:/bot/userbot.py"),
@@ -30,7 +40,8 @@ def test_one_oversized_message_does_not_erase_the_conversation():
     bodies = [m["content"] for m in built]
     assert any("разбери проект" in b for b in bodies)
     assert sum("шаг" in b for b in bodies) >= 5
-    assert any("не влезли в контекст" in b for b in bodies) == (cm.trimmed > 0)
+    if cm.trimmed:
+        assert any("CONVERSATION SO FAR" in b for b in bodies)
 
 
 def _flat(pairs):
@@ -59,6 +70,7 @@ def test_task_survives_a_giant_tool_result(monkeypatch):
     from beeagent.core.agent import Agent
     from beeagent.core.session import Session
 
+    set_lang("ru")                            # the assertion below quotes the RU marker
     agent = Agent(config=BeeConfig())
     seen = []
     script = iter([
@@ -66,7 +78,7 @@ def test_task_survives_a_giant_tool_result(monkeypatch):
         "разобралась",
     ])
 
-    async def fake_stream(provider, messages, callback=None):
+    async def fake_stream(provider, messages, callback=None, model=""):
         seen.append([dict(m) for m in messages])
         text = next(script)
         if callback:
@@ -87,3 +99,107 @@ def test_task_survives_a_giant_tool_result(monkeypatch):
     second_call = "\n".join(m["content"] for m in seen[1])
     assert "проанализируй userbot.py" in second_call
     assert "обрезано" in second_call
+
+
+# --- the small-context amnesia fix ---------------------------------------
+
+
+def _long_history(turns: int) -> list[dict]:
+    history = _msgs(("user", "ЗАДАЧА 1: разбери проект и найди проблемы"))
+    for i in range(turns):
+        history += [
+            {"role": "assistant", "content": f"пункт {i}: " + "подробное обоснование " * 40},
+            {"role": "user", "content": f"уточнение {i}: " + "сделай ещё лучше " * 30},
+        ]
+    history.append({"role": "user", "content": "ЗАДАЧА ФИНАЛЬНАЯ: почини это"})
+    return history
+
+
+def test_dropped_turns_travel_as_a_digest_not_a_hole():
+    """What the user asked for: trimming must not send the model a blank page."""
+    cm = ContextManager(model="glm-4.7-flash")
+    history = _long_history(30)
+    built = cm.build_messages(history, [])
+    system = built[0]["content"]
+    window = "\n".join(m["content"] for m in built[1:])
+    assert cm.trimmed > 0, "this history must overflow a small model"
+    assert "CONVERSATION SO FAR" in system
+    assert any("ЗАДАЧА ФИНАЛЬНАЯ" in m["content"] for m in built)
+
+    # Nothing disappears: every message is either in the window verbatim or
+    # named in the digest.
+    assert "ЗАДАЧА 1" in system + window, "the opening request must survive"
+    assert "пункт 0" in system, "the compressed middle is summarised, not hidden"
+    assert "пункт 0" not in window
+
+
+def test_digest_is_written_in_the_active_language():
+    history = _long_history(30)
+    set_lang("ru")
+    system = ContextManager(model="glm-4.7-flash").build_messages(history, [])[0]["content"]
+    assert "ХОД РАЗГОВОРА" in system
+    assert "CONVERSATION SO FAR" not in system
+
+
+def test_request_never_costs_more_than_the_window_allows():
+    from beeagent.utils.tokens import count_tokens
+
+    history = _long_history(40)
+    for model in ("gpt-4", "glm-4.7-flash", "gpt-4o", "qwen2.5-32b"):
+        cm = ContextManager(max_tokens=12000, model=model)
+        built = cm.build_messages(history, [])
+        used = sum(count_tokens(m["content"], model) for m in built)
+        assert used <= cm.max_tokens, f"{model}: {used} tokens sent into a {cm.window} window"
+
+
+def test_window_follows_the_model_and_an_unknown_one_stays_small():
+    from beeagent.core.context import window_for
+
+    assert window_for("llama-3.1-8b-128k") == 32768   # capped, not unlimited
+    assert window_for("glm-4-9b-32k") == 32768
+    assert window_for("gpt-4o") == 32768              # 128k, capped
+    assert window_for("glm-4.7-flash") == 8192        # unrecognised: assume small
+    assert ContextManager(model="gpt-4").max_tokens < 8192, "room for the reply is reserved"
+
+
+def test_max_context_tokens_is_a_ceiling_not_a_pin():
+    cm = ContextManager(max_tokens=12000, model="glm-4.7-flash")
+    assert cm.window == 8192, "a small model must not be fed a 12000-token request"
+    big = ContextManager(max_tokens=12000, model="gpt-4o")
+    assert big.window == 12000, "the ceiling still holds a big model down"
+
+
+def test_cyrillic_is_not_undercounted_for_non_openai_models():
+    """The old chars//4 guess read Russian text as half its real size, so an
+    oversized request looked like it fit and the endpoint trimmed it."""
+    from beeagent.utils.tokens import count_tokens
+
+    text = "проанализируй проект и почини падающие тесты " * 60
+    for model in ("glm-4.7-flash", "deepseek-chat", "no-such-model-xyz"):
+        assert abs(count_tokens(text, model) - count_tokens(text, "gpt-4")) < 10
+
+
+def test_the_live_request_is_shrunk_rather_than_dropped():
+    cm = ContextManager(model="glm-4.7-flash")
+    huge = "требование " * 40000
+    built = cm.build_messages([{"role": "user", "content": huge}], [])
+    joined = "\n".join(m["content"] for m in built)
+    assert "требование" in joined, "even an oversized request must reach the model"
+    assert "truncated" in joined
+
+
+def test_trimmed_reports_a_digest_count_the_ui_can_show():
+    cm = ContextManager(model="glm-4.7-flash")
+    cm.build_messages(_long_history(60), [])
+    assert cm.trimmed > 0
+
+
+def test_build_messages_never_grows_the_callers_history():
+    """The reminder must not be written back into the session's own dicts."""
+    history = _flat([("user", "задача"), ("assistant", "ответ")])
+    before = [dict(m) for m in history]
+    cm = ContextManager(model="gpt-4")
+    for _ in range(3):
+        built = cm.build_messages(history, [])
+        assert any("SYSTEM:" in m["content"] for m in built)     # reminder is sent
+    assert history == before                                     # but not stored
