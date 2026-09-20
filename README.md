@@ -245,7 +245,9 @@ Measurements are cached in `.beeagent/windows.json` (never committed) and then w
 over the guess taken from the model name, so the request ceiling follows the model
 you actually picked. A refusal that names its limit (`maximum context length is
 8192 tokens`) is used as stated; a refusal that only says "too long" still narrows
-the window to the largest prompt that fitted.
+the window to the largest prompt that fitted. A rate limit, a revoked key or a
+timeout says nothing about size, so the probe stops and reports it instead of
+caching the last number it happened to send — a sick endpoint is not a small one.
 
 ## Slash commands
 
