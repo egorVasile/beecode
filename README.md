@@ -228,12 +228,13 @@ which single upstream carries half the catalog.
 ### How big is the context window, really?
 
 g4f does not publish window sizes — its `Model` carries a name and providers, and
-provider classes keep `max_tokens = None` — so BeeCode **measures** them: it sends
-a growing prompt until the endpoint refuses, and reads the limit out of the refusal.
+provider classes keep `max_tokens = None` — so BeeCode **measures** them. Two
+signals come off the endpoint: how large a prompt it refuses, and how large a
+prompt the model still *saw*.
 
 ```
 /window                      what BeeCode believes about the current model, and why
-/window measure gpt-4o-mini  ask the endpoint (a minute or two of real requests)
+/window measure gpt-4o-mini  ask the endpoint (a few minutes of real requests)
 ```
 
 ```bat
@@ -241,13 +242,22 @@ python scripts\probe_window.py glm-4.7-flash --ceiling 32768
 python scripts\probe_window.py --all-candidates
 ```
 
+The second signal is the one that matters on free endpoints. They often do not
+refuse an oversized prompt — they trim it and answer as if the conversation had
+just started, which no error would ever reveal. So each probe request buries a
+random code at the very start of the filler and asks for it back: a size the
+model cannot repeat is a size it did not receive, and the window stops at the
+last size it genuinely read. An endpoint that fumbles the trick at the smallest
+prompt is dim rather than dishonest, and the measurement falls back to refusals.
+
 Measurements are cached in `.beeagent/windows.json` (never committed) and then win
 over the guess taken from the model name, so the request ceiling follows the model
 you actually picked. A refusal that names its limit (`maximum context length is
 8192 tokens`) is used as stated; a refusal that only says "too long" still narrows
 the window to the largest prompt that fitted. A rate limit, a revoked key or a
-timeout says nothing about size, so the probe stops and reports it instead of
-caching the last number it happened to send — a sick endpoint is not a small one.
+prompt that simply took too long says nothing about size, so the probe stops and
+reports it instead of caching the last number it happened to send — a sick or slow
+endpoint is not a small one.
 
 ## Slash commands
 

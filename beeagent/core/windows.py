@@ -2,8 +2,10 @@
 
 g4f does not ship the number — its `Model` carries name, base_provider,
 best_provider and long_name, and provider classes keep `max_tokens = None`
-placeholders — so the only honest source left is the endpoint itself: send a
-growing prompt until it refuses, and read the limit out of what it says.
+placeholders — so the only honest source left is the endpoint itself. Two
+signals are read off it: how large a prompt it refuses, and how large a prompt
+the model still *saw* — free endpoints commonly trim the request behind our
+back and answer as if the chat had just started, which no error would reveal.
 
 Measured values are cached in `.beeagent/windows.json` and win over any guess.
 """
@@ -12,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import secrets
 from pathlib import Path
 
 CACHE = Path(".beeagent") / "windows.json"
@@ -71,7 +74,7 @@ def remember(model: str, tokens: int) -> None:
         pass
 
 
-def _filler(tokens: int) -> str:
+def _filler(tokens: int, needle: str = "") -> str:
     """Roughly `tokens` worth of text that no provider will want to answer."""
     from beeagent.utils.tokens import count_tokens
 
@@ -79,7 +82,16 @@ def _filler(tokens: int) -> str:
     block = unit * max(1, tokens // max(1, count_tokens(unit, "gpt-4")))
     while count_tokens(block, "gpt-4") < tokens:
         block += unit * 8
-    return block
+    return f"{needle}\n{block}" if needle else block
+
+
+def _new_needle() -> str:
+    return "BEE-" + secrets.token_hex(3).upper()
+
+
+RECALL_ASK = ("\n\nВ самом начале этого сообщения стоит код вида BEE-XXXXXX. "
+              "Напиши ровно этот код и больше ничего.")
+PLAIN_ASK = "\nОтветь одним словом: ok"
 
 
 # Only these phrases mean "your prompt is too big". Anything else — rate limit,
@@ -112,21 +124,27 @@ def _describe(error: Exception) -> str:
 
 async def probe(model: str, provider, ceiling: int = LADDER[-1], timeout: int = 240,
                 on_step=None) -> ProbeResult:
-    """Climb the ladder until the endpoint refuses because of the size.
+    """Climb the ladder until the endpoint stops really taking the prompt.
 
-    A refusal that names its limit (the good case) is used directly. A refusal
-    that only says "too long" still narrows the window: it sits between the last
-    size that worked and the first that failed, so the lower one is kept. Any
-    other error means the endpoint is unhealthy, not small, and is reported as
-    such without recording anything.
+    Two ways to fail are measured. The endpoint may refuse, ideally naming its
+    limit (the good case); an unhelpful "too long" still narrows the window
+    between the last size that fitted and the first that did not. Or it may
+    accept the request and quietly drop the front of it — caught by burying a
+    random code at the very start and asking for it back, so a prompt the model
+    never saw cannot be counted as fitting. An endpoint that cannot do that at
+    the smallest size is not being dishonest, just dim, and falls back to the
+    refusal signal alone.
     """
     accepted = 0
+    reads_it_back = True
     for size in [step for step in LADDER if step <= ceiling]:
-        messages = [{"role": "user", "content": _filler(size) + "\nОтветь одним словом: ok"}]
+        needle = _new_needle() if reads_it_back else ""
+        content = _filler(size, needle) + (RECALL_ASK if needle else PLAIN_ASK)
         if on_step:
             on_step(size, accepted)
         try:
-            await asyncio.wait_for(provider.chat(messages, model=model), timeout)
+            reply = await asyncio.wait_for(
+                provider.chat([{"role": "user", "content": content}], model=model), timeout)
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
@@ -148,8 +166,21 @@ async def probe(model: str, provider, ceiling: int = LADDER[-1], timeout: int = 
                 remember(model, accepted)
                 return ProbeResult(accepted, f"refused between {accepted} and {size} tokens")
             return ProbeResult(None, "the very first request was refused")
+
+        if needle and needle.lower() not in (reply or "").lower():
+            if not accepted:
+                # It failed the trick at the smallest size, so the trick tells us
+                # nothing here; keep climbing on refusals alone.
+                reads_it_back = False
+                accepted = size
+                continue
+            remember(model, accepted)
+            return ProbeResult(
+                accepted, f"read it, forgot it: at {size} tokens the model no longer "
+                          f"repeats the code at the start of the prompt")
         accepted = size
     if not accepted:
         return ProbeResult(None, "nothing was tried")
     remember(model, accepted)
-    return ProbeResult(accepted, f"no refusal up to {accepted} tokens (a ceiling, not a limit)")
+    seen = "the model still recalled the prompt" if reads_it_back else "no refusal"
+    return ProbeResult(accepted, f"{seen} up to {accepted} tokens (a ceiling, not a limit)")

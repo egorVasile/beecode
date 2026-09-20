@@ -1,4 +1,4 @@
-"""Context-window discovery: parsing provider refusals and climbing the ladder."""
+"""Context-window discovery: refusals, silent trimming, and climbing the ladder."""
 import asyncio
 import json
 
@@ -148,6 +148,43 @@ def test_our_own_patience_running_out_is_reported_as_slowness():
     assert "2048 tokens" in impatient.note and "slow" in impatient.note
     assert "not a size problem" not in impatient.note
     assert windows.measured("sluggish") == 8192, "it must not overwrite a real measurement"
+
+
+# --- silent trimming ---------------------------------------------------------
+
+class Recalling:
+    """Never complains; simply stops seeing the front of the prompt past `limit`."""
+
+    def __init__(self, limit):
+        self.limit = limit
+        self.sizes = []
+
+    async def chat(self, messages, model=""):
+        from beeagent.utils.tokens import count_tokens
+
+        content = str(messages[0]["content"])
+        needle = content.split("\n", 1)[0]
+        self.sizes.append(count_tokens(content, "gpt-4"))
+        if count_tokens(content, "gpt-4") > self.limit:
+            return "ok"          # answered, but the beginning was trimmed away
+        return needle
+
+
+def test_a_prompt_the_model_never_saw_does_not_count_as_fitting():
+    endpoint = Recalling(6000)
+    result = asyncio.run(windows.probe("quiet-trimmer", endpoint, ceiling=16384))
+    assert result.window == 4096, "the last size it truly read, not the last it accepted"
+    assert "forgot" in result.note
+    assert windows.measured("quiet-trimmer") == 4096
+
+
+def test_an_endpoint_that_cannot_do_the_trick_still_gets_a_refusal_based_answer():
+    # Returning "ok" to every needle is a failing recall at step one, which is
+    # the endpoint being dim rather than the window being small: disabling the
+    # check must not invent a 2048 window.
+    result = asyncio.run(windows.probe("dim", Refusing(10 ** 9), ceiling=8192))
+    assert result.window == 8192
+    assert windows.measured("dim") == 8192
 
 
 # --- the command ------------------------------------------------------------
