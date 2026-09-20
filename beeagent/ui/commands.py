@@ -833,13 +833,14 @@ def _cmd_window(ctx, args):
         from beeagent.plugins.mcp import run_coro_blocking
 
         try:
-            found = run_coro_blocking(
+            result = run_coro_blocking(
                 lambda: windows.probe(model, provider, on_step=progress), timeout=1800)
         except Exception as e:
             return _err(L(f"measurement failed: {e}", f"замер не удался: {e}"))
-        if not found:
-            return _err(L("the endpoint never refused the prompt, so no limit was seen",
-                          "эндпоинт ни разу не отказал, предел не найден"))
+        if not result.window:
+            return _err(L(f"no window measured — {result.note}",
+                          f"окно не измерено — {result.note}"))
+        found = result.window
         return _ok(L(f"📏 {model}: window ≈ {found} tokens (measured, saved to "
                      f"{windows.CACHE})",
                      f"📏 {model}: окно ≈ {found} токенов (замерено, сохранено в {windows.CACHE})"))

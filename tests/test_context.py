@@ -5,9 +5,17 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _english():
-    """Language is process-global; every test here states the one it quotes."""
+def _english(tmp_path, monkeypatch):
+    """Language is process-global; every test here states the one it quotes.
+
+    The measured-window cache is redirected too: a measurement made by another
+    test (or lying in the working tree) must not silently change what these
+    assertions think a model's window is.
+    """
+    from beeagent.core import windows
+
     set_lang("en")
+    monkeypatch.setattr(windows, "CACHE", tmp_path / "windows.json")
 
 
 def _msgs(*pairs):

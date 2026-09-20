@@ -49,13 +49,13 @@ def main() -> None:
         def progress(size, accepted):
             print(f"  … {size} tokens (last accepted {accepted})", flush=True)
 
-        found = asyncio.run(windows.probe(
+        result = asyncio.run(windows.probe(
             model, provider, ceiling=args.ceiling, timeout=int(args.timeout),
             on_step=progress))
-        if found:
-            print(f"  ✅ window ≈ {found} tokens → saved to {windows.CACHE}", flush=True)
+        if result.window:
+            print(f"  ✅ window ≈ {result.window} tokens ({result.note})", flush=True)
         else:
-            print("  ❌ the endpoint never refused — no limit seen", flush=True)
+            print(f"  ❌ {result.note}", flush=True)
 
 
 if __name__ == "__main__":

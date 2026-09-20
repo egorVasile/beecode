@@ -82,13 +82,32 @@ def _filler(tokens: int) -> str:
     return block
 
 
+# Only these phrases mean "your prompt is too big". Anything else — rate limit,
+# auth, timeout, a dead endpoint — says nothing about the window, and recording
+# it as one is how a 2048 got written for a 4k model.
+_OVERFLOW_HINT = re.compile(
+    r"maximum context|context length|context window|window exceeded|prompt is too long"
+    r"|too many tokens|exceeds the maximum|input length|request too large", re.I)
+
+
+class ProbeResult:
+    def __init__(self, window: int | None = None, note: str = ""):
+        self.window = window
+        self.note = note
+
+    def __bool__(self) -> bool:
+        return bool(self.window)
+
+
 async def probe(model: str, provider, ceiling: int = LADDER[-1], timeout: int = 120,
-                on_step=None) -> int | None:
-    """Climb the ladder until the endpoint refuses; the last accepted size wins.
+                on_step=None) -> ProbeResult:
+    """Climb the ladder until the endpoint refuses because of the size.
 
     A refusal that names its limit (the good case) is used directly. A refusal
-    that does not is still informative: the window sits between the last size
-    that worked and the first that failed, so we keep the lower one.
+    that only says "too long" still narrows the window: it sits between the last
+    size that worked and the first that failed, so the lower one is kept. Any
+    other error means the endpoint is unhealthy, not small, and is reported as
+    such without recording anything.
     """
     accepted = 0
     for size in [step for step in LADDER if step <= ceiling]:
@@ -97,16 +116,22 @@ async def probe(model: str, provider, ceiling: int = LADDER[-1], timeout: int = 
             on_step(size, accepted)
         try:
             await asyncio.wait_for(provider.chat(messages, model=model), timeout)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            named = limit_from_error(str(e))
+            message = str(e)
+            named = limit_from_error(message)
             if named:
-                result = min(named, max(accepted, named))
-            else:
-                result = accepted
-            if result:
-                remember(model, result)
-            return result or None
+                remember(model, named)
+                return ProbeResult(named, f"endpoint named the limit: {named}")
+            if not _OVERFLOW_HINT.search(message):
+                return ProbeResult(None, f"not a size problem: {message[:140]}")
+            if accepted:
+                remember(model, accepted)
+                return ProbeResult(accepted, f"refused between {accepted} and {size} tokens")
+            return ProbeResult(None, "the very first request was refused")
         accepted = size
-    if accepted:
-        remember(model, accepted)
-    return accepted or None
+    if not accepted:
+        return ProbeResult(None, "nothing was tried")
+    remember(model, accepted)
+    return ProbeResult(accepted, f"no refusal up to {accepted} tokens (a ceiling, not a limit)")

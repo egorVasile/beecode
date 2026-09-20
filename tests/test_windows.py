@@ -80,21 +80,47 @@ class Refusing:
 
 def test_probe_uses_the_number_the_endpoint_shouts_back():
     endpoint = Refusing(5000)
-    found = asyncio.run(windows.probe("glm-test", endpoint, ceiling=16384))
-    assert found == 5000
+    result = asyncio.run(windows.probe("glm-test", endpoint, ceiling=16384))
+    assert result.window == 5000
     assert windows.measured("glm-test") == 5000
     assert len(endpoint.sizes) == 3 and endpoint.sizes[0] >= 2048   # climbed, then refused
 
 
 def test_probe_falls_back_to_the_last_size_that_fitted():
     endpoint = Refusing(5000, named=False)
-    found = asyncio.run(windows.probe("glm-silent", endpoint, ceiling=16384))
-    assert found == 4096, "an unhelpful error still narrows the window"
+    result = asyncio.run(windows.probe("glm-silent", endpoint, ceiling=16384))
+    assert result.window == 4096, "an unhelpful error still narrows the window"
 
 
 def test_probe_reports_nothing_when_the_endpoint_never_refuses():
     endpoint = Refusing(10 ** 9)
-    assert asyncio.run(windows.probe("endless", endpoint, ceiling=4096)) == 4096
+    result = asyncio.run(windows.probe("endless", endpoint, ceiling=4096))
+    assert result.window == 4096 and "no refusal" in result.note
+
+
+class Broken:
+    """A sick endpoint, not a small one — the bug that wrote 2048 for a 4k model."""
+
+    def __init__(self, message):
+        self.message = message
+        self.calls = 0
+
+    async def chat(self, messages, model=""):
+        self.calls += 1
+        raise RuntimeError(self.message)
+
+
+@pytest.mark.parametrize("message", [
+    "429, message=Too Many Requests",
+    "invalid_api_key: key revoked",
+])
+def test_an_unhealthy_endpoint_is_not_mistaken_for_a_small_window(message):
+    broken = Broken(message)
+    result = asyncio.run(windows.probe("sick-model", broken, ceiling=8192))
+    assert result.window is None
+    assert "not a size problem" in result.note
+    assert windows.measured("sick-model") is None, "nothing may be cached"
+    assert broken.calls == 1, "it stops at the first unrelated error"
 
 
 # --- the command ------------------------------------------------------------
