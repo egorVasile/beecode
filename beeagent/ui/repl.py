@@ -27,6 +27,7 @@ from beeagent.ui.components import (
     get_stream, show_thinking_fallback, thinking_body,
     render_tool_start, render_tool_end,
     render_error, render_economy_hit,
+    render_tool_denied, render_model_switched,
 )
 from beeagent.ui.commands import (
     ReplContext, build_sources, get_suggestions, dispatch,
@@ -119,10 +120,10 @@ def handle_callback(event: str, data: dict):
 
     elif event == "context_trimmed":
         _note("✂",
-              f"history did not fit the context: dropped {data.get('dropped')} older messages, "
-              f"big outputs are clipped — the task stays in view",
-              f"история не влезла в контекст: опустил {data.get('dropped')} старых сообщений, "
-              f"большие выводы обрезаю — задачу держу")
+              f"history did not fit the context: compressed {data.get('dropped')} messages into "
+              f"a summary in the system prompt, big outputs are clipped — the task stays in view",
+              f"история не влезла в контекст: сжал {data.get('dropped')} сообщений в конспект "
+              f"в системном промпте, большие выводы обрезаю — задачу держу")
 
     elif event == "tool_start":
         stream.on_tool_start()
@@ -144,8 +145,18 @@ def handle_callback(event: str, data: dict):
         render_error(L(f"tool '{data.get('tool')}' failed: {data.get('message')}",
                        f"инструмент '{data.get('tool')}' упал: {data.get('message')}"))
 
+    elif event == "tool_denied":
+        render_tool_denied(data.get("tool", ""), data.get("args") or {})
+
+    elif event == "model_switched":
+        render_model_switched(data.get("from", ""), data.get("to", ""))
+
     elif event == "economy_hit":
         render_economy_hit()
+
+    elif event == "waiting":
+        _note("⌛", f"still waiting for the model… {data.get('seconds')}s",
+              f"всё ещё жду модель… {data.get('seconds')}с")
 
     elif event == "retry":
         _note("🔁", f"the bee is retrying ({data.get('attempt')}/3)...",

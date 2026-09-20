@@ -34,7 +34,12 @@ from beeagent.core.queue import PendingQueue
 from beeagent.core.session import Session
 from beeagent.core.context import ContextManager
 from beeagent.core.economy import EconomyManager
+from beeagent.core.permissions import Permissions
 from beeagent.core.parser import CommandParser
+
+
+# How often to reassure the user that a slow endpoint is still being waited on.
+HEARTBEAT_SECONDS = 15
 
 
 class Agent:
@@ -81,9 +86,18 @@ class Agent:
         self.economy = EconomyManager(
             mode=self.config.mode,
             cache_dir=self.config.economy.cache_dir,
+            cache_enabled=self.config.economy.cache_enabled,
+            cache_ttl_minutes=self.config.economy.cache_ttl_minutes,
         )
 
-        self.context = ContextManager(model=self.config.model)
+        # Tools that change the machine need a grant; see core/permissions.py.
+        self.permissions = Permissions(
+            mode=self.config.permissions.mode,
+            allowed=self.config.permissions.allowed,
+        )
+
+        self.context = ContextManager(
+            model=self.config.model, window=self.config.max_context_tokens or None)
         self.parser = CommandParser()
 
         # Skills, plugin tool packs, and MCP servers installed from the catalog.
@@ -100,6 +114,11 @@ class Agent:
         self.pending = PendingQueue()
         self.is_busy = False
 
+    def sync_config_permissions(self):
+        """Mirror the live gate into the config so a save cannot undo it."""
+        self.config.permissions.mode = self.permissions.mode
+        self.config.permissions.allowed = sorted(self.permissions.granted)
+
     def reload_extensions(self) -> list[str]:
         """Re-scan installed skills, plugin packs and MCP servers after a change."""
         self.plugins.reset()
@@ -110,12 +129,43 @@ class Agent:
         self.context.skills_section = self.plugins.skills_prompt_section()
         return self.plugins.load_errors
 
-    async def _stream_response(self, provider, messages, callback) -> str:
+    async def _next_token(self, iterator, idle: int, callback, announce: bool):
+        """One streamed chunk, or TimeoutError after `idle` seconds of silence.
+
+        Silence is polled in heartbeat slices so the UI can say "still waiting,
+        15 s" instead of leaving the user to wonder whether the agent died. The
+        pending chunk is deliberately not wrapped in wait_for: cancelling an
+        async generator's __anext__ closes the stream and would silently
+        truncate the answer.
+        """
+        task = asyncio.create_task(iterator.__anext__())
+        waited = 0
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=HEARTBEAT_SECONDS)
+                if done:
+                    return task.result()          # StopAsyncIteration propagates
+                waited += HEARTBEAT_SECONDS
+                if waited >= idle:
+                    raise asyncio.TimeoutError()
+                if callback and announce:
+                    callback("waiting", {"seconds": waited})
+        except BaseException:
+            task.cancel()
+            raise
+
+    async def _stream_response(self, provider, messages, callback, model: str = "") -> str:
         """Stream the model response with retry.
 
         Emits "reasoning_delta" for thinking tokens and "stream_delta" for
         answer tokens. Raises only when all attempts fail.
+
+        Every wait on the endpoint is bounded. Free providers routinely accept
+        the request, open the stream, and then say nothing at all; without an
+        idle timeout the agent just sat there and looked dead to the user.
         """
+        model = model or self.config.model
+        idle = max(3, int(self.config.stream_idle_timeout or 90))
         last_error = None
         for attempt in range(3):
             if callback and attempt > 0:
@@ -123,9 +173,21 @@ class Agent:
 
             if hasattr(provider, "chat_stream"):
                 emitted = False
+                stream = None
                 try:
                     answer, reasoning = [], []
-                    async for kind, text in provider.chat_stream(messages, model=self.config.model):
+                    stream = provider.chat_stream(messages, model=model)
+                    iterator = stream.__aiter__()
+                    while True:
+                        try:
+                            kind, text = await self._next_token(
+                                iterator, idle, callback, announce=not emitted)
+                        except StopAsyncIteration:
+                            break
+                        except asyncio.TimeoutError:
+                            raise TimeoutError(
+                                f"эндпоинт молчит {idle} секунд — вероятна перегрузка провайдера"
+                            )
                         if kind == "reasoning":
                             reasoning.append(text)
                             if callback:
@@ -141,13 +203,19 @@ class Agent:
                     last_error = "empty response"
                 except Exception as e:
                     last_error = e  # fall through to retry
+                finally:
+                    if stream is not None:
+                        try:
+                            await stream.aclose()
+                        except Exception:
+                            pass
                 if emitted and callback:
                     # Partial text already reached the UI; have it drop that
                     # fragment so the fallback answer prints cleanly.
                     callback("stream_reset", {})
 
             try:
-                text = await provider.chat(messages, model=self.config.model)
+                text = await asyncio.wait_for(provider.chat(messages, model=model), idle * 2)
                 if text and text.strip():
                     # Non-stream fallback: the UI never saw this text, so
                     # emit it as one delta or the answer is silently lost.
@@ -167,15 +235,42 @@ class Agent:
             f"(последняя ошибка: {last_error}) — попробуй ещё раз или смени модель (/models)",
         ))
 
+    def _model_for(self, provider, callback=None) -> str:
+        """The model id to actually send.
+
+        `config.model` is one global string while every provider has its own
+        catalogue, so a groq key pointed at "gpt-4" only ever answers 404. A
+        provider that lists its models gets the request corrected to one of
+        them; g4f routes any name it advertises, so it is left alone.
+        """
+        wanted = self.config.model or ""
+        known = list(getattr(provider, "models", None) or [])
+        if not known or wanted in known:
+            return wanted or getattr(provider, "default_model", "")
+        if callable(getattr(provider, "discover_models", None)):
+            return wanted
+        model = known[0]
+        self.config.model = model
+        self.context.model = model
+        if callback:
+            callback("model_switched", {"from": wanted, "to": model})
+        return model
+
     async def run(self, user_input: str, session: Session = None, callback=None) -> str:
         session = session or Session()
         session.add_user_message(user_input)
 
-        provider = self.providers.select(self.config.provider)
+        # is_busy is set before anything can raise: an unconfigured provider
+        # used to leave it True forever, and then the REPL parked every later
+        # message in agent.pending and never ran a single one.
         self.is_busy = True
-        trim_reported = False
+        self.permissions.denied_this_run.clear()
 
         try:
+            provider = self.providers.select(self.config.provider)
+            model = self._model_for(provider, callback)
+            trim_reported = False
+
             for turn in range(self.config.max_turns):
                 # 1. Deliver messages the user typed while we were busy:
                 #    they go along with this step (+ the system prompt is
@@ -193,6 +288,7 @@ class Agent:
 
                 tool_schemas = self.tools.to_schemas()
                 self.context.skills_section = self.plugins.skills_prompt_section()
+                self.context.permissions_section = self.permissions.prompt_section(self.tools)
                 messages = self.context.build_messages(session.to_dicts(), tool_schemas)
 
                 prompt_str = json.dumps(messages)
@@ -201,15 +297,18 @@ class Agent:
                     trim_reported = True
                     if callback:
                         callback("context_trimmed", {"dropped": self.context.trimmed})
-                cached = self.economy.check_cache(prompt_str, self.config.model)
-                if cached:
+                cached = self.economy.check_cache(prompt_str, model)
+                if cached and not self.parser.parse(cached).has_commands:
                     if callback:
                         callback("economy_hit", {})
                         callback("response", {"text": cached})
                     return cached
+                # A reply that carries a tool call is one step of the loop, not
+                # an answer — serving it from cache would print JSON and run
+                # nothing.
 
                 try:
-                    response = await self._stream_response(provider, messages, callback)
+                    response = await self._stream_response(provider, messages, callback, model)
                 except Exception as e:
                     error_msg = f"Error calling provider: {e}"
                     if callback:
@@ -222,7 +321,7 @@ class Agent:
 
                 if not parsed.has_commands:
                     session.add_assistant_message(response)
-                    self.economy.store_cache(prompt_str, self.config.model, response)
+                    self.economy.store_cache(prompt_str, model, response)
                     if callback:
                         callback("done", {})
                     return response
@@ -278,6 +377,18 @@ class Agent:
                             callback("tool_error", {
                                 "tool": cmd.tool,
                                 "message": f"missing argument(s): {', '.join(missing)}",
+                            })
+                        continue
+
+                    # What the model wants is not what the user allowed: tools
+                    # that touch the machine need a grant first.
+                    if not self.permissions.allows(tool):
+                        message = self.permissions.refusal(tool)
+                        session.add_tool_result(f"[tool result] {message}")
+                        self.permissions.denied_this_run.add(cmd.tool)
+                        if callback:
+                            callback("tool_denied", {
+                                "tool": cmd.tool, "args": args, "message": message,
                             })
                         continue
 

@@ -124,7 +124,7 @@ def test_alias_call_runs_the_canonical_tool(tmp_path, monkeypatch):
 
     calls = iter(['{"tool": "list_files", "args": {"path": "%s"}}' % tmp_path.as_posix(), "готово"])
 
-    async def fake_stream(provider, messages, callback=None):
+    async def fake_stream(provider, messages, callback=None, model=""):
         text = next(calls)
         if callback:
             callback("stream_delta", {"text": text})
@@ -148,7 +148,7 @@ def test_missing_arguments_are_reported_to_the_model(monkeypatch):
     events = []
     calls = iter(['{"tool": "grep", "args": {"pattern": "def x"}}', "всё"])
 
-    async def fake_stream(provider, messages, callback=None):
+    async def fake_stream(provider, messages, callback=None, model=""):
         text = next(calls)
         if callback:
             callback("stream_delta", {"text": text})
@@ -161,3 +161,93 @@ def test_missing_arguments_are_reported_to_the_model(monkeypatch):
     errors = [d for e, d in events if e == "tool_error"]
     assert errors and "path" in errors[0]["message"]
     assert not [d for e, d in events if e == "tool_start"], "a call with missing args must not run"
+
+
+def test_a_silent_endpoint_times_out_and_recovers(monkeypatch):
+    """The hang the user saw: stream opens, one token arrives, then silence."""
+    import asyncio
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core.agent import Agent
+    from beeagent.core.session import Session
+
+    class Stalling:
+        name = "stalling"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            yield ("content", "начал")
+            if self.calls == 1:
+                await asyncio.sleep(3600)      # never resumes
+
+        async def chat(self, messages, model=""):
+            return "готово"
+
+    agent = Agent(config=BeeConfig(stream_idle_timeout=3))
+    endpoint = Stalling()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    events = []
+
+    answer = asyncio.run(agent.run(
+        "сделай", session=Session(),
+        callback=lambda e, d: events.append(e)))
+
+    assert answer == "готово", "the turn must end, not hang on a silent stream"
+    assert endpoint.calls == 1        # one stream, then the same attempt falls back
+    assert "stream_reset" in events, "the half-typed fragment is cleared for the UI"
+
+
+def test_the_wait_is_announced_then_gives_up(monkeypatch):
+    """Heartbeat: silence is reported while waiting is still worth it."""
+    import asyncio
+    import beeagent.core.agent as agent_mod
+
+    monkeypatch.setattr(agent_mod, "HEARTBEAT_SECONDS", 0.2)
+    agent = Agent(config=BeeConfig())
+
+    async def stalling():
+        await asyncio.sleep(5)
+        yield ("content", "x")
+
+    announced = []
+
+    async def go():
+        try:
+            await agent._next_token(stalling().__aiter__(), 1,
+                                    lambda event, data: announced.append(data["seconds"]), True)
+        except asyncio.TimeoutError:
+            return "timed out"
+        return "returned"
+
+    assert asyncio.run(go()) == "timed out"
+    assert announced and max(announced) <= 1
+
+
+def test_a_slow_stream_is_not_truncated_by_the_heartbeat(monkeypatch):
+    """Polling silence must not cancel the generator between chunks."""
+    import asyncio
+    import beeagent.core.agent as agent_mod
+
+    monkeypatch.setattr(agent_mod, "HEARTBEAT_SECONDS", 0.1)
+    agent = Agent(config=BeeConfig())
+
+    async def slow():
+        yield ("content", "при")
+        await asyncio.sleep(0.4)          # several heartbeat slices, still alive
+        yield ("content", "вет")
+
+    async def go():
+        iterator = slow().__aiter__()
+        pieces = []
+        while True:
+            try:
+                kind, text = await agent._next_token(iterator, 5, None, False)
+            except StopAsyncIteration:
+                break
+            pieces.append(text)
+        return "".join(pieces)
+
+    assert asyncio.run(go()) == "привет"
