@@ -251,3 +251,49 @@ def test_a_slow_stream_is_not_truncated_by_the_heartbeat(monkeypatch):
         return "".join(pieces)
 
     assert asyncio.run(go()) == "привет"
+
+
+def test_prompt_echo_is_not_treated_as_an_answer():
+    """OpenaiChat guest mode answers with a copy of our own prompt."""
+    import asyncio
+    from beeagent.core.session import Session
+
+    class Echoing:
+        name = "echoing"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            if self.calls == 1:
+                yield ("content", "OpenaiChat: Guest prompt: [tool result] "
+                                  "[SYSTEM: You are BeeCode, an autonomous coding agent")
+            else:
+                yield ("content", "всё работает")
+
+        async def chat(self, messages, model=""):
+            return "всё работает"
+
+    agent = Agent(config=BeeConfig())
+    endpoint = Echoing()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    session = Session()
+
+    answer = asyncio.run(agent.run("проверь", session=session))
+
+    assert answer == "всё работает"
+    stored = " ".join(m.content for m in session.messages)
+    assert "[SYSTEM: You are" not in stored, "the echo must not poison history"
+
+
+def test_echo_detector_covers_verbatim_repeats_and_rejects_nothing_short():
+    agent = Agent(config=BeeConfig())
+    request = ("сделай задачу и проверь тестами результат работы агента, "
+               "а потом покажи короткий отчёт о том, что именно поменялось")
+    sent = [{"role": "user", "content": request}]
+    assert agent._is_prompt_echo(request, sent)
+    assert not agent._is_prompt_echo("готово", sent)
+    assert not agent._is_prompt_echo(
+        "совсем другой ответ, которого в исходном запросе точно никогда не было", sent)

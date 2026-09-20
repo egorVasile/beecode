@@ -1,41 +1,47 @@
 from beeagent.utils.cache import ResponseCache
 
+
 class EconomyManager:
-    def __init__(self, mode: str = "normal", cache_dir: str = ".beeagent/cache"):
+    """Answer caching for `--mode economy`.
+
+    Only final plain-text answers are cached: a cached tool call must never be
+    replayed, or the loop would print the JSON instead of running it.
+    """
+
+    def __init__(self, mode: str = "normal", cache_dir: str = ".beeagent/cache",
+                 cache_enabled: bool = True, cache_ttl_minutes: int = 30):
         self.mode = mode
-        self.cache = ResponseCache(cache_dir) if mode == "economy" else None
+        self.cache_enabled = cache_enabled
+        self.cache_dir = cache_dir
+        self.cache_ttl_minutes = cache_ttl_minutes
+        self.cache = self._open_cache()
         self.request_count = 0
-        self.tokens_saved = 0
-    
+
+    def _open_cache(self) -> ResponseCache | None:
+        if not self.should_cache():
+            return None
+        return ResponseCache(self.cache_dir, ttl_seconds=self.cache_ttl_minutes * 60)
+
     def should_cache(self) -> bool:
-        return self.mode == "economy" and self.cache is not None
-    
-    def should_batch(self) -> bool:
-        return self.mode == "economy"
-    
-    def should_smart_route(self) -> bool:
-        return self.mode == "economy"
-    
+        return self.mode == "economy" and self.cache_enabled
+
+    def set_mode(self, mode: str):
+        self.mode = mode
+        self.cache = self._open_cache()
+
     def check_cache(self, prompt: str, model: str) -> str | None:
-        if self.should_cache() and self.cache:
+        if self.cache:
             return self.cache.get(prompt, model)
         return None
-    
+
     def store_cache(self, prompt: str, model: str, response: str):
-        if self.should_cache() and self.cache:
+        if self.cache:
             self.cache.store(prompt, model, response)
-    
-    def select_model(self, task_type: str, default_model: str) -> str:
-        if not self.should_smart_route():
-            return default_model
-        cheap_models = ["gpt-3.5-turbo", "llama-3.1-8b", "qwen-7b"]
-        if task_type in ("grep", "glob", "read", "todo"):
-            return cheap_models[0]
-        return default_model
-    
+
     def get_stats(self) -> dict:
         return {
             "mode": self.mode,
             "requests": self.request_count,
-            "tokens_saved": self.tokens_saved,
+            "cache": "on" if self.cache else "off",
+            "cached_answers": self.cache.count() if self.cache else 0,
         }

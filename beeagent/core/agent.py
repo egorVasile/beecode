@@ -1,4 +1,4 @@
-"""BeeAgent core agent with realtime streaming and tool feedback loop.
+"""BeeCode core agent with realtime streaming and tool feedback loop.
 
 The agent loop:
 1. Deliver any pending user messages queued while the agent was busy.
@@ -129,6 +129,22 @@ class Agent:
         self.context.skills_section = self.plugins.skills_prompt_section()
         return self.plugins.load_errors
 
+    # Free endpoints sometimes answer with a copy of the prompt they were sent
+    # — OpenaiChat in guest mode is the usual culprit. That text is noise on
+    # screen and poison in history, so it never counts as an answer.
+    ECHO_MARKERS = ("[SYSTEM: You are", "Guest prompt:", "Do NOT say you lack file access")
+
+    def _is_prompt_echo(self, content: str, messages: list[dict]) -> bool:
+        text = (content or "").strip()
+        if not text:
+            return False
+        if any(marker in text for marker in self.ECHO_MARKERS):
+            return True
+        if len(text) < 60:
+            return False
+        sent = " ".join(str(m.get("content") or "") for m in messages)
+        return " ".join(text.split()).lower() in " ".join(sent.split()).lower()
+
     async def _next_token(self, iterator, idle: int, callback, announce: bool):
         """One streamed chunk, or TimeoutError after `idle` seconds of silence.
 
@@ -198,9 +214,12 @@ class Agent:
                                 callback("stream_delta", {"text": text})
                             emitted = True
                     content = "".join(answer)
-                    if content.strip():
+                    if not content.strip():
+                        last_error = "empty response"
+                    elif self._is_prompt_echo(content, messages):
+                        last_error = "эндпоинт вернул эхо нашего промпта"
+                    else:
                         return content
-                    last_error = "empty response"
                 except Exception as e:
                     last_error = e  # fall through to retry
                 finally:
@@ -216,13 +235,16 @@ class Agent:
 
             try:
                 text = await asyncio.wait_for(provider.chat(messages, model=model), idle * 2)
-                if text and text.strip():
+                if not (text or "").strip():
+                    last_error = "empty response"
+                elif self._is_prompt_echo(text, messages):
+                    last_error = "эндпоинт вернул эхо нашего промпта"
+                else:
                     # Non-stream fallback: the UI never saw this text, so
                     # emit it as one delta or the answer is silently lost.
                     if callback:
                         callback("stream_delta", {"text": text})
                     return text
-                last_error = "empty response"
             except Exception as e:
                 last_error = e
 

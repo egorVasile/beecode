@@ -1,4 +1,4 @@
-"""BeeAgent command parser.
+"""BeeCode command parser.
 
 Extracts tool calls from model output. The XML-style tag is built dynamically
 to avoid embedding the raw closing tag in this source file.

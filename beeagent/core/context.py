@@ -1,4 +1,4 @@
-"""BeeAgent context builder with forceful tool-use contract.
+"""BeeCode context builder with forceful tool-use contract.
 
 Weak free g4f models often ignore the `system` role, so the tool contract
 is injected twice: in the system message AND appended to the last user
