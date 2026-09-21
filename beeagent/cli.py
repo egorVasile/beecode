@@ -28,6 +28,19 @@ def _run_command(action_words, prefix, known, fallback_line):
         console.print(result.output)
 
 
+def _pip_python() -> str:
+    """The interpreter to run pip with, even when BeeCode started as beecode.exe."""
+    from pathlib import Path
+
+    here = Path(sys.executable)
+    if here.name.lower().startswith(("beecode", "beeagent")):
+        # A console script shim is not an interpreter: `beecode.exe -m pip` is
+        # nonsense, and the venv's python sits next to it.
+        candidate = here.parent / ("python.exe" if os.name == "nt" else "python")
+        return str(candidate) if candidate.exists() else ""
+    return sys.executable
+
+
 def update_self(root=None) -> int:
     """Bring BeeCode up to date, whichever way it was installed.
 
@@ -43,9 +56,28 @@ def update_self(root=None) -> int:
     if (base / ".git").exists():
         print(f"updating the checkout at {base}", flush=True)
         return subprocess.call(["git", "-C", str(base), "pull", "--ff-only"])
+
+    source = "git+https://github.com/egorVasile/beecode.git"
+    python = _pip_python()
+    if not python:
+        print("cannot find the Python of this BeeCode install — run "
+              "`beecode --update` from npm, or reinstall.", flush=True)
+        return 1
+    if python != sys.executable and os.name == "nt":
+        # We are the .exe pip has to overwrite, and Windows will not let it.
+        print("BeeCode is running from the very file the update replaces. Close this "
+              "window and run `beecode --update` from a terminal.", flush=True)
+        return 1
     print("updating the installed BeeCode and g4f", flush=True)
-    return subprocess.call([sys.executable, "-m", "pip", "install", "--upgrade",
-                            "git+https://github.com/egorVasile/beecode.git"])
+    # The published version does not move between commits, so `--upgrade` alone
+    # decides that the installed 0.1.0 already satisfies the reference: pip then
+    # refreshes g4f and leaves BeeCode itself on the old code. The app has to be
+    # replaced by force; the second pass brings the dependencies forward.
+    code = subprocess.call([python, "-m", "pip", "install", "--upgrade",
+                            "--force-reinstall", "--no-deps", source])
+    if code == 0:
+        subprocess.call([python, "-m", "pip", "install", "--upgrade", source])
+    return code
 
 
 def main():

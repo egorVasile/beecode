@@ -46,12 +46,30 @@ function findPython() {
   process.exit(1);
 }
 
+function runningBeeCode() {
+  // Windows locks the image of a running .exe: pip would uninstall the package
+  // and then fail to write the launcher back, which leaves an install that
+  // starts with "No module named 'beeagent'".
+  if (process.platform !== "win32") return false;
+  const probe = spawnSync("tasklist", ["/FO", "CSV", "/NH"], { encoding: "utf8" });
+  return !probe.error && /"(beecode|beeagent)\.exe"/i.test(probe.stdout || "");
+}
+
 function install(python) {
   console.log(`installing BeeCode into ${VENV} — once, then every start is instant`);
   if (!fs.existsSync(VENV_PYTHON) && run(python, ["-m", "venv", VENV]) !== 0) process.exit(1);
   if (run(VENV_PYTHON, ["-m", "pip", "install", "--upgrade", "pip"], { quiet: true }) !== 0) process.exit(1);
-  if (run(VENV_PYTHON, ["-m", "pip", "install", "--upgrade", SOURCE]) !== 0) {
+  // The published version does not move between commits, so `--upgrade` alone
+  // reports the installed 0.1.0 as already satisfied: pip refreshes g4f around
+  // it and BeeCode itself stays on the old code. Replace it by force, then let
+  // a second pass bring the dependencies forward.
+  if (run(VENV_PYTHON, ["-m", "pip", "install", "--upgrade", "--force-reinstall",
+                        "--no-deps", SOURCE]) !== 0) {
     console.error("the install failed — a network hiccup is usually worth retrying");
+    process.exit(1);
+  }
+  if (run(VENV_PYTHON, ["-m", "pip", "install", "--upgrade", SOURCE], { quiet: true }) !== 0) {
+    console.error("BeeCode updated, but its dependencies did not — run `beecode --update` again");
     process.exit(1);
   }
 }
@@ -62,9 +80,17 @@ function main() {
   const rest = args.filter((arg) => arg !== "--update");
 
   const python = findPython();
-  if (update || !fs.existsSync(BEECODE)) install(python);
-  // `--update` is a request to refresh, not to run: same contract as the CLI's.
-  if (update) process.exit(0);
+  if (update) {
+    if (runningBeeCode()) {
+      console.error("BeeCode is running in another window, and pip cannot replace the "
+                    + "files it is using — close it, then run `beecode --update` again.");
+      process.exit(1);
+    }
+    install(python);
+    // `--update` is a request to refresh, not to run: same contract as the CLI's.
+    process.exit(0);
+  }
+  if (!fs.existsSync(BEECODE)) install(python);
 
   const result = spawnSync(BEECODE, rest, { stdio: "inherit" });
   if (result.error) {
