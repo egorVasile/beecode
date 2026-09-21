@@ -175,6 +175,122 @@ def test_event_listeners_receive_agent_events_and_cannot_break_the_run():
 
 # --- loading a plugin from disk ---------------------------------------------
 
+def test_a_plugin_can_draw_the_opening_itself():
+    """The banner slot accepts a callable, so a skin is not limited to presets."""
+    drawn = []
+    skin.register("banner", "mine", lambda: drawn.append("drawn"))
+    assert skin.choose("banner", "mine")
+
+    from beeagent.ui import components
+
+    components.print_banner()
+    assert drawn == ["drawn"]
+
+
+def test_a_plugin_can_supply_the_waiting_line_and_the_renderer():
+    skin.register("spinner", "tick", lambda: "tick…")
+    skin.choose("spinner", "tick")
+    assert components_pending() == "tick…"
+
+    class Renderer:
+        def __init__(self):
+            self.seen = []
+
+    skin.register("stream", "mine", Renderer)
+    skin.choose("stream", "mine")
+    from beeagent.ui import components
+
+    components.reset_stream()
+    assert isinstance(components.get_stream(), Renderer)
+    components.reset_stream()
+
+
+def components_pending():
+    from beeagent.ui import components
+
+    return components.pending_text()
+
+
+def test_a_broken_renderer_falls_back_instead_of_killing_the_session():
+    class Broken:
+        def __init__(self):
+            raise RuntimeError("nope")
+
+    skin.register("stream", "broken", Broken)
+    skin.choose("stream", "broken")
+    from beeagent.ui import components
+
+    components.reset_stream()
+    assert type(components.get_stream()).__name__ == "ResponseStream"
+    components.reset_stream()
+
+
+# --- the shipped skins -------------------------------------------------------
+
+@pytest.mark.parametrize("name", ["plain", "skin-terminal", "skin-hive", "skin-work"])
+def test_every_shipped_skin_loads_and_applies_without_errors(name, tmp_path, monkeypatch):
+    """A skin that throws on load is invisible until someone starts the app."""
+    import shutil
+
+    from beeagent.core.agent import Agent
+
+    monkeypatch.chdir(tmp_path)
+    agent = Agent(config=BeeConfig(), workdir=str(tmp_path))
+    agent.plugins.manager.install(name)
+    agent.reload_extensions()
+
+    assert not [e for e in agent.plugins.load_errors if name in e], agent.plugins.load_errors
+    assert skin.get("frame") != "rounded", f"{name} did not choose a frame"
+
+    from beeagent.ui import components
+
+    components.print_banner()                 # must not raise
+    components.render_response("текст")       # must not raise
+    assert components.pending_text() is not None
+
+
+def test_the_terminal_skin_replaces_the_answer_renderer(tmp_path, monkeypatch):
+    from beeagent.core.agent import Agent
+    from beeagent.ui import components
+
+    monkeypatch.chdir(tmp_path)
+    agent = Agent(config=BeeConfig(), workdir=str(tmp_path))
+    agent.plugins.manager.install("skin-terminal")
+    agent.reload_extensions()
+
+    components.reset_stream()
+    assert type(components.get_stream()).__name__ == "CompactStream"
+    assert skin.get("stream") == "compact"
+    components.reset_stream()
+    skin.reset()
+
+
+def test_a_skin_can_be_switched_off_again(tmp_path, monkeypatch):
+    from beeagent.core.agent import Agent
+
+    monkeypatch.chdir(tmp_path)
+    agent = Agent(config=BeeConfig(), workdir=str(tmp_path))
+    agent.plugins.manager.install("skin-hive")
+    agent.reload_extensions()
+    ctx = ReplContext(agent=agent, config=agent.config, session=Session())
+
+    assert skin.get("frame") == "comb"
+    dispatch(ctx, "/skin reset")
+    assert skin.get("frame") == "rounded"
+    assert shutil_frame_is_back()
+
+
+def shutil_frame_is_back() -> bool:
+    return "┌" in render_a_panel()
+
+
+def test_skins_are_shipped_in_the_catalog():
+    from beeagent.plugins.catalog import Catalog
+
+    names = {item.name for item in Catalog().items()}
+    assert {"plain", "skin-terminal", "skin-hive", "skin-work"} <= names
+
+
 def test_setup_api_is_called_when_a_plugin_loads(tmp_path):
     from beeagent.core.agent import Agent
     from beeagent.plugins.loader import PluginLoader

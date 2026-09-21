@@ -21,14 +21,24 @@ from beeagent.i18n import L
 SPACE = box.Box("\n".join(["    "] * 8))
 
 # slot name -> {variant name: value}
+#
+# Built-in entries carry their own name as the value: the behaviour lives with
+# the widget that knows how to draw it (components.py switches on it). A plugin
+# registers a *callable* (banner, spinner) or a *class* (stream) under a new
+# name, and the caller uses that instead — that is how a skin becomes more than
+# a list of presets.
 _VARIANTS: dict[str, dict[str, object]] = {
     "frame": {
         "rounded": {"box": box.ROUNDED},
         "heavy": {"box": box.HEAVY},
         "square": {"box": box.SQUARE},
         "ascii": {"box": box.ASCII},
+        "minimal": {"box": box.MINIMAL},
         "none": {"box": SPACE},
     },
+    "banner": {"shimmer": "shimmer", "static": "static", "none": "none"},
+    "spinner": {"honey": "honey", "dots": "dots", "none": "none"},
+    "stream": {"default": "default"},
 }
 
 # What the interface uses until the user (or a plugin) changes it.
@@ -41,15 +51,8 @@ _sources: dict[str, str] = {}
 
 
 def variants(slot: str) -> list[str]:
-    """Names a user can pick for this slot, built-ins first."""
-    known = list(_VARIANTS.get(slot, {}))
-    if slot == "banner":
-        known += ["shimmer", "static", "none"]
-    elif slot == "spinner":
-        known += ["honey", "dots", "none"]
-    elif slot == "stream":
-        known += ["default"]
-    return sorted(dict.fromkeys(known))
+    """Names a user can pick for this slot — built-ins and plugin registrations."""
+    return list(_VARIANTS.get(slot, {}))
 
 
 def register(slot: str, name: str, value=object()) -> None:
@@ -59,7 +62,7 @@ def register(slot: str, name: str, value=object()) -> None:
 
 def choose(slot: str, name: str, source: str = "user") -> bool:
     """Choose a variant. False when that name is not registered."""
-    if name not in _VARIANTS.get(slot, {}) and name not in variants(slot):
+    if name not in _VARIANTS.get(slot, {}):
         return False
     _active[slot] = name
     _sources[slot] = source
@@ -71,7 +74,12 @@ def get(slot: str) -> str:
 
 
 def value(slot: str, default=None):
-    """The registered object behind the active name, for non-dict slots."""
+    """The registered object behind the active name.
+
+    A dict for `frame`, a string for the built-in variants of `banner` /
+    `spinner` / `stream`, and whatever a plugin registered for its own names —
+    callers check with `callable()` or `isinstance(..., type)`.
+    """
     return _VARIANTS.get(slot, {}).get(_active.get(slot, ""), default)
 
 

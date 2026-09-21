@@ -221,9 +221,14 @@ def print_banner(animate: Optional[bool] = None):
     """Draw the logo: it appears pixel by pixel, then its colours settle down.
 
     Which of those happen is the `banner` slot: "shimmer" animates, "static"
-    prints the settled logo, "none" prints nothing at all.
+    prints the settled logo, "none" prints nothing at all — and a plugin that
+    registers a callable draws the opening itself.
     """
-    mode = skin.get("banner") or "shimmer"
+    choice = skin.value("banner", "shimmer")
+    if callable(choice):
+        choice()
+        return
+    mode = choice if isinstance(choice, str) else "shimmer"
     if mode == "none":
         return
     if console.is_terminal and mode == "shimmer":
@@ -510,10 +515,17 @@ PENDING_STATES = [
 
 
 def pending_text() -> str:
-    """What the "working" line says — or nothing, when the spinner is off."""
+    """What the "working" line says — or nothing, when the spinner is off.
+
+    Built-in variants are named strings; a plugin registers a callable that
+    returns the text it wants shown.
+    """
     import random
 
-    mode = skin.get("spinner") or "honey"
+    choice = skin.value("spinner", "honey")
+    if callable(choice):
+        return str(choice() or "")
+    mode = choice if isinstance(choice, str) else "honey"
     if mode == "none":
         return ""
     if mode == "dots":
@@ -804,11 +816,29 @@ class ResponseStream:
 _stream = None
 
 
-def get_stream() -> ResponseStream:
+def get_stream():
+    """The answer renderer, chosen by the `stream` slot.
+
+    A plugin's renderer has to speak the same calls as ResponseStream
+    (on_status, on_thinking, on_content, on_tool_start, on_done, on_error,
+    on_reset, peek, thinking); a broken one falls back here instead of taking
+    the session down with it.
+    """
     global _stream
     if _stream is None:
-        _stream = ResponseStream()
+        choice = skin.value("stream")
+        candidate = choice if isinstance(choice, type) else ResponseStream
+        try:
+            _stream = candidate()
+        except Exception:
+            _stream = ResponseStream()
     return _stream
+
+
+def reset_stream() -> None:
+    """Drop the cached renderer — called when the `stream` slot changes."""
+    global _stream
+    _stream = None
 
 
 def thinking_body() -> str:

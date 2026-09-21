@@ -478,8 +478,25 @@ def setup(api):
 never **replace**: a command or tool whose name is taken is refused rather than
 quietly winning — an extension that could take over `bash` would inherit the
 permission you gave the real one, and a plugin that crashes shows a note instead of
-killing the REPL. Two examples ship in the catalog: `word-count` (tool + command +
-setting + listener) and `plain` (frameless interface).
+killing the REPL.
+
+**Shipped skins.** Four plugins exist purely to prove the slots, and each is a
+working example of a different kind of extension:
+
+| plugin | what it changes |
+| --- | --- |
+| `plain` | frameless panels, static logo, quiet waiting line |
+| `skin-work` | thinnest possible: no logo at all, no phrases, minimal borders |
+| `skin-hive` | its own frame colour, a hex-comb opening, buzzing waiting lines |
+| `skin-terminal` | ASCII borders, a one-line header, and **its own answer renderer** |
+
+The last one is the interesting case: a slot can hold a *callable* (banner,
+spinner) or a *class* (stream), so a plugin can decide how the model's answer
+appears on screen, not just what colour its border is. `/skin stream default`
+puts the built-in renderer back.
+
+Also in the catalog: `word-count` — tool + command + setting + event listener in
+one file.
 
 ## Configuration
 

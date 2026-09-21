@@ -1,0 +1,7 @@
+{
+    "name": "terminal",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Brutalist skin: ASCII frames, plain text header, bar spinner, compact answer renderer",
+    "entry": "plugin.py"
+}

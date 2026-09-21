@@ -1,0 +1,7 @@
+{
+    "name": "skin-work",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Quiet skin for long sessions: minimal frames, no logo, no waiting phrases",
+    "entry": "plugin.py"
+}

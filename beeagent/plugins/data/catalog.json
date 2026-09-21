@@ -308,6 +308,36 @@
         "kind": "builtin",
         "path": "plugins/plain"
       }
+    },
+    {
+      "name": "skin-terminal",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Brutalist skin: ASCII frames, plain header, bar spinner, compact answer renderer",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/skin-terminal"
+      }
+    },
+    {
+      "name": "skin-hive",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Warm skin: heavy frames, hex-comb header, buzzing spinner phrases",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/skin-hive"
+      }
+    },
+    {
+      "name": "skin-work",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Quiet skin for long sessions: minimal frames, no logo, no waiting phrases",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/skin-work"
+      }
     }
   ]
 }

@@ -1,0 +1,7 @@
+{
+    "name": "skin-hive",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Warm skin: heavy frames, a hex-comb header, buzzing spinner phrases",
+    "entry": "plugin.py"
+}

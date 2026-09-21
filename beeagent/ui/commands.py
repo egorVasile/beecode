@@ -665,6 +665,12 @@ def _cmd_skin(ctx, args):
     ui[slot] = name
     ctx.config.ui = ui
     _persist_config(ctx)
+    if slot == "stream":
+        # The renderer is a live object holding this turn's buffers; switching
+        # the slot only takes effect on a fresh one.
+        from beeagent.ui.components import reset_stream
+
+        reset_stream()
     return _ok(L(f"{slot} → {name}", f"{slot} → {name}"))
 
 
