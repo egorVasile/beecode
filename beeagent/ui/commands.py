@@ -201,9 +201,10 @@ def model_choices(ctx: ReplContext) -> list:
     if (getattr(ctx.config, "provider", "") or "g4f") != "g4f":
         return list(models)
 
-    wide = set(G4fProvider.recommended_models())
+    ordered = G4fProvider.by_window(models)
+    wide = set(G4fProvider.recommended_models(models=ordered))
     pairs = []
-    for model in G4fProvider.by_window(models):
+    for model in ordered:
         measured = windows.measured(model)
         label = (f"★ {model}" if model in wide else f"   {model}") + f"  ·  " \
                 + ("✔ " if measured else "~ ") + format_window(advertised_window(model))
@@ -429,9 +430,7 @@ def _cmd_models(ctx, args):
     models = G4fProvider.by_window(models)
     heading = L("biggest context first", "сначала с самым большим контекстом")
     if not query and not show_all:
-        # Only the widest windows: nobody scans 600 rows, and a model that
-        # cannot hold the conversation is not a choice at all.
-        wide = set(G4fProvider.recommended_models())
+        wide = set(G4fProvider.recommended_models(models=models))
         models = [m for m in models if m in wide]
         heading = L("recommended: widest context", "рекомендуемые: самый большой контекст")
 

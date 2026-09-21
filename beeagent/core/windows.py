@@ -49,14 +49,34 @@ def limit_from_error(text: str) -> int | None:
     return None
 
 
+_CACHED: dict | None = None
+_CACHED_KEY: tuple | None = None
+
+
 def load() -> dict:
-    if not CACHE.exists():
-        return {}
+    """The measured windows, held in memory until the file actually changes.
+
+    A model list asks for one window per model — 600+ times per screen — and
+    re-reading the JSON each time was measured at over half a second of
+    `/models`. The file's identity (path, mtime, size) is the cache key, so a
+    test pointing CACHE elsewhere, or a probe writing new numbers, is picked up
+    without anyone having to remember to invalidate.
+    """
+    global _CACHED, _CACHED_KEY
+    try:
+        stat = CACHE.stat()
+        key = (str(CACHE), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        _CACHED, _CACHED_KEY = {}, None
+        return _CACHED
+    if _CACHED is not None and key == _CACHED_KEY:
+        return _CACHED
     try:
         data = json.loads(CACHE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
     except (json.JSONDecodeError, OSError):
-        return {}
+        data = {}
+    _CACHED, _CACHED_KEY = (data if isinstance(data, dict) else {}), key
+    return _CACHED
 
 
 def measured(model: str) -> int | None:
@@ -65,11 +85,12 @@ def measured(model: str) -> int | None:
 
 
 def remember(model: str, tokens: int) -> None:
-    data = load()
+    data = dict(load())
     data[model] = int(tokens)
     try:
         CACHE.parent.mkdir(parents=True, exist_ok=True)
         CACHE.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        _CACHED[model] = int(tokens)     # keep the in-memory copy in step
     except OSError:
         pass
 

@@ -127,24 +127,33 @@ class G4fProvider(BaseProvider):
         claims — but only while it is wide: measuring `gpt-4` at 2k says it is
         small, so it sinks to where 2k belongs instead of taking third place in
         a list about capacity. `/models` marks ✔ measured and ~ claimed.
+
+        Each window is looked up once: sorting 600 names asked the same question
+        600 times and showed it as a visible pause.
         """
         from beeagent.core import windows
         from beeagent.core.context import advertised_window
 
+        sizes = {model: advertised_window(model) for model in set(models)}
+
         def rank(model: str):
-            size = advertised_window(model)
+            size = sizes[model]
             proven_wide = bool(windows.measured(model)) and size >= cls.RECOMMENDED_MIN_TOKENS
             return (0 if proven_wide else 1, -size, model)
 
         return sorted(models, key=rank)
 
     @classmethod
-    def recommended_models(cls, limit: int = 40) -> list[str]:
-        """Catalog models that can carry a long session, largest window first."""
+    def recommended_models(cls, limit: int = 40, models: list[str] = None) -> list[str]:
+        """Catalog models that can carry a long session, largest window first.
+
+        `models` accepts a list already ordered by `by_window`, so a caller that
+        sorted the catalog for display does not sort it a second time.
+        """
         from beeagent.core.context import advertised_window
 
-        wide = [m for m in cls.discover_models()
-                if advertised_window(m) >= cls.RECOMMENDED_MIN_TOKENS]
+        pool = cls.discover_models() if models is None else models
+        wide = [m for m in pool if advertised_window(m) >= cls.RECOMMENDED_MIN_TOKENS]
         return cls.by_window(wide)[:limit]
 
     @classmethod

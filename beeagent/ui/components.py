@@ -537,6 +537,7 @@ class ResponseStream:
     THINKING_VISIBLE_LINES = 10
     FENCE = "```"
     FENCE_MAX = 6000        # a never-closing fence this long is printed anyway
+    LINE_FLUSH_CHARS = 240  # a line this long is broken rather than kept hidden
 
     def __init__(self):
         self._phase = "idle"        # idle | status | thinking | content
@@ -549,6 +550,7 @@ class ResponseStream:
         self._in_fence = False      # inside a ``` block, waiting for the close
         self._lead_json = False     # the turn opened with a bare { payload
         self._lead_buf = ""
+        self._pending = ""          # the answer line still being written
 
     # -- internals ----------------------------------------------------------
 
@@ -562,6 +564,7 @@ class ResponseStream:
         self._in_fence = False
         self._lead_json = False
         self._lead_buf = ""
+        self._pending = ""
 
     def _store_thinking(self):
         global LAST_THINKING
@@ -659,16 +662,40 @@ class ResponseStream:
         return 0
 
     def _print(self, text):
-        if text:
-            console.print(Text(text), end="")
+        """Write only whole lines — never leave the cursor mid-line.
+
+        While the prompt is active, prompt_toolkit owns the screen: a write that
+        stops in the middle of a line leaves the cursor where its model does not
+        know about, and the next repaint of the prompt overwrites the beginning
+        of that line. That is the "answer lost its first letters" bug, and the
+        one-write-per-token habit behind it is where the stutter came from.
+        """
+        if not text:
+            return
+        self._pending += text
+        while True:
+            line, found, rest = self._pending.partition("\n")
+            if not found:
+                if len(line) >= self.LINE_FLUSH_CHARS:
+                    self._pending = line[self.LINE_FLUSH_CHARS:] + rest
+                    console.print(Text(line[:self.LINE_FLUSH_CHARS]))
+                    continue
+                return
+            self._pending = rest
+            console.print(Text(line))
+
+    def _flush_pending(self):
+        """End the turn on a line boundary, whatever is left in the buffer."""
+        if self._pending:
+            console.print(Text(self._pending))
+            self._pending = ""
 
     def on_tool_start(self):
         """Content so far was a tool-call payload, not an answer — drop it."""
         holding = self._lead_json or self._in_fence
-        if self._content_started:
-            if not holding:
-                self._print(self._buf)
-                console.print()
+        if self._content_started and not holding:
+            self._print(self._buf)
+            self._flush_pending()
         self._buf = ""
         self._in_fence = False
         self._lead_json = False
@@ -676,13 +703,13 @@ class ResponseStream:
         self._content_started = False
         self._text = ""
         self._phase = "idle"
+        self._pending = ""
 
     def on_done(self):
         pending = self._lead_buf if self._lead_json else self._buf
         if pending.strip() and not _parser.parse(pending).has_commands:
             self._print(pending)
-        elif self._content_started:
-            console.print()
+        self._flush_pending()
         if self._thinking.strip():
             self._store_thinking()
             n = len(self._thinking.strip().split("\n"))
@@ -707,7 +734,7 @@ class ResponseStream:
 
     def on_error(self, msg: str):
         if self._content_started:
-            console.print()
+            self._flush_pending()
         render_error(msg)
         self._begin_turn()
 
@@ -724,6 +751,7 @@ class ResponseStream:
         self._in_fence = False
         self._lead_json = False
         self._lead_buf = ""
+        self._pending = ""
 
     def thinking(self) -> str:
         """Reasoning collected this turn, or the last completed block."""

@@ -26,11 +26,34 @@ def test_thinking_shows_indicator(capsys):
     assert "thinking" in out
 
 
-def test_answer_streams_live(capsys):
+def test_answer_streams_in_whole_lines(capsys):
+    """Nothing may reach the screen ending mid-line.
+
+    prompt_toolkit repaints the prompt after every write, and a write that
+    stops in the middle of a line gets its beginning overwritten — the answer
+    appeared to lose letters. Lines are therefore released on their newline.
+    """
     s = _stream()
-    s.on_content("Привет! Чем помочь?")
+    s.on_content("Привет! Чем ")
+    s.on_content("помочь?")
+    assert "Привет!" not in capsys.readouterr().out, "a partial line stays buffered"
+    s.on_content("\nДальше.")
     out = capsys.readouterr().out
     assert "Привет! Чем помочь?" in out
+
+
+def test_an_answer_without_a_newline_is_not_lost(capsys):
+    s = _stream()
+    s.on_content("короткий ответ без переноса")
+    s.on_done()
+    assert "короткий ответ без переноса" in capsys.readouterr().out
+
+
+def test_a_long_line_still_shows_while_streaming(capsys):
+    s = _stream()
+    s.on_content("x" * (ResponseStream.LINE_FLUSH_CHARS + 60))
+    # rich wraps the block into terminal lines, so count letters, not a substring
+    assert capsys.readouterr().out.count("x") >= ResponseStream.LINE_FLUSH_CHARS
 
 
 def test_tool_json_payload_is_hidden(capsys):
