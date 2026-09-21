@@ -1,0 +1,7 @@
+{
+    "name": "changes",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "/changes: which files this session wrote and what git says about each",
+    "entry": "plugin.py"
+}

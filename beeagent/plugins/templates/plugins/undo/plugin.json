@@ -1,0 +1,7 @@
+{
+    "name": "undo",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Saves a copy of a file before BeeCode overwrites it; /undo puts it back",
+    "entry": "plugin.py"
+}

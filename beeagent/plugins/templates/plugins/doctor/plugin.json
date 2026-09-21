@@ -1,0 +1,7 @@
+{
+    "name": "doctor",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "/doctor: install, console, model window, cache and failed extensions in one table",
+    "entry": "plugin.py"
+}

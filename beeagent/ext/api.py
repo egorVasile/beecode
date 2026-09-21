@@ -74,14 +74,19 @@ class ExtensionAPI:
     # --- commands -----------------------------------------------------------
 
     def command(self, name: str, description: str, handler, usage: str = "") -> bool:
-        """Add a slash command. Refused if the name already exists."""
+        """Add a slash command. Refused only against a command BeeCode owns."""
         from beeagent.ui import commands as core
 
         clean = name.lstrip("/")
-        if clean in core.HANDLERS or clean in self.registry.commands:
+        existing = next((c for c in core.COMMANDS if c.name == clean), None)
+        if existing is not None and existing.category != "plugins":
             self.registry.add("command", clean, self.plugin, L("refused: name taken",
                                                               "отказ: имя занято"))
             return False
+        # A command another extension registered earlier is replaced, not
+        # refused: a second Agent in this process loads the same plugins again,
+        # and "name taken" would leave it without /undo or /doctor.
+        core.drop_command(clean)
         core.add_command(clean, description, usage=usage)
         self.registry.commands[clean] = handler
         core.HANDLERS[clean] = _wrap(handler)

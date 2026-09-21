@@ -338,6 +338,46 @@
         "kind": "builtin",
         "path": "plugins/skin-work"
       }
+    },
+    {
+      "name": "undo",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Undo for files BeeCode overwrote: a copy before every write, /undo puts it back",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/undo"
+      }
+    },
+    {
+      "name": "doctor",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "/doctor: which Python, is the console UTF-8, is the window measured, did a plugin fail",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/doctor"
+      }
+    },
+    {
+      "name": "changes",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "/changes and /diff: which files this session wrote, and what git says about them",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/changes"
+      }
+    },
+    {
+      "name": "recall",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "/recall <words>: search every saved conversation and reopen the one you meant",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/recall"
+      }
     }
   ]
 }
