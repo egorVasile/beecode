@@ -31,7 +31,7 @@ from beeagent.ui.components import (
 )
 from beeagent.ui.commands import (
     ReplContext, build_sources, get_suggestions, dispatch,
-    available_models, available_providers, AVAILABLE_MODES, THEMES,
+    available_models, available_providers, model_choices, AVAILABLE_MODES, THEMES,
     catalog_choices, skill_choices, mcp_choices, history_body,
 )
 from beeagent.ui.viewer import show_scrolled
@@ -192,10 +192,14 @@ class BeeCompleter(Completer):
 # the chosen value, callable returning the currently active value).
 def _picker_specs(ctx: ReplContext):
     return {
-        "models":    (L("🐝 Select model", "🐝 Выбрать модель"),    lambda: available_models(ctx, fetch=True),      "/model",
-                      lambda: ctx.config.model),
-        "model":     (L("🐝 Select model", "🐝 Выбрать модель"),    lambda: available_models(ctx, fetch=True),      "/model",
-                      lambda: ctx.config.model),
+        "models":    (L("🐝 Select model — ★ recommended, widest context first",
+                        "🐝 Выбор модели — ★ рекомендуемые, сначала с большим контекстом"),
+                     lambda: model_choices(ctx), "/model",
+                     lambda: ctx.config.model),
+        "model":     (L("🐝 Select model — ★ recommended, widest context first",
+                        "🐝 Выбор модели — ★ рекомендуемые, сначала с большим контекстом"),
+                     lambda: model_choices(ctx), "/model",
+                     lambda: ctx.config.model),
         "providers": (L("🐝 Select provider", "🐝 Выбрать провайдер"), lambda: available_providers(ctx), "/provider",
                       lambda: ctx.config.provider),
         "provider":  (L("🐝 Select provider", "🐝 Выбрать провайдер"), lambda: available_providers(ctx), "/provider",

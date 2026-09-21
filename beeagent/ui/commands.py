@@ -181,6 +181,36 @@ def available_models(ctx: ReplContext, fetch: bool = False) -> list[str]:
     return list(getattr(provider, "models", None) or [])
 
 
+def format_window(size: int) -> str:
+    """A token count the way a model id writes it: 32k, 128k, 1M."""
+    return f"{size // (1000 * 1000)}M" if size >= 1000 * 1000 else f"{size // 1000}k"
+
+
+def model_choices(ctx: ReplContext) -> list:
+    """Picker rows for /model: recommended first, each labelled with its window.
+
+    The picker used to hand back the catalog in whatever order g4f listed it,
+    so a model measured here at 2k sat above one that holds a whole session,
+    and nothing told the user which was which.
+    """
+    from beeagent.core import windows
+    from beeagent.core.context import advertised_window
+    from beeagent.providers.g4f_provider import G4fProvider
+
+    models = available_models(ctx, fetch=True)
+    if (getattr(ctx.config, "provider", "") or "g4f") != "g4f":
+        return list(models)
+
+    wide = set(G4fProvider.recommended_models())
+    pairs = []
+    for model in G4fProvider.by_window(models):
+        measured = windows.measured(model)
+        label = (f"★ {model}" if model in wide else f"   {model}") + f"  ·  " \
+                + ("✔ " if measured else "~ ") + format_window(advertised_window(model))
+        pairs.append((model, label))
+    return pairs
+
+
 def available_providers(ctx: ReplContext) -> list[str]:
     from beeagent.providers.presets import BY_NAME
 
@@ -395,9 +425,6 @@ def _cmd_models(ctx, args):
     from beeagent.core import windows
     from beeagent.core.context import advertised_window
 
-    def shown_tokens(size: int) -> str:
-        return f"{size // (1000 * 1000)}M" if size >= 1000 * 1000 else f"{size // 1000}k"
-
     total = len(models)
     models = G4fProvider.by_window(models)
     heading = L("biggest context first", "сначала с самым большим контекстом")
@@ -419,7 +446,7 @@ def _cmd_models(ctx, args):
     for i, model in enumerate(models, 1):
         measured = windows.measured(model)
         table.add_row(str(i), model,
-                      ("✔ " if measured else "~ ") + shown_tokens(advertised_window(model)),
+                      ("✔ " if measured else "~ ") + format_window(advertised_window(model)),
                       ", ".join(upstream_map.get(model, [])[:3]) or "—")
     table.caption = Text(
         L("✔ window measured on this machine · ~ claimed by the model name · requests are capped "

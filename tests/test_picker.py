@@ -49,3 +49,18 @@ def test_picker_returns_none_when_no_values(monkeypatch):
     import beeagent.ui.repl as repl
     monkeypatch.setattr(repl, "available_models", lambda ctx: [])
     assert asyncio.run(try_picker(_ctx(), "models", [])) is None
+
+
+def test_model_picker_marks_recommended_and_shows_windows():
+    from beeagent.core import windows
+    from beeagent.ui.commands import model_choices
+
+    windows.remember("command-a-03-2025", 65536)
+    pairs = model_choices(_ctx())
+    values = [value for value, _ in pairs]
+    labels = dict(pairs)
+
+    assert values[0] == "command-a-03-2025", "the measured wide route leads the list"
+    assert labels[values[0]].lstrip().startswith("★"), "recommended is marked, not implied"
+    assert "✔ 65k" in labels[values[0]], "measured windows are told apart from claims"
+    assert any("~" in label for label in labels.values())
