@@ -148,7 +148,11 @@ def _cached_models(name: str, fetch, allow_fetch: bool, fallback: list[str]) -> 
     try:
         from beeagent.plugins.mcp import run_coro_blocking
 
-        models = run_coro_blocking(fetch, timeout=25)
+        # This runs on the thread that owns the prompt: every second here is a
+        # second the interface cannot draw, answer or cancel. A slow endpoint is
+        # not worth a frozen terminal — the cached list is served instead, and
+        # the next call retries once the hour has passed.
+        models = run_coro_blocking(fetch, timeout=6)
     except Exception:
         return cached or fallback
     if not models:
