@@ -10,6 +10,7 @@ The agent loop:
 """
 import asyncio
 import json
+import re
 
 from beeagent.i18n import L
 from beeagent.config.loader import load_config
@@ -40,6 +41,21 @@ from beeagent.core.parser import CommandParser
 
 # How often to reassure the user that a slow endpoint is still being waited on.
 HEARTBEAT_SECONDS = 15
+
+# A model that writes "now I will read the file" and stops is mid-task, not
+# finished — measured live on 2026-09-21, where such a reply ended the run and
+# the file was never opened. One nudge sends it the reminder; a second would be
+# a loop waiting to happen, so the answer stands after one.
+_PROMISE_TO_ACT = re.compile(
+    r"(сейчас|сначала|затем|потом|давайте|позвольте)\D{0,40}"
+    r"(прочита|прочту|посмотрю|проверю|открою|найду|создам|запишу|запущу|изучу|посчитаю|выполню)"
+    r"|\b(i|we|let me|let's|i'll|now)\b\s*\w{0,10}\s*"
+    r"(read|check|look|open|find|create|write|run|inspect|search|list|count)\b",
+    re.I,
+)
+ACT_NOW = ("[SYSTEM: you described a next step but sent no tool call, so nothing ran. "
+           "Either send the ```json {\"tool\": ..., \"args\": {...}}``` block now, "
+           "or answer without promising to act.]")
 
 
 class Agent:
@@ -292,6 +308,8 @@ class Agent:
             provider = self.providers.select(self.config.provider)
             model = self._model_for(provider, callback)
             trim_reported = False
+            nudged = False
+            nudge_pending = False
 
             for turn in range(self.config.max_turns):
                 # 1. Deliver messages the user typed while we were busy:
@@ -312,6 +330,11 @@ class Agent:
                 self.context.skills_section = self.plugins.skills_prompt_section()
                 self.context.permissions_section = self.permissions.prompt_section(self.tools)
                 messages = self.context.build_messages(session.to_dicts(), tool_schemas)
+                if nudge_pending:
+                    # The reminder rides on this request only: history stays the
+                    # conversation the user actually had.
+                    messages = messages + [{"role": "user", "content": ACT_NOW}]
+                    nudge_pending = False
 
                 prompt_str = json.dumps(messages)
                 if self.context.trimmed and not trim_reported:
@@ -349,6 +372,13 @@ class Agent:
 
                 if not parsed.has_commands:
                     session.add_assistant_message(response)
+                    if not nudged and _PROMISE_TO_ACT.search(response or ""):
+                        # "Now I will read the file" is a half-finished turn.
+                        nudged = True
+                        nudge_pending = True
+                        if callback:
+                            callback("nudged", {})
+                        continue
                     self.economy.store_cache(prompt_str, model, response)
                     if callback:
                         callback("done", {})

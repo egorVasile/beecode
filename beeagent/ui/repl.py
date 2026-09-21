@@ -132,6 +132,10 @@ def handle_callback(event: str, data: dict):
     elif event == "tool_end":
         render_tool_end(data["tool"], data["args"], data["output"], data["error"])
 
+    elif event == "nudged":
+        _note("🐝", "the model promised a step but sent no tool call — asked it to act",
+              "модель пообещала шаг и не вызвала инструмент — прошу её действовать")
+
     elif event == "tool_renamed":
         _note("🔧", f"tool name corrected: {data['from']} → {data['to']}",
               f"имя инструмента поправлено: {data['from']} → {data['to']}")

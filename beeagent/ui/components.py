@@ -586,6 +586,9 @@ class ResponseStream:
         """The request was sent; show a playful pending state."""
         if self._thinking.strip():
             self._store_thinking()
+        # Anything the model already said must reach the screen before the next
+        # turn's header — otherwise a nudged retry would swallow it silently.
+        self._flush_pending()
         self._begin_turn()
         self._phase = "status"
         header = Text("  💬 ", style="bold")

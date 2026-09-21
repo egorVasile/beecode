@@ -441,3 +441,47 @@ def test_the_model_is_told_the_shape_it_should_write(tmp_path, monkeypatch):
     assert (tmp_path / "site").is_dir(), "the repaired call must actually run"
     fed_back = endpoint.seen[-1]
     assert "[format note]" in fed_back and "```json" in fed_back
+
+
+def test_a_promising_answer_is_nudged_once_and_the_push_stays_out_of_history(tmp_path, monkeypatch):
+    """"Now I will read the file" is a half-finished turn, not an answer."""
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "note.txt").write_text("сорок два", encoding="utf-8")
+
+    class PromiseFirst:
+        name = "promise-first"
+
+        def __init__(self):
+            self.calls = 0
+            self.seen = []
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            self.seen.append([m.get("content", "") for m in messages])
+            if self.calls == 1:
+                yield ("content", "Сейчас прочитаю файл note.txt и скажу ответ.")
+            elif self.calls == 2:
+                yield ("content", '{"tool": "read", "args": {"path": "note.txt"}}')
+            else:
+                yield ("content", "В файле: сорок два")
+
+        async def chat(self, messages, model=""):
+            return "В файле: сорок два"
+
+    agent = Agent(config=BeeConfig(permissions={"mode": "auto"}), workdir=str(tmp_path))
+    endpoint = PromiseFirst()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    session = Session()
+
+    answer = asyncio.run(agent.run("что в note.txt?", session=session))
+
+    assert "сорок два" in answer, "the run continued to a real answer"
+    assert endpoint.calls == 3, "promise → tool → answer"
+    nudged = [m for m in endpoint.seen[1] if "no tool call" in str(m)]
+    assert len(nudged) == 1, "the reminder reached the model exactly once"
+    stored = " ".join(str(m.content) for m in session.messages)
+    assert "no tool call" not in stored, "the push is not part of the user's history"
+    assert sum("Сейчас прочитаю" in str(m.content) for m in session.messages) == 1
