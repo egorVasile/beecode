@@ -43,42 +43,88 @@ def loads_lenient(payload: str):
         return json.loads(_STRAY_BACKSLASH.sub(r"\\\\", payload))
 
 
+_FENCE = "```"
+_FENCE_JSON = _FENCE + "json"
+
+
+def _json_spans(text: str):
+    """Every balanced {...} span, with string escapes honoured.
+
+    A regex cannot do this job: a tool payload nests braces, so a non-greedy
+    brace match stops at the first inner one, and the closing fence it leaned on
+    to reach the real end is something models often leave out — a several-KB
+    HTML file handed to `write` ended exactly like that and was printed on the
+    terminal instead of executed. Counting depth while skipping quoted text
+    reads both shapes.
+    """
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth == 0:
+                yield start, index + 1
+                start = -1
+
+
+def _fence_before(text: str, start: int) -> int:
+    """Where the fence that introduced this object begins, or start itself."""
+    head = text[:start].rstrip()
+    for fence in (_FENCE_JSON, _FENCE):
+        if head.endswith(fence):
+            return len(head) - len(fence)
+    return start
+
+
+def _fence_after(text: str, end: int) -> int:
+    """Where the fence closing this object ends, or end itself."""
+    tail = text[end:]
+    stripped = tail.lstrip()
+    if stripped.startswith(_FENCE):
+        return end + (len(tail) - len(stripped)) + len(_FENCE)
+    return end
+
+
 class CommandParser:
 
     def parse(self, response: str) -> ParsedResponse:
         commands = []
+        cuts = []
+
+        # 1. Any JSON object naming a tool: fenced, half-fenced, or bare.
+        for start, end in _json_spans(response):
+            try:
+                data = loads_lenient(response[start:end])
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not (isinstance(data, dict) and "tool" in data):
+                continue
+            args = data.get("args", {})
+            commands.append(ParsedCommand(
+                tool=str(data["tool"]),
+                args=args if isinstance(args, dict) else {},
+            ))
+            cuts.append((_fence_before(response, start), _fence_after(response, end)))
+
         remaining = response
-
-        # 1. ```json fenced blocks (primary format).
-        code_block_pattern = re.compile(r'```(?:json)?\s*\n?(\{.*?\})\s*\n?```', re.DOTALL)
-        for match in code_block_pattern.finditer(response):
-            try:
-                data = loads_lenient(match.group(1))
-                if isinstance(data, dict) and "tool" in data:
-                    args = data.get("args", {})
-                    if isinstance(args, dict):
-                        commands.append(ParsedCommand(
-                            tool=str(data["tool"]),
-                            args=args,
-                        ))
-                        remaining = remaining.replace(match.group(0), "", 1)
-            except (json.JSONDecodeError, KeyError):
-                continue
-
-        # 2. Bare JSON objects with "tool" key (e.g. inline in prose).
-        plain_json_pattern = re.compile(r'\{"tool"\s*:\s*"(\w+)"\s*,\s*"args"\s*:\s*(\{.*?\})\s*\}')
-        for match in plain_json_pattern.finditer(remaining):
-            try:
-                tool_name = match.group(1)
-                args = loads_lenient(match.group(2))
-                if isinstance(args, dict):
-                    commands.append(ParsedCommand(
-                        tool=tool_name,
-                        args=args,
-                    ))
-                    remaining = remaining.replace(match.group(0), "", 1)
-            except json.JSONDecodeError:
-                continue
+        for cut_start, cut_end in sorted(cuts, reverse=True):
+            remaining = remaining[:cut_start] + remaining[cut_end:]
 
         # 3. <tool_call>TAG\nargs\n> tag fallback.
         for match in _TAG_PATTERN.finditer(remaining):

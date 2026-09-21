@@ -372,7 +372,32 @@ def render_economy_hit():
     text.append(" — response served from cache", style="dim")
     console.print(text)
 
-def render_model_info(model: str, provider: str, mode: str):
+
+def render_tool_denied(tool: str, args: dict):
+    """A tool the user never granted: loud, but recoverable."""
+    shown = " ".join(f"{k}={str(v)[:40]!r}" for k, v in list(args.items())[:3])
+    text = Text()
+    text.append("  ⛔ ", style="bold")
+    text.append(f"{tool}", style="bold #ffcc00")
+    if shown:
+        text.append(f" {shown}", style="dim")
+    text.append("  blocked — no permission", style="bold red")
+    console.print(text)
+    console.print(Text(L(
+        f"     allow it: /allow {tool}   or /permissions auto to trust the model",
+        f"     разрешить: /allow {tool}   либо /permissions auto, чтобы доверять модели"),
+        style="dim"))
+
+
+def render_model_switched(model_from: str, model_to: str):
+    text = Text()
+    text.append("  🔄 ", style="bold")
+    text.append(L(f"this provider has no “{model_from}” — answering with ",
+                  f"у этого провайдера нет «{model_from}» — отвечаем "), style="dim")
+    text.append(model_to, style="bold #ffcc00")
+    console.print(text)
+
+def render_model_info(model: str, provider: str, mode: str, permissions: str = ""):
     text = Text()
     text.append("  🐝 ", style="bold")
     text.append(f"model: ", style="dim")
@@ -381,6 +406,12 @@ def render_model_info(model: str, provider: str, mode: str):
     text.append(f"{provider}", style="bold #ffcc00")
     text.append(f"  mode: ", style="dim")
     text.append(f"{mode}", style="bold #ffcc00" if mode == "normal" else "bold yellow")
+    if permissions and permissions != "auto":
+        # Say up front why a tool gets blocked, before the first refusal.
+        text.append(f"  permissions: ", style="dim")
+        text.append(f"{permissions}", style="bold yellow")
+        text.append(L("   /allow <tool> · /permissions auto",
+                      "   /allow <инструмент> · /permissions auto"), style="dim")
     console.print(text)
 
 def models_table(models: list[str]) -> Table:
@@ -591,9 +622,15 @@ class ResponseStream:
                 close = self._buf.find(self.FENCE, len(self.FENCE))
                 if close == -1:
                     if len(self._buf) > self.FENCE_MAX:
-                        self._print(self._buf)
-                        self._buf = ""
-                        self._in_fence = False
+                        if _parser.parse(self._buf).has_commands:
+                            # A payload the model never closed the fence on is
+                            # still going to run, so a 7 KB HTML dump has no
+                            # business on the screen. Keep holding the rest.
+                            self._buf = ""
+                        else:
+                            self._print(self._buf)
+                            self._buf = ""
+                            self._in_fence = False
                     return
                 block = self._buf[:close + len(self.FENCE)]
                 self._buf = self._buf[close + len(self.FENCE):]

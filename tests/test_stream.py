@@ -268,6 +268,23 @@ def test_unclosed_fence_is_printed_at_done(capsys):
     assert "обрывок" in capsys.readouterr().out
 
 
+def test_a_huge_unclosed_tool_fence_never_hits_the_screen(capsys):
+    """The screenshot case: a write call carrying a whole HTML page.
+
+    The model stopped after the object without closing the fence, the payload
+    grew past FENCE_MAX, and the renderer dumped raw JSON across the terminal
+    instead of letting the parser run it.
+    """
+    s = _stream()
+    body = ('{"tool": "write", "args": {"path": "site/index.html", "content": "'
+            + '<html>\\n' * 2000 + '"}}')
+    s.on_content("```json\n" + body)
+    s.on_done()
+    out = capsys.readouterr().out
+    assert '"tool": "write"' not in out, "a payload that will run is not an answer"
+    assert "index.html" not in out
+
+
 def test_unknown_tool_is_a_note_not_a_red_error(capsys):
     from beeagent.ui.repl import handle_callback
     handle_callback("tool_unknown", {"tool": "read_directory"})

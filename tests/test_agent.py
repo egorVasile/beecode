@@ -297,3 +297,86 @@ def test_echo_detector_covers_verbatim_repeats_and_rejects_nothing_short():
     assert not agent._is_prompt_echo("готово", sent)
     assert not agent._is_prompt_echo(
         "совсем другой ответ, которого в исходном запросе точно никогда не было", sent)
+
+
+FENCE = "```"
+
+
+def test_a_forgotten_closing_fence_still_runs_the_tool():
+    """The exact shape that dumped a raw payload on screen.
+
+    A model writing a whole HTML page emits the opening fence, the object, and
+    then stops — no closing fence at all. The old pattern required one, so
+    nothing was extracted and the renderer printed the payload as prose.
+    """
+    parser = CommandParser()
+    page = r'<!DOCTYPE html>\n<html lang=\"ru\">\n<body class=\"navbar\"></body>\n</html>'
+    response = FENCE + "json\n" + '{"tool": "write", "args": {"path": "site/index.html", "content": "' \
+               + page + '"}}'
+
+    parsed = parser.parse(response)
+    assert parsed.has_commands, "an unclosed fence is still a tool call"
+    assert parsed.commands[0].tool == "write"
+    assert parsed.commands[0].args["path"] == "site/index.html"
+    assert '"navbar"' in parsed.commands[0].args["content"], "escapes must decode"
+    assert "\n" in parsed.commands[0].args["content"]
+    assert parsed.text.strip() == "", "the payload must not survive as text"
+
+
+def test_nested_braces_belong_to_the_same_call():
+    parser = CommandParser()
+    parsed = parser.parse('{"tool": "write", "args": {"path": "a.json", '
+                          '"content": "{\\"inner\\": 1}"}}')
+    assert len(parsed.commands) == 1
+    assert parsed.commands[0].args["content"] == '{"inner": 1}'
+
+
+def test_prose_around_a_half_fenced_call_survives():
+    parser = CommandParser()
+    parsed = parser.parse('Сейчас создам файл.\n' + FENCE + 'json\n'
+                          + '{"tool": "bash", "args": {"command": "mkdir -p site"}}\n'
+                          + FENCE + '\nГотово.')
+    assert parsed.commands[0].tool == "bash"
+    assert "Сейчас создам файл." in parsed.text and "Готово." in parsed.text
+    assert FENCE not in parsed.text
+
+
+def test_an_unclosed_fence_still_writes_the_file(tmp_path, monkeypatch):
+    """The screenshot, end to end: the model wrote a page and forgot to close.
+
+    Parsing is only half the fix — the call has to reach the tool, or the user
+    watches JSON scroll past while nothing happens.
+    """
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)      # tools resolve relative paths from the cwd
+    page = r'<!DOCTYPE html>\n<html lang=\"ru\"><body>пчела</body></html>'
+    payload = FENCE + 'json\n{"tool": "write", "args": {"path": "site/index.html", "content": "' \
+              + page + '"}}'
+
+    class HalfFenced:
+        name = "half-fenced"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            if self.calls == 1:
+                yield ("content", payload)
+            else:
+                yield ("content", "готово")
+
+        async def chat(self, messages, model=""):
+            return "готово"
+
+    agent = Agent(config=BeeConfig(permissions={"mode": "auto"}), workdir=str(tmp_path))
+    endpoint = HalfFenced()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+
+    asyncio.run(agent.run("создай красивый сайт", session=Session()))
+
+    written = tmp_path / "site" / "index.html"
+    assert written.exists(), "a payload that parses as a call must run, not scroll by"
+    assert "пчела" in written.read_text(encoding="utf-8")
