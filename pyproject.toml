@@ -33,9 +33,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/qoder-buzz/beecode"
-Repository = "https://github.com/qoder-buzz/beecode"
-Issues = "https://github.com/qoder-buzz/beecode/issues"
+Homepage = "https://github.com/egorVasile/beecode"
+Repository = "https://github.com/egorVasile/beecode"
+Issues = "https://github.com/egorVasile/beecode/issues"
 
 [project.scripts]
 beeagent = "beeagent.cli:main"
