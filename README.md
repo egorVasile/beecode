@@ -38,7 +38,33 @@ shows every step, and keeps working until the task is done.
 
 ## Install
 
-One command, in `cmd.exe` (Python 3.10+ required):
+BeeCode is a Python program, and the launcher below is the npm wrapper around
+it — one command either way, and it needs Python 3.10+ on the machine.
+
+**With npm / npx** (nothing to install first; it builds its own private
+environment under `~/.beecode`, so your system Python stays untouched):
+
+```bat
+npx github:egorVasile/beecode
+```
+
+Or put `beecode` on your PATH once:
+
+```bat
+npm install -g github:egorVasile/beecode
+cd C:\path\to\your\project
+beecode
+```
+
+The first run installs BeeCode and a fresh `g4f`; every later run starts in
+about two seconds. The launcher's own flag refreshes both (a pip-installed
+`beecode` has no `--update` — rerun `pip install -U …` instead):
+
+```bat
+beecode --update
+```
+
+**With pip**, into whatever Python environment you already use:
 
 ```bat
 pip install git+https://github.com/egorVasile/beecode.git
@@ -50,6 +76,11 @@ Then start it from the project you want to work on:
 cd C:\path\to\your\project
 beecode
 ```
+
+Every install path above starts **clean**: sessions and settings live in the
+folder you run it from (`.beeagent/` and `beeagent.json`), so a new folder is a
+new agent with no history. Nothing is resumed unless you ask for it with
+`beecode --continue`.
 
 <details>
 <summary>Other install options</summary>

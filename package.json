@@ -1,0 +1,37 @@
+{
+  "name": "beecode",
+  "version": "0.1.0",
+  "description": "BeeCode — a free AI coding agent for your terminal, powered by g4f (no API key)",
+  "license": "GPL-3.0-or-later",
+  "bin": {
+    "beecode": "bin/beecode.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "win32",
+    "linux",
+    "darwin"
+  ],
+  "homepage": "https://github.com/egorVasile/beecode",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/egorVasile/beecode.git"
+  },
+  "keywords": [
+    "beecode",
+    "ai",
+    "agent",
+    "coding-assistant",
+    "cli",
+    "terminal",
+    "g4f",
+    "llm"
+  ]
+}
