@@ -1,5 +1,5 @@
 from pathlib import Path
-from .base import BaseTool, ToolResult
+from .base import BaseTool, ToolResult, read_text_preserving
 
 class ReadTool(BaseTool):
     name = "read"
@@ -28,13 +28,20 @@ class ReadTool(BaseTool):
                     output=f"{path} is a directory — use list_directory to see its contents",
                     error=True,
                 )
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = read_text_preserving(p).splitlines()
             selected = lines[offset:offset + limit]
             output = "\n".join(f"{i + offset + 1}: {line}" for i, line in enumerate(selected))
             rest = len(lines) - offset - len(selected)
             if rest > 0:
                 output += f"\n… {rest} more lines (continue with offset={offset + len(selected)})"
             return ToolResult(output=output, error=False, metadata={"total_lines": len(lines)})
+        except UnicodeDecodeError as e:
+            # Saying "here is some text" about a run of U+FFFD is how a cp1251
+            # file got rewritten as garbage: the model copies what it was shown.
+            return ToolResult(
+                output=f"{path} is not UTF-8 text ({e.reason} at byte {e.start}) — "
+                       f"read it with bash if you must, and do not write it back",
+                error=True)
         except OSError as e:
             return ToolResult(output=f"Cannot read {path}: {e}", error=True)
         except TypeError as e:

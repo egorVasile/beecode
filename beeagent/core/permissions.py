@@ -49,14 +49,21 @@ class Permissions:
         return True
 
     def allows(self, tool) -> bool:
-        """Can this tool run right now?"""
-        if getattr(tool, "is_safe", lambda: False)():
-            return True
+        """Can this tool run right now?
+
+        `readonly` is a ceiling, not a queue: an earlier grant does not unlock a
+        tool that changes the machine there. And a plugin or MCP server vouches
+        for itself, which is a claim made by code the user installed from
+        somewhere else — such a tool needs an explicit grant even when it says
+        it is safe.
+        """
         if self.mode == AUTO:
             return True
+        core_safe = not getattr(tool, "from_extension", False) \
+            and bool(getattr(tool, "is_safe", lambda: False)())
         if self.mode == READONLY:
-            return False
-        return getattr(tool, "name", "") in self.granted
+            return core_safe
+        return core_safe or getattr(tool, "name", "") in self.granted
 
     def refusal(self, tool) -> str:
         """The text handed back to the model — and shown to the user."""

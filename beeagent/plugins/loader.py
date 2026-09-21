@@ -88,8 +88,9 @@ class McpDynamicTool(BaseTool):
         out = self.mcp.call_blocking(self.server, self.tool, kwargs)
         return ToolResult(output=out, error=out.startswith("(MCP"))
 
-    def is_safe(self) -> bool:
-        return True
+    # No is_safe() override: a tool from a third-party MCP server is code we do
+    # not audit, and `is_safe: True` here let it run in `readonly` mode and under
+    # a grant the user gave to a *different* tool. Grant it by name: /allow <tool>.
 
 
 class PluginLoader:
@@ -123,9 +124,21 @@ class PluginLoader:
         self.load_errors.clear()
         self.pending_mcp.clear()
 
-    def _register(self, tool: BaseTool) -> None:
-        self.agent.tools.register(tool)
+    def _register(self, tool: BaseTool, from_extension: bool = False) -> bool:
+        """Register one tool, remembering only the ones that actually landed.
+
+        A plugin that is refused (its name is taken) must not be listed for
+        removal later, or a reload would unregister the core tool it collided
+        with and leave the session unable to run `bash` at all.
+        """
+        tool.from_extension = from_extension
+        if not self.agent.tools.register(tool):
+            self.load_errors.append(
+                f"{tool.name}: a tool with this name is already registered — "
+                "rename it or remove the other one")
+            return False
         self.tool_names.append(tool.name)
+        return True
 
     # --- pieces ------------------------------------------------------------------
 
@@ -143,7 +156,7 @@ class PluginLoader:
                 spec.loader.exec_module(module)
                 tools = getattr(module, "TOOLS", [])
                 for tool in tools:
-                    self._register(tool)
+                    self._register(tool, from_extension=True)
             except Exception as e:
                 self.load_errors.append(f"plugin '{plugin_dir.name}': {e}")
 
@@ -177,7 +190,7 @@ class PluginLoader:
 
     def _register_mcp_tools(self, server: str, tools: list[dict]) -> None:
         for schema in tools:
-            self._register(McpDynamicTool(self.mcp, server, schema))
+            self._register(McpDynamicTool(self.mcp, server, schema), from_extension=True)
 
     def connect_mcp(self, server: str, timeout: float = 90.0) -> list[dict]:
         """Discover a server's tools now, cache them, and register the tools."""

@@ -37,7 +37,8 @@ class NotesTool(BaseTool):
         return ToolResult(output=f"Unknown action '{action}'. Use add or list.", error=True)
 
     def is_safe(self) -> bool:
-        return True
+        # `add` appends to a file on disk, so this is not a read-only tool.
+        return False
 
 
 TOOLS = [NotesTool()]

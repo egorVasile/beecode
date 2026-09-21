@@ -44,6 +44,29 @@ def decode(data: bytes) -> str:
     return text.replace("\r\n", "\n")
 
 
+def _kill_tree(process) -> None:
+    """Kill the child *and its children*.
+
+    `subprocess.run(timeout=…)` kills only the direct child, then waits on the
+    pipes — which the grandchildren still hold open. Measured here: a 1-second
+    timeout came back after 4.4 s, and the process the model believed stopped
+    kept running (and writing files) long after "Command timed out after 1s".
+    """
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           capture_output=True, timeout=10)
+        else:
+            import signal
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    except Exception:
+        # A failed kill must not turn into a second, more confusing error.
+        try:
+            process.kill()
+        except Exception:
+            pass
+
+
 def run_shell(command: str, timeout: int = 60) -> subprocess.CompletedProcess:
     argv = shell_command(command)
     env = dict(os.environ)
@@ -52,12 +75,21 @@ def run_shell(command: str, timeout: int = 60) -> subprocess.CompletedProcess:
     env["PYTHONIOENCODING"] = "utf-8"
     if not argv[0].lower().endswith("cmd.exe"):
         env["LC_ALL"] = env.get("LC_ALL") or "C.UTF-8"
-    return subprocess.run(
-        argv,
-        capture_output=True,
-        timeout=timeout,
-        env=env,
-    )
+    popen_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "env": env,
+                    # A command that reads stdin must not eat the user's keystrokes.
+                    "stdin": subprocess.DEVNULL}
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True
+    process = subprocess.Popen(argv, **popen_kwargs)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(process)
+        stdout, stderr = process.communicate()
+        raise subprocess.TimeoutExpired(argv, timeout, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
 
 
 def run_text(command: str, timeout: int = 60) -> tuple[str, str, int]:

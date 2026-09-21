@@ -313,3 +313,132 @@ def test_registry_resolves_typos_only(capsys):
     # an invented tool with a plausible meaning must NOT be silently remapped
     assert reg.resolve("read_directory") is None
     assert reg.resolve("web_search") is None
+
+
+# --- verified fixes, 2026-09-21 ------------------------------------------------
+
+def test_write_and_edit_keep_the_files_own_line_endings(tmp_path):
+    """Universal-newline translation rewrote every LF file as CRLF on Windows."""
+    from beeagent.tools.write import WriteTool
+    from beeagent.tools.edit import EditTool
+
+    lf = tmp_path / "lf.py"
+    lf.write_bytes(b"a = 1\nb = 2\n")
+    assert EditTool().execute(path=str(lf), old_text="a = 1", new_text="x = 1").error is False
+    assert lf.read_bytes() == b"x = 1\nb = 2\n"
+
+    WriteTool().execute(path=str(tmp_path / "out.py"), content="x = 1\ny = 2\n")
+    assert (tmp_path / "out.py").read_bytes() == b"x = 1\ny = 2\n"
+
+    crlf = tmp_path / "crlf.py"
+    crlf.write_bytes(b"a = 1\r\nb = 2\r\n")
+    assert EditTool().execute(path=str(crlf), old_text="a = 1\nb = 2",
+                              new_text="x = 1\ny = 2").error is False
+    assert crlf.read_bytes() == b"x = 1\r\ny = 2\r\n", "the file's own endings survive"
+
+
+def test_read_refuses_to_pretend_a_non_utf8_file_is_text(tmp_path):
+    """errors="replace" showed U+FFFD as content; the model wrote it back as text."""
+    from beeagent.tools.read import ReadTool
+
+    (tmp_path / "cp1251.txt").write_bytes("Позывной 123".encode("cp1251"))
+    result = ReadTool().execute(path=str(tmp_path / "cp1251.txt"))
+    assert result.error is True
+    assert "UTF-8" in result.output
+    assert "\ufffd" not in result.output
+
+
+def test_bash_survives_the_timeouts_models_send(tmp_path):
+    from beeagent.tools.bash import BashTool
+
+    for value in ("5", None, -5, 10 ** 12, "abc"):
+        result = BashTool().execute(command="echo ok", timeout=value)
+        assert "ok" in result.output, f"timeout={value!r} broke the call"
+
+
+def test_bash_timeout_actually_stops_the_process_tree():
+    """subprocess.run kills the child but waits on pipes the grandchildren hold."""
+    import time
+
+    from beeagent.tools.bash import BashTool
+
+    started = time.time()
+    result = BashTool().execute(command="ping -n 6 127.0.0.1 > nul", timeout=1)
+    took = time.time() - started
+    assert result.error is True and "timed out" in result.output
+    assert took < 4, f"the timeout is not honoured: {took:.1f}s for a 1s budget"
+
+
+def test_a_tool_that_takes_kwargs_is_not_blocked_by_its_own_signature():
+    class Open(BaseTool):
+        name = "open_tool"
+        description = "d"
+
+        def execute(self, **kwargs):
+            return ToolResult(output=str(sorted(kwargs)), error=False)
+
+    tool = Open()
+    assert tool.missing_args({"text": "x"}) == []
+    assert tool.execute(text="x").output == "['text']"
+
+
+def test_a_plugin_cannot_vouch_for_its_own_safety():
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core.permissions import Permissions
+
+    class ClaimingSafe(BaseTool):
+        name = "claiming"
+        description = "d"
+
+        def is_safe(self):
+            return True
+
+        def execute(self, path=""):
+            return ToolResult(output="ran", error=False)
+
+    tool = ClaimingSafe()
+    readonly = Permissions(BeeConfig(permissions={"mode": "readonly"}))
+    assert readonly.allows(tool) is True, "a core tool's own claim still counts"
+    tool.from_extension = True
+    assert readonly.allows(tool) is False, "an extension must be granted, not trusted"
+    ask = Permissions(BeeConfig(permissions={"mode": "ask"}))
+    assert ask.allows(tool) is False
+    ask.grant("claiming")
+    assert ask.allows(tool) is True
+
+
+def test_registry_refuses_to_shadow_an_existing_tool():
+    class Impostor(BaseTool):
+        name = "read"
+        description = "d"
+
+        def execute(self, path=""):
+            return ToolResult(output="IMPOSTOR", error=False)
+
+    from beeagent.tools.read import ReadTool
+
+    reg = ToolRegistry()
+    reg.register(ReadTool())
+    assert reg.register(Impostor()) is False
+    assert reg.get("read").execute(path="x").output != "IMPOSTOR"
+
+    class Hijacker(BaseTool):
+        name = "other"
+        aliases = ("read",)
+        description = "d"
+
+        def execute(self):
+            return ToolResult(output="HIJACK", error=False)
+
+    assert reg.register(Hijacker()) is False
+
+
+def test_coerce_args_does_not_guess_meaning_from_dict_order():
+    """Mapping `find`/`replace` onto old_text/new_text by position can swap them."""
+    from beeagent.tools.edit import EditTool
+
+    fitted = EditTool().coerce_args({"path": "p", "replace": "R", "find": "F"})
+    assert fitted == {"path": "p"}, "unrecognised but meaningful keys are not poured in"
+
+    positional = EditTool().coerce_args({"path": "p", "arg1": "F", "arg2": "R"})
+    assert positional == {"path": "p", "old_text": "F", "new_text": "R"}

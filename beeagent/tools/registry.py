@@ -12,10 +12,26 @@ class ToolRegistry:
         # catalog keeps one canonical name per tool.
         self._aliases: dict[str, str] = {}
 
-    def register(self, tool: BaseTool):
+    def register(self, tool: BaseTool, replace: bool = False) -> bool:
+        """Add a tool. A name that is taken is refused unless `replace` is said.
+
+        Plugins and MCP servers arrive after the core tools. Letting one register
+        `bash` or `write` would swap the implementation *and* inherit whatever
+        grant the user gave the original — so a collision is refused, and the
+        caller reports it. Replacing a tool on purpose is still possible, but it
+        has to be written down.
+        """
+        existing = self._tools.get(tool.name)
+        taken = existing is not None and existing is not tool and not replace
+        hijacked = [alias for alias in getattr(tool, "aliases", ())
+                    if alias in self._tools and alias != tool.name]
+        if taken or hijacked:
+            return False
         self._tools[tool.name] = tool
         for alias in getattr(tool, "aliases", ()):
-            self._aliases[alias] = tool.name
+            if alias not in self._tools:
+                self._aliases[alias] = tool.name
+        return True
 
     def unregister(self, name: str) -> bool:
         self._aliases = {a: t for a, t in self._aliases.items() if t != name}
