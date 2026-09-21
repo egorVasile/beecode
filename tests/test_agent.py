@@ -380,3 +380,64 @@ def test_an_unclosed_fence_still_writes_the_file(tmp_path, monkeypatch):
     written = tmp_path / "site" / "index.html"
     assert written.exists(), "a payload that parses as a call must run, not scroll by"
     assert "пчела" in written.read_text(encoding="utf-8")
+
+
+def test_a_call_missing_its_brackets_is_completed_and_reported():
+    parser = CommandParser()
+    parsed = parser.parse('создам папку\n' + FENCE + 'json\n'
+                          + '{"tool": "bash", "args": {"command": "mkdir -p site"')
+    assert parsed.has_commands, "the intent is unambiguous, so run it"
+    assert parsed.commands[0].args["command"] == "mkdir -p site"
+    assert parsed.repaired and "missing" in parsed.repaired[0]
+    assert FENCE not in parsed.text
+
+
+def test_a_trailing_comma_is_not_a_reason_to_lose_the_call():
+    parsed = CommandParser().parse('{"tool": "read", "args": {"path": "a.py"},}')
+    assert parsed.has_commands and parsed.commands[0].args["path"] == "a.py"
+    assert parsed.repaired
+
+
+def test_a_call_cut_off_mid_string_is_not_invented():
+    """Completing a truncated file payload would write half a page and lie."""
+    parser = CommandParser()
+    parsed = parser.parse('{"tool": "write", "args": {"path": "a.html", "content": "<html><body>')
+    assert not parsed.has_commands
+    assert not parsed.repaired
+
+
+def test_the_model_is_told_the_shape_it_should_write(tmp_path, monkeypatch):
+    """A silently repaired call keeps producing broken calls."""
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)
+
+    class Sloppy:
+        name = "sloppy"
+
+        def __init__(self):
+            self.calls = 0
+            self.seen = []
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            self.seen.append(" ".join(str(m.get("content")) for m in messages))
+            if self.calls == 1:
+                yield ("content", '{"tool": "bash", "args": {"command": "mkdir -p site"')
+            else:
+                yield ("content", "готово")
+
+        async def chat(self, messages, model=""):
+            return "готово"
+
+    agent = Agent(config=BeeConfig(permissions={"mode": "auto"}), workdir=str(tmp_path))
+    endpoint = Sloppy()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    session = Session()
+
+    asyncio.run(agent.run("создай папку", session=session))
+
+    assert (tmp_path / "site").is_dir(), "the repaired call must actually run"
+    fed_back = endpoint.seen[-1]
+    assert "[format note]" in fed_back and "```json" in fed_back

@@ -341,6 +341,12 @@ class Agent:
 
                 parsed = self.parser.parse(response)
 
+                if parsed.repaired:
+                    # Say it out loud: a call fixed in silence teaches the model
+                    # nothing and the user nothing.
+                    if callback:
+                        callback("tool_repaired", {"notes": parsed.repaired})
+
                 if not parsed.has_commands:
                     session.add_assistant_message(response)
                     self.economy.store_cache(prompt_str, model, response)
@@ -428,6 +434,15 @@ class Agent:
                     result_text = (
                         f"[tool result] tool={cmd.tool} error={result.error}\n{output}"
                     )
+                    if parsed.repaired:
+                        result_text += (
+                            "\n[format note] your call was incomplete — BeeCode "
+                            + " and ".join(parsed.repaired)
+                            + ". Write the whole block in one go: a line of "
+                              "```json, then "
+                              '{"tool": "name", "args": {"param": "value"}}, then '
+                              "the closing ```."
+                        )
                     session.add_tool_result(result_text)
 
                     if callback:

@@ -136,6 +136,12 @@ def handle_callback(event: str, data: dict):
         _note("🔧", f"tool name corrected: {data['from']} → {data['to']}",
               f"имя инструмента поправлено: {data['from']} → {data['to']}")
 
+    elif event == "tool_repaired":
+        _note("🩹", "incomplete tool call repaired: " + ", ".join(data["notes"])
+              + " — the model was told the right shape",
+              "неполный вызов починен: " + ", ".join(data["notes"])
+              + " — модели показали правильный формат")
+
     elif event == "tool_unknown":
         # Recoverable: the model gets the real tool list back and continues.
         _note("🤔", f"unknown tool “{data['tool']}” — showed the model the real list, it continues",

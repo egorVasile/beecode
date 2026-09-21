@@ -5,7 +5,7 @@ to avoid embedding the raw closing tag in this source file.
 """
 import re
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -20,6 +20,8 @@ class ParsedResponse:
     text: str
     commands: list[ParsedCommand]
     has_commands: bool
+    # What had to be fixed to read the call at all, so the model can be told.
+    repaired: list[str] = field(default_factory=list)
 
 
 _TAG_NAME = "tool" + "_" + "call"
@@ -101,17 +103,84 @@ def _fence_after(text: str, end: int) -> int:
     return end
 
 
+def _open_object(text: str):
+    """The first brace that never closes: (start, closers, cut_inside_string).
+
+    Returns None when every object in the text is balanced.
+    """
+    stack: list[str] = []
+    start = -1
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "{[":
+            if not stack:
+                start = index
+            stack.append("}" if char == "{" else "]")
+        elif char in "}]" and stack:
+            stack.pop()
+            if not stack:
+                start = -1
+    if not stack:
+        return None
+    return start, "".join(reversed(stack)), in_string
+
+
+_TRAILING_COMMA = re.compile(r",\s*$")
+_COMMA_BEFORE_CLOSER = re.compile(r",(\s*[}\]])")
+
+
+def _repair(fragment: str):
+    """Make a broken payload parseable, or refuse: returns (text, what was done).
+
+    Two shapes get fixed — brackets the model never closed, and the trailing
+    comma that makes otherwise valid JSON unreadable. A call cut off *inside a
+    string* is refused: the missing bytes are content nobody can invent, and
+    completing them would write half a file and report success.
+    """
+    opened = _open_object(fragment)
+    if opened is not None and opened[2]:
+        return None
+    fixed = fragment
+    notes = []
+    if opened is not None:
+        closers = opened[1]
+        fixed = _TRAILING_COMMA.sub("", fixed.rstrip()) + closers
+        notes.append(f"added the missing {closers}")
+    without_commas = _COMMA_BEFORE_CLOSER.sub(r"\1", fixed)
+    if without_commas != fixed:
+        fixed = without_commas
+        notes.append("dropped a trailing comma")
+    if not notes:
+        return None
+    return fixed, " + ".join(notes)
+
+
 class CommandParser:
 
     def parse(self, response: str) -> ParsedResponse:
         commands = []
         cuts = []
+        broken = []
 
         # 1. Any JSON object naming a tool: fenced, half-fenced, or bare.
         for start, end in _json_spans(response):
+            fragment = response[start:end]
             try:
-                data = loads_lenient(response[start:end])
+                data = loads_lenient(fragment)
             except (json.JSONDecodeError, ValueError):
+                if '"tool"' in fragment:
+                    broken.append((start, end, fragment))
                 continue
             if not (isinstance(data, dict) and "tool" in data):
                 continue
@@ -126,7 +195,7 @@ class CommandParser:
         for cut_start, cut_end in sorted(cuts, reverse=True):
             remaining = remaining[:cut_start] + remaining[cut_end:]
 
-        # 3. <tool_call>TAG\nargs\n> tag fallback.
+        # 2. The XML-style tag fallback, for models that answer in tags.
         for match in _TAG_PATTERN.finditer(remaining):
             tool_name = match.group(1)
             args_str = match.group(2).strip()
@@ -137,6 +206,37 @@ class CommandParser:
             ))
             remaining = remaining.replace(match.group(0), "", 1)
 
+        # 3. Broken shapes: brackets the model never closed, a stray trailing
+        #    comma. Complete what is inferable, run it, and say what was fixed.
+        repaired: list[str] = []
+        opened = _open_object(remaining)
+        tail = remaining[opened[0]:] if opened else ""
+        for fragment, is_tail in [(f, False) for _, _, f in broken] \
+                + ([(tail, True)] if tail else []):
+            if '"tool"' not in fragment:
+                continue
+            fixed = _repair(fragment)
+            if not fixed:
+                continue
+            candidate, note = fixed
+            try:
+                data = loads_lenient(candidate)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not (isinstance(data, dict) and "tool" in data):
+                continue
+            args = data.get("args", {})
+            commands.append(ParsedCommand(
+                tool=str(data["tool"]),
+                args=args if isinstance(args, dict) else {},
+            ))
+            repaired.append(note)
+            if is_tail:
+                start = remaining.find(fragment)
+                remaining = remaining[:_fence_before(remaining, start)]
+            else:
+                remaining = remaining.replace(fragment, "", 1)
+
         text_parts = [line.rstrip() for line in remaining.strip().split("\n") if line.strip()]
         clean_text = "\n".join(text_parts)
 
@@ -144,6 +244,7 @@ class CommandParser:
             text=clean_text,
             commands=commands,
             has_commands=len(commands) > 0,
+            repaired=repaired,
         )
 
     def _parse_simple_args(self, args_str: str) -> dict:
