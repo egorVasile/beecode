@@ -74,6 +74,25 @@ def test_g4f_curated_models_include_glm():
     assert p.models[0] == "glm-4.7-flash"
 
 
+def test_every_keyless_provider_still_resolves():
+    """The fallback list rotted once in silence.
+
+    It named Free2GPT, Blackbox and DDG — deleted upstream — so `_keyless_providers`
+    returned two classes and auto-routing carried on picking keyed endpoints.
+    """
+    import g4f.Provider as P
+
+    from beeagent.providers.g4f_provider import KEYLESS_PROVIDERS
+
+    missing = []
+    for name in KEYLESS_PROVIDERS:
+        try:
+            getattr(P, name)
+        except Exception:
+            missing.append(name)
+    assert not missing, f"g4f no longer ships {missing}; drop them from KEYLESS_PROVIDERS"
+
+
 def test_a_stream_g4f_returns_unwrapped_survives_the_provider():
     """Auto-routing hands back an async generator, not a coroutine.
 

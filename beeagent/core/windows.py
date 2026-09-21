@@ -99,7 +99,8 @@ PLAIN_ASK = "\nОтветь одним словом: ok"
 # it as one is how a 2048 got written for a 4k model.
 _OVERFLOW_HINT = re.compile(
     r"maximum context|context length|context window|window exceeded|prompt is too long"
-    r"|too many tokens|exceeds the maximum|input length|request too large", re.I)
+    r"|too many tokens|exceeds the maximum|input length|request too large"
+    r"|文字过长|请输入更短", re.I)   # Yqcloud answers 429 with this in Chinese
 
 
 class ProbeResult:

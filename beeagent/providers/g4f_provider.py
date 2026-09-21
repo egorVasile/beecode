@@ -14,14 +14,29 @@ import inspect
 from .base import BaseProvider
 
 
+# Keyless providers, fastest and largest-prompt first. Measured 2026-09-21
+# against g4f 8.5.7: LLM7 and CohereForAI answered a 4k-token prompt with the
+# needle intact in under 2 seconds, Yqcloud answered in 7 and refused 4k as
+# "too long", Cloudflare was reachable but slow on its own models.
+#
+# The previous list named Free2GPT, Blackbox and DDG — none of which exist in
+# this g4f any more — so the "keyless fallback" had quietly shrunk to two
+# providers before auto-routing took over and picked upstreams that demand a
+# key. tests/test_providers.py fails if a name here stops resolving.
+KEYLESS_PROVIDERS = ("LLM7", "CohereForAI_C4AI_Command", "Yqcloud", "Cloudflare")
+
+
 def _keyless_providers() -> list:
     """Resolve known keyless provider classes, skipping unavailable ones."""
     providers = []
     try:
         import g4f.Provider as P
-        for name in ["Cloudflare", "Yqcloud", "Free2GPT", "Blackbox", "DDG"]:
-            cls = getattr(P, name, None)
-            if cls is not None and getattr(cls, "working", False):
+        for name in KEYLESS_PROVIDERS:
+            try:
+                cls = getattr(P, name)
+            except Exception:
+                continue
+            if getattr(cls, "working", False):
                 providers.append(cls)
     except Exception:
         pass
