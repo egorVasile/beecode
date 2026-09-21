@@ -407,7 +407,7 @@ def render_model_switched(model_from: str, model_to: str):
 
 def render_model_info(model: str, provider: str, mode: str, permissions: str = ""):
     text = Text()
-    text.append("  🐝 ", style="bold")
+    text.append("🐝 ", style="bold")
     text.append(f"model: ", style="dim")
     text.append(f"{model}", style="bold #ffcc00")
     text.append(f"  provider: ", style="dim")
@@ -420,7 +420,7 @@ def render_model_info(model: str, provider: str, mode: str, permissions: str = "
         text.append(f"{permissions}", style="bold yellow")
         text.append(L("   /allow <tool> · /permissions auto",
                       "   /allow <инструмент> · /permissions auto"), style="dim")
-    console.print(text)
+    console.print(Align.center(text))
 
 def models_table(models: list[str]) -> Table:
     table = Table(
