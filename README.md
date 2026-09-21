@@ -378,6 +378,7 @@ mouse-clickable picker.
 | `/thinking` | Show the last model reasoning (scrollable) | `/thinking` |
 | `/token` | Show current context token usage | `/token` |
 | `/tools` | List registered tools | `/tools` |
+| `/update` | Check for a newer BeeCode and install it | `/update` |
 | `/window` | Show or measure the model context window | `/window [measure] [model]` |
 
 ### Sessions

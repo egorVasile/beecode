@@ -16,7 +16,7 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
-from prompt_toolkit.shortcuts import radiolist_dialog
+from prompt_toolkit.shortcuts import radiolist_dialog, yes_no_dialog
 from prompt_toolkit.styles import Style
 from rich.text import Text
 
@@ -341,10 +341,68 @@ def _stop_active_task():
     get_stream().reset()
 
 
+async def _offer_update(agent) -> bool:
+    """Ask once whether to pull a newer BeeCode. True means the question is settled.
+
+    The version check runs in a worker thread, so this returns False — and asks
+    again on the next round — until the thread has an answer. The prompt is
+    never held up waiting for GitHub.
+    """
+    from beeagent import __version__
+    from beeagent.core import updater
+
+    workdir = getattr(agent, "workdir", ".") or "."
+    if not updater.wait(0):
+        return False
+    latest = updater.available(workdir)
+    if not latest:
+        return True
+    answer = await yes_no_dialog(
+        title=brand_ramp(f" 🐝 BeeCode {latest} "),
+        text=L(f"A newer BeeCode is out: {latest}, you are running {__version__}.\n"
+               "It needs a restart either way.\n\nUpdate now?",
+               f"Вышел новый BeeCode: {latest}, у тебя стоит {__version__}.\n"
+               "Перезапуск нужен в любом случае.\n\nОбновить сейчас?"),
+        yes_text=L("Update", "Обновить"),
+        no_text=L("Later", "Позже"),
+        style=BEE_DIALOG_STYLE,
+    ).run_async()
+    if not answer:
+        # A "no" is about this release, not about ever hearing again: the next
+        # version asks afresh.
+        updater.write_cache(workdir, declined=latest)
+        _note("🐝", "later then — /update does it whenever you want",
+              "как хочешь — /update сделает это когда скажешь")
+        return True
+    await _run_update()
+    return True
+
+
+async def _run_update() -> None:
+    """Run the updater off the loop and say what came of it."""
+    from beeagent.cli import update_self
+
+    _note("⬇️", "updating BeeCode… this takes a minute", "обновляю BeeCode… это минута")
+    try:
+        code = await asyncio.to_thread(update_self)
+    except Exception as e:
+        code = -1
+        _note("❌", f"the updater itself failed: {e}", f"сам обновлятор упал: {e}")
+    if code == 0:
+        _note("✅", "updated — close this window and start `beecode` again",
+              "готово — закрой окно и запусти `beecode` заново")
+    elif code != -1:
+        _note("❌", "the update did not finish — /doctor says what is wrong",
+              "обновление не дошло — /doctor скажет, что не так")
+
+
 async def run_repl(agent, config, session=None):
+    from beeagent.core import updater
     from beeagent.core.session import Session
 
     ctx = ReplContext(agent=agent, config=config, session=session or Session())
+    updater.start(getattr(agent, "workdir", ".") or ".")
+    asked_about_update = False
 
     prompt_session: PromptSession = PromptSession(
         completer=BeeCompleter(ctx),
@@ -360,6 +418,8 @@ async def run_repl(agent, config, session=None):
 
     try:
         while ctx.running:
+            if not asked_about_update:
+                asked_about_update = await _offer_update(agent)
             console.print()
             try:
                 # patch_stdout routes agent output above the active prompt
@@ -396,6 +456,8 @@ async def run_repl(agent, config, session=None):
                     console.clear()
                 if res.output is not None:
                     console.print(res.output)
+                if res.action == "update":
+                    await _run_update()
                 if res.action == "thinking_pager":
                     if not await show_scrolled(L("💭 reasoning", "💭 мысли"), thinking_body()):
                         show_thinking_fallback()

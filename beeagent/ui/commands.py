@@ -65,6 +65,7 @@ COMMANDS: list[Command] = [
     Command("token", "Show current context token usage", category="info"),
     Command("thinking", "Show the last model reasoning (scrollable)", category="info"),
     Command("window", "Show or measure the model context window", usage="/window [measure] [model]", category="info"),
+    Command("update", "Check for a newer BeeCode and install it", category="info"),
     # model / provider / mode
     Command("model", "Switch the active model", arg="model", usage="/model <name>", category="engine"),
     Command("models", "List models with the widest context first, --all for every one",
@@ -1365,6 +1366,27 @@ def _cmd_clear(ctx, args):
     return CommandResult(action="clear")
 
 
+def _cmd_update(ctx, args):
+    """Look at the published version now, and install it if it is newer."""
+    from beeagent import __version__
+    from beeagent.core import updater
+
+    workdir = (getattr(ctx.agent, "workdir", None) or ".") if ctx.agent else "."
+    body = updater.check(workdir=workdir, force=True)
+    latest = str(body.get("latest") or "")
+    if not latest:
+        return _err(L("the update server did not answer — nothing was changed",
+                      "сервер обновлений не ответил — ничего не тронуто"))
+    if not updater.is_newer(latest, __version__):
+        return CommandResult(output=Text(
+            L(f"BeeCode {__version__} is the newest there is.",
+              f"BeeCode {__version__} — самый свежий из вышедших."), style="dim"))
+    return CommandResult(
+        output=Text(L(f"found {latest} — updating", f"нашёл {latest} — обновляю"),
+                    style="bold #ffcc00"),
+        action="update")
+
+
 def _cmd_quit(ctx, args):
     ctx.running = False
     return CommandResult(action="quit")
@@ -1386,6 +1408,7 @@ HANDLERS: dict[str, Callable] = {
     "allow": _cmd_allow,
     "thinking": _cmd_thinking,
     "window": _cmd_window,
+    "update": _cmd_update,
     "tools": _cmd_tools,
     "plugins": _cmd_plugins,
     "plugin": _cmd_plugin,
