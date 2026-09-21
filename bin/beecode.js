@@ -58,10 +58,13 @@ function install(python) {
 
 function main() {
   const args = process.argv.slice(2);
+  const update = args.includes("--update");
   const rest = args.filter((arg) => arg !== "--update");
 
   const python = findPython();
-  if (args.includes("--update") || !fs.existsSync(BEECODE)) install(python);
+  if (update || !fs.existsSync(BEECODE)) install(python);
+  // `--update` is a request to refresh, not to run: same contract as the CLI's.
+  if (update) process.exit(0);
 
   const result = spawnSync(BEECODE, rest, { stdio: "inherit" });
   if (result.error) {

@@ -28,6 +28,26 @@ def _run_command(action_words, prefix, known, fallback_line):
         console.print(result.output)
 
 
+def update_self(root=None) -> int:
+    """Bring BeeCode up to date, whichever way it was installed.
+
+    An editable install *is* a checkout, so pulling the checkout is the update —
+    and running pip there would replace the development copy with a frozen one.
+    Anything else lives in site-packages and needs pip, which also refreshes g4f
+    and its borrowed endpoints.
+    """
+    import subprocess
+    from pathlib import Path
+
+    base = Path(root) if root is not None else Path(__file__).resolve().parent.parent
+    if (base / ".git").exists():
+        print(f"updating the checkout at {base}")
+        return subprocess.call(["git", "-C", str(base), "pull", "--ff-only"])
+    print("updating the installed BeeCode and g4f")
+    return subprocess.call([sys.executable, "-m", "pip", "install", "--upgrade",
+                            "git+https://github.com/egorVasile/beecode.git"])
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="beecode",
@@ -41,6 +61,8 @@ def main():
     parser.add_argument("--continue", dest="continue_session", action="store_true", help="Continue last session")
     parser.add_argument("--classic", action="store_true", help="Force the classic line REPL (default)")
     parser.add_argument("--tui", action="store_true", help="Launch the full-screen Textual TUI")
+    parser.add_argument("--update", action="store_true",
+                        help="Fetch the newest BeeCode and g4f, then exit")
 
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("models", help="List available models")
@@ -54,6 +76,9 @@ def main():
                      help="list | add <name> <command> [args] | remove <name> | connect <name> | tools")
 
     args = parser.parse_args()
+
+    if args.update:
+        sys.exit(update_self())
 
     if args.command == "models":
         print_models(G4fProvider.discover_models())
@@ -89,7 +114,8 @@ def main():
     if args.prompt:
         agent = Agent(config=config)
         print_banner()
-        render_model_info(config.model, config.provider, config.mode)
+        render_model_info(config.model, config.provider, config.mode,
+                          config.permissions.mode)
         console.print()
         agent.run_sync(args.prompt, callback=handle_callback)
         return
@@ -108,7 +134,8 @@ def main():
     else:
         agent = Agent(config=config)
         print_banner()
-        render_model_info(config.model, config.provider, config.mode)
+        render_model_info(config.model, config.provider, config.mode,
+                          config.permissions.mode)
         print_welcome()
         asyncio.run(run_repl(agent, config, session=session))
 

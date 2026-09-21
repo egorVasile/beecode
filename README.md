@@ -57,8 +57,9 @@ beecode
 ```
 
 The first run installs BeeCode and a fresh `g4f`; every later run starts in
-about two seconds. The launcher's own flag refreshes both (a pip-installed
-`beecode` has no `--update` — rerun `pip install -U …` instead):
+about two seconds. `beecode --update` refreshes both, and it means the same
+thing from any install path: a checkout is pulled, an installed copy is
+reinstalled from the repository.
 
 ```bat
 beecode --update
