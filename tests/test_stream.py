@@ -322,3 +322,31 @@ def test_typo_tool_is_rewritten_visibly(capsys):
     out = capsys.readouterr().out
     assert "writw" in out and "write" in out
     assert "Error" not in out
+
+
+def test_f2_shows_reasoning_for_one_answer_only(capsys):
+    """The peek flag used to survive the turn: every later answer dumped its thinking."""
+    s = _stream()
+    s.on_status()
+    s.on_thinking("первое размышление\n")
+    s.peek()
+    s.on_done()
+    s.on_status()
+    s.on_thinking("второе размышление\n")
+    s.on_done()
+    out = capsys.readouterr().out
+    assert "первое размышление" in out
+    assert "второе размышление" not in out
+
+
+def test_a_space_before_the_payload_does_not_expose_it(capsys):
+    """The shield was decided from the first chunk alone — one space disarmed it."""
+    s = _stream()
+    s.on_status()
+    s.on_content(" ")
+    s.on_content('{"tool": "bash", "args": {"command": "rm -rf /"}}')
+    s.on_tool_start()
+    s.on_done()
+    out = capsys.readouterr().out
+    assert '"tool": "bash"' not in out
+    assert "rm -rf" not in out

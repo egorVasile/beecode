@@ -548,7 +548,7 @@ class ResponseStream:
         self._content_started = False
         self._buf = ""              # text held back while a fence is scanned
         self._in_fence = False      # inside a ``` block, waiting for the close
-        self._lead_json = False     # the turn opened with a bare { payload
+        self._lead_json = None      # undecided until real text arrives
         self._lead_buf = ""
         self._pending = ""          # the answer line still being written
 
@@ -562,9 +562,12 @@ class ResponseStream:
         self._content_started = False
         self._buf = ""
         self._in_fence = False
-        self._lead_json = False
+        self._lead_json = None      # undecided until real text arrives
         self._lead_buf = ""
         self._pending = ""
+        # F2 opens the reasoning tail for *this* answer. Left set, every later
+        # turn streamed all of its thinking to the screen unasked.
+        self._think_live = False
 
     def _store_thinking(self):
         global LAST_THINKING
@@ -607,9 +610,14 @@ class ResponseStream:
         if not self._content_started:
             self._content_started = True
             self._phase = "content"
-            # A reply that opens with a bare JSON object is a tool call.
-            self._lead_json = text.lstrip()[:1] == "{"
         self._text += text
+        if self._lead_json is None and self._text.strip():
+            # A reply that opens with a bare JSON object is a tool call. The
+            # decision waits for the first non-space character: providers pass
+            # whitespace through, and one leading space used to settle it as
+            # "not a payload" for the whole turn — after which the JSON streamed
+            # to the screen right before the tool ran.
+            self._lead_json = self._text.lstrip()[:1] == "{"
         if self._lead_json:
             self._lead_buf += text
             return
@@ -701,7 +709,7 @@ class ResponseStream:
             self._flush_pending()
         self._buf = ""
         self._in_fence = False
-        self._lead_json = False
+        self._lead_json = None      # undecided until real text arrives
         self._lead_buf = ""
         self._content_started = False
         self._text = ""
@@ -752,7 +760,7 @@ class ResponseStream:
         self._content_started = False
         self._buf = ""
         self._in_fence = False
-        self._lead_json = False
+        self._lead_json = None      # undecided until real text arrives
         self._lead_buf = ""
         self._pending = ""
 

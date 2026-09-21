@@ -553,15 +553,33 @@ def _cmd_key(ctx, args):
                  f"🔑 ключ {endpoint.label} сохранён (…{token[-4:]}). Включить: /provider {name}"))
 
 
+def _persist_config(ctx) -> None:
+    """Write the config the user just changed.
+
+    `/lang` and `/permissions` saved; `/model`, `/provider` and `/mode` did not,
+    so a restart came back on the previous model and the picker looked like it
+    had forgotten what was chosen.
+    """
+    from beeagent.config.loader import save_config
+
+    try:
+        save_config(ctx.config, ctx.agent.workdir if ctx.agent is not None else ".")
+    except OSError:
+        pass
+
+
 def _cmd_model(ctx, args):
     if not args:
         return CommandResult(output=Text(f"current model: {ctx.config.model}  (see /models)", style="dim"))
-    name = args[0]
+    # Two ids in the catalog contain a space ("Think Deeper"); taking args[0]
+    # made them unreachable from the picker, which sends the whole name.
+    name = " ".join(args).strip()
     if name not in available_models(ctx):
         return _err(f"Unknown model '{name}'. Run /models to see the list.")
     ctx.config.model = name
     if ctx.agent is not None:
         ctx.agent.context.model = name
+    _persist_config(ctx)
     return _ok(f"model → {name}")
 
 
@@ -587,6 +605,7 @@ def _cmd_provider(ctx, args):
         if models:
             ctx.config.model = models[0]
             ctx.agent.context.model = models[0]
+    _persist_config(ctx)
     return _ok(L(f"provider → {name}   its models: /models",
                  f"провайдер → {name}   его модели: /models"))
 
@@ -605,11 +624,7 @@ def _cmd_lang(ctx, args):
     set_lang(code)
     if ctx.config is not None:
         ctx.config.language = code
-        try:
-            from beeagent.config.loader import save_config
-            save_config(ctx.config, ctx.agent.workdir if ctx.agent is not None else ".")
-        except OSError:
-            pass
+        _persist_config(ctx)
     return _ok(L(f"interface language → {code}", f"язык интерфейса → {code}"))
 
 
@@ -628,6 +643,7 @@ def _cmd_mode(ctx, args):
             economy.cache = ResponseCache(ctx.config.economy.cache_dir)
         elif mode == "normal":
             economy.cache = None
+    _persist_config(ctx)
     return _ok(f"mode → {mode}")
 
 

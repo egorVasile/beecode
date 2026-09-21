@@ -96,6 +96,18 @@ def test_dispatch_model_unknown_does_not_switch(ctx):
     assert ctx.config.model == before, "an unknown name must not clobber the model"
 
 
+def test_a_model_name_with_a_space_is_reachable_and_remembered(tmp_path, monkeypatch):
+    """The picker sends the whole id; args[0] used to cut "Think Deeper" in half."""
+    monkeypatch.chdir(tmp_path)
+    ctx = ReplContext(agent=None, config=BeeConfig(), session=Session())
+    spaced = next((m for m in available_models(ctx) if " " in m), None)
+    assert spaced, "the catalog does contain a two-word model id"
+
+    dispatch(ctx, f"/model {spaced}")
+    assert ctx.config.model == spaced
+    assert (tmp_path / "beeagent.json").exists(), "the choice has to survive a restart"
+
+
 def test_dispatch_mode_switch(ctx):
     dispatch(ctx, "/mode economy")
     assert ctx.config.mode == "economy"
