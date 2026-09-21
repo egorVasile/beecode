@@ -14,9 +14,11 @@ import time
 import urllib.request
 from pathlib import Path
 
-# The version of the branch people install from, read as a plain file: no API
-# quota, no repository clone, and one small response.
-CHECK_URL = "https://raw.githubusercontent.com/egorVasile/beecode/main/beeagent/__init__.py"
+# The version of the branch people install from. The contents API with a raw
+# Accept header, rather than raw.githubusercontent.com: that CDN kept serving a
+# version it had already replaced for minutes, and a stale answer is worse than
+# no answer — it is the difference between "up to date" and silence.
+CHECK_URL = "https://api.github.com/repos/egorVasile/beecode/contents/beeagent/__init__.py?ref=main"
 CACHE_PATH = Path(".beeagent") / "update.json"
 INTERVAL = 12 * 3600          # twice a day is enough to hear about a release
 TIMEOUT = 4                   # seconds; a stalled network is not the user's problem
@@ -65,8 +67,11 @@ def write_cache(workdir=".", **fields) -> dict:
 
 def fetch_latest(timeout: float = TIMEOUT) -> str:
     """The version published on the branch, or "" when it cannot be read."""
+    request = urllib.request.Request(
+        CHECK_URL, headers={"Accept": "application/vnd.github.raw",
+                            "User-Agent": "beecode-update-check"})
     try:
-        with urllib.request.urlopen(CHECK_URL, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             text = response.read().decode("utf-8", "replace")
     except Exception:
         return ""
