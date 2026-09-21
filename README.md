@@ -338,6 +338,7 @@ mouse-clickable picker.
 | Command | What it does | Usage |
 | --- | --- | --- |
 | `/allow` | Grant one unsafe tool for this session | `/allow <tool>` |
+| `/extensions` | What the installed plugins added | `/extensions` |
 | `/key` | Store your own API key for a provider | `/key <provider> <token>` |
 | `/lang` | Switch the interface language | `/lang <en|ru>` |
 | `/mode` | Switch between normal and economy | `/mode <normal|economy>` |
@@ -346,6 +347,7 @@ mouse-clickable picker.
 | `/permissions` | Who may touch the machine: ask, auto or readonly | `/permissions <ask|auto|readonly>` |
 | `/provider` | Switch the active provider | `/provider <name>` |
 | `/providers` | List providers and which ones have a key | `/providers` |
+| `/skin` | Choose interface variants: frames, banner, spinner | `/skin [slot] [variant]` |
 
 ### Skills, Plugins, Mcp
 
@@ -430,6 +432,55 @@ BeeCode has one extension mechanism with three kinds, browsed from a bundled cat
 First-time MCP discovery can take a minute (npm downloads), so it never runs at startup:
 startup loads cached schemas only, and `/mcp connect` does the rest explicitly.
 
+## Making BeeCode your own
+
+Two knobs, both reachable without reading the source.
+
+**Interface slots.** Every panel asks the skin how to be framed, so the decoration
+is one setting, not a fork:
+
+```
+/skin                       slots, what is on now, and what you can pick
+/skin frame none            take the borders away (rounded · heavy · square · ascii)
+/skin banner none           no animated logo (shimmer · static · none)
+/skin spinner dots          quiet waiting line instead of "wiping honey off the keyboard…"
+/skin reset                 back to defaults
+```
+
+The choice is saved to `beeagent.json` under `ui`, so it survives a restart.
+
+**The plugin API.** A plugin directory with a `setup(api)` function can add
+capabilities and never has to import the REPL or patch a module:
+
+```python
+# .beeagent/plugins/word-count/plugin.py
+from beeagent.tools.base import BaseTool, ToolResult
+
+class WordCountTool(BaseTool):
+    name = "word_count"
+    description = "Count words and lines in a file."
+    parameters = {"type": "object", "properties": {"path": {"type": "string"}}}
+
+    def execute(self, path: str = "") -> ToolResult:
+        text = open(path, encoding="utf-8").read()
+        return ToolResult(output=f"{len(text.split())} words", error=False)
+
+TOOLS = [WordCountTool()]                    # a tool for the model
+
+def setup(api):
+    api.setting("echo", True, "note after every answer")        # its own setting
+    api.command("wc", "Count words", my_handler, usage="/wc <path>")
+    api.event("done", lambda event, data: print(len(data["text"].split())))
+    api.skin("frame", "plain", {"box": my_space_box})           # an interface variant
+```
+
+`/extensions` lists what every plugin added and who added it. A plugin may **add**,
+never **replace**: a command or tool whose name is taken is refused rather than
+quietly winning — an extension that could take over `bash` would inherit the
+permission you gave the real one, and a plugin that crashes shows a note instead of
+killing the REPL. Two examples ship in the catalog: `word-count` (tool + command +
+setting + listener) and `plain` (frameless interface).
+
 ## Configuration
 
 `beeagent.json` in the working directory (see `beeagent.example.json`):
@@ -446,6 +497,8 @@ startup loads cached schemas only, and `/mcp connect` does the rest explicitly.
 | `api_keys` | `{}` | Your own keys per provider, added with `/key` (never printed in full) |
 | `permissions.mode` | `ask` | `ask` · `auto` · `readonly` — see [Permissions](#permissions) |
 | `permissions.allowed` | `[]` | Tools pre-approved for every session, e.g. `["bash", "write"]` |
+| `ui` | `{}` | Interface slots: `frame`, `banner`, `spinner`, `stream` — see `/skin` |
+| `extensions` | `{}` | Settings owned by plugins, keyed by plugin name |
 | `economy.cache_enabled` | `true` | Turn answer caching off even in economy mode |
 | `economy.cache_dir` | `.beeagent/cache` | Where answers and sessions live |
 | `economy.cache_ttl_minutes` | `30` | How long a cached answer may stand before it is re-asked |

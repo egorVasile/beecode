@@ -106,10 +106,19 @@ class PluginLoader:
         self.tool_names: list[str] = []
         # Configured servers whose schemas are not cached yet.
         self.pending_mcp: list[str] = []
+        # What each plugin contributed through the extension API.
+        from beeagent.ext.api import ExtensionRegistry
+
+        self.extensions = ExtensionRegistry()
 
     # --- entry point -----------------------------------------------------------
 
     def load_all(self) -> None:
+        # The interface slots are set from the config before anything draws, so a
+        # user who switched the frame off never sees the default one first.
+        from beeagent.ui import skin
+
+        skin.apply(getattr(self.agent.config, "ui", None) or {})
         self._load_skill_tool()
         self._load_plugins()
         self._load_skills()
@@ -146,6 +155,8 @@ class PluginLoader:
         self._register(SkillTool(self))
 
     def _load_plugins(self) -> None:
+        from beeagent.ext.api import ExtensionAPI
+
         for plugin_dir in self.manager.installed_plugin_dirs():
             entry = plugin_dir / "plugin.py"
             module_name = f"beeagent_plugin_{plugin_dir.name}"
@@ -156,7 +167,16 @@ class PluginLoader:
                 spec.loader.exec_module(module)
                 tools = getattr(module, "TOOLS", [])
                 for tool in tools:
-                    self._register(tool, from_extension=True)
+                    if self._register(tool, from_extension=True):
+                        self.extensions.add("tool", tool.name, plugin_dir.name,
+                                            (tool.description or "").split("\n")[0][:60])
+                # The newer contract: a plugin that wants to add commands,
+                # settings or listeners declares setup(api) and never touches a
+                # private module of ours.
+                setup = getattr(module, "setup", None)
+                if callable(setup):
+                    setup(ExtensionAPI(plugin_dir.name, self.extensions,
+                                       agent=self.agent, config=self.agent.config))
             except Exception as e:
                 self.load_errors.append(f"plugin '{plugin_dir.name}': {e}")
 

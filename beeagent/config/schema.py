@@ -40,3 +40,8 @@ class BeeConfig(BaseModel):
     api_keys: dict[str, str] = Field(default_factory=dict)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     economy: EconomyConfig = Field(default_factory=EconomyConfig)
+    # Interface slots: frame / banner / spinner / stream. "none" is a valid
+    # choice for any of them — see /skin.
+    ui: dict[str, str] = Field(default_factory=dict)
+    # Settings owned by plugins, by plugin name: {"word-count": {"limit": 20}}.
+    extensions: dict[str, dict] = Field(default_factory=dict)

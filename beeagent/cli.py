@@ -11,7 +11,7 @@ from beeagent.ui.components import (
     console, print_banner, print_welcome,
     render_model_info, print_models, print_providers,
 )
-from beeagent.ui.repl import run_repl, handle_callback
+from beeagent.ui.repl import run_repl, handle_callback, agent_callback
 
 _PLUGIN_ACTIONS = ("list", "install", "remove", "uninstall", "enable", "disable")
 _MCP_ACTIONS = ("list", "add", "remove", "connect", "tools")
@@ -117,7 +117,7 @@ def main():
         render_model_info(config.model, config.provider, config.mode,
                           config.permissions.mode)
         console.print()
-        agent.run_sync(args.prompt, callback=handle_callback)
+        agent.run_sync(args.prompt, callback=agent_callback(agent))
         return
 
     session = None

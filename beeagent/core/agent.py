@@ -409,7 +409,10 @@ class Agent:
                         continue
                     self.economy.store_cache(prompt_str, model, response)
                     if callback:
-                        callback("done", {})
+                        # The text travels with the event: a plugin listening for
+                        # the end of an answer should not have to reach into the
+                        # session to find out what was said.
+                        callback("done", {"text": response})
                     return response
 
                 session.add_assistant_message(response, tool_calls=[

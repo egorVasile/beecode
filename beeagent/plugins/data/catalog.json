@@ -1,215 +1,313 @@
 {
-    "version": 1,
-    "updated": "2026-09-19",
-    "categories": ["skills", "mcp", "plugins"],
-    "items": [
-        {
-            "name": "code-review",
-            "type": "skill",
-            "category": "skills",
-            "description": "Systematic code review: correctness, security, resources, clarity",
-            "source": {"kind": "builtin", "path": "skills/code-review"}
-        },
-        {
-            "name": "commit-messages",
-            "type": "skill",
-            "category": "skills",
-            "description": "Clean conventional commit messages",
-            "source": {"kind": "builtin", "path": "skills/commit-messages"}
-        },
-        {
-            "name": "test-writer",
-            "type": "skill",
-            "category": "skills",
-            "description": "Meaningful tests by behavior, not coverage theater",
-            "source": {"kind": "builtin", "path": "skills/test-writer"}
-        },
-        {
-            "name": "docs-writer",
-            "type": "skill",
-            "category": "skills",
-            "description": "READMEs and API docs people actually read",
-            "source": {"kind": "builtin", "path": "skills/docs-writer"}
-        },
-        {
-            "name": "debugging",
-            "type": "skill",
-            "category": "skills",
-            "description": "Root-cause debugging: reproduce, bisect, understand, fix, prove",
-            "source": {"kind": "builtin", "path": "skills/debugging"}
-        },
-        {
-            "name": "refactoring",
-            "type": "skill",
-            "category": "skills",
-            "description": "Safe incremental refactoring with a test safety net",
-            "source": {"kind": "builtin", "path": "skills/refactoring"}
-        },
-        {
-            "name": "api-design",
-            "type": "skill",
-            "category": "skills",
-            "description": "Design clean REST APIs and SDKs",
-            "source": {"kind": "builtin", "path": "skills/api-design"}
-        },
-        {
-            "name": "security-audit",
-            "type": "skill",
-            "category": "skills",
-            "description": "Practical security audit of a codebase",
-            "source": {"kind": "builtin", "path": "skills/security-audit"}
-        },
-        {
-            "name": "performance",
-            "type": "skill",
-            "category": "skills",
-            "description": "Profile-first performance optimization",
-            "source": {"kind": "builtin", "path": "skills/performance"}
-        },
-        {
-            "name": "git-workflow",
-            "type": "skill",
-            "category": "skills",
-            "description": "Branches, rebases, conflict resolution, undo table",
-            "source": {"kind": "builtin", "path": "skills/git-workflow"}
-        },
-        {
-            "name": "sql-optimizer",
-            "type": "skill",
-            "category": "skills",
-            "description": "Diagnose slow queries, index design",
-            "source": {"kind": "builtin", "path": "skills/sql-optimizer"}
-        },
-        {
-            "name": "json-tool",
-            "type": "plugin",
-            "category": "plugins",
-            "description": "Plugin: validate and pretty-print JSON (tool json_format)",
-            "source": {"kind": "builtin", "path": "plugins/json-tool"}
-        },
-        {
-            "name": "notes",
-            "type": "plugin",
-            "category": "plugins",
-            "description": "Plugin: persistent quick notes (tool notes)",
-            "source": {"kind": "builtin", "path": "plugins/notes"}
-        },
-        {
-            "name": "sysinfo",
-            "type": "plugin",
-            "category": "plugins",
-            "description": "Plugin: system info report (tool sysinfo)",
-            "source": {"kind": "builtin", "path": "plugins/sysinfo"}
-        },
-        {
-            "name": "filesystem",
-            "type": "mcp",
-            "category": "mcp",
-            "description": "MCP: read/write/search files in allowed directories",
-            "source": {
-                "kind": "mcp",
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
-            }
-        },
-        {
-            "name": "git",
-            "type": "mcp",
-            "category": "mcp",
-            "description": "MCP: git operations (status, diff, log, branches)",
-            "source": {
-                "kind": "mcp",
-                "command": "npx",
-                "args": ["-y", "mcp-git", "."]
-            }
-        },
-        {
-            "name": "ripgrep",
-            "type": "mcp",
-            "category": "mcp",
-            "description": "MCP: fast code search via ripgrep",
-            "source": {
-                "kind": "mcp",
-                "command": "npx",
-                "args": ["-y", "mcp-ripgrep", "."]
-            }
-        },
-        {
-            "name": "memory",
-            "type": "mcp",
-            "category": "mcp",
-            "description": "MCP: persistent knowledge-graph memory across sessions",
-            "source": {
-                "kind": "mcp",
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-memory"]
-            }
-        },
-        {
-            "name": "sequential-thinking",
-            "type": "mcp",
-            "category": "mcp",
-            "description": "MCP: structured step-by-step reasoning tool",
-            "source": {
-                "kind": "mcp",
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
-            }
-        },
-        {
-            "name": "playwright",
-            "type": "mcp",
-            "category": "mcp",
-            "description": "MCP: browser automation (navigate, click, screenshot)",
-            "source": {
-                "kind": "mcp",
-                "command": "npx",
-                "args": ["-y", "@playwright/mcp"]
-            }
-        },
-        {
-            "name": "fetch",
-            "type": "mcp",
-            "category": "mcp",
-            "description": "MCP: fetch web pages and convert to markdown",
-            "source": {
-                "kind": "mcp",
-                "command": "uvx",
-                "args": ["mcp-server-fetch"]
-            }
-        },
-        {
-            "name": "sqlite",
-            "type": "mcp",
-            "category": "mcp",
-            "description": "MCP: read/write SQLite databases",
-            "source": {
-                "kind": "mcp",
-                "command": "uvx",
-                "args": ["mcp-server-sqlite", "--db", "data.db"]
-            }
-        },
-        {
-            "name": "time",
-            "type": "mcp",
-            "category": "mcp",
-            "description": "MCP: current time and timezone conversions",
-            "source": {
-                "kind": "mcp",
-                "command": "uvx",
-                "args": ["mcp-server-time"]
-            }
-        },
-        {
-            "name": "everything",
-            "type": "mcp",
-            "category": "mcp",
-            "description": "MCP: reference server exercising every MCP feature",
-            "source": {
-                "kind": "mcp",
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-everything"]
-            }
-        }
-    ]
+  "version": 1,
+  "updated": "2026-09-19",
+  "categories": [
+    "skills",
+    "mcp",
+    "plugins"
+  ],
+  "items": [
+    {
+      "name": "code-review",
+      "type": "skill",
+      "category": "skills",
+      "description": "Systematic code review: correctness, security, resources, clarity",
+      "source": {
+        "kind": "builtin",
+        "path": "skills/code-review"
+      }
+    },
+    {
+      "name": "commit-messages",
+      "type": "skill",
+      "category": "skills",
+      "description": "Clean conventional commit messages",
+      "source": {
+        "kind": "builtin",
+        "path": "skills/commit-messages"
+      }
+    },
+    {
+      "name": "test-writer",
+      "type": "skill",
+      "category": "skills",
+      "description": "Meaningful tests by behavior, not coverage theater",
+      "source": {
+        "kind": "builtin",
+        "path": "skills/test-writer"
+      }
+    },
+    {
+      "name": "docs-writer",
+      "type": "skill",
+      "category": "skills",
+      "description": "READMEs and API docs people actually read",
+      "source": {
+        "kind": "builtin",
+        "path": "skills/docs-writer"
+      }
+    },
+    {
+      "name": "debugging",
+      "type": "skill",
+      "category": "skills",
+      "description": "Root-cause debugging: reproduce, bisect, understand, fix, prove",
+      "source": {
+        "kind": "builtin",
+        "path": "skills/debugging"
+      }
+    },
+    {
+      "name": "refactoring",
+      "type": "skill",
+      "category": "skills",
+      "description": "Safe incremental refactoring with a test safety net",
+      "source": {
+        "kind": "builtin",
+        "path": "skills/refactoring"
+      }
+    },
+    {
+      "name": "api-design",
+      "type": "skill",
+      "category": "skills",
+      "description": "Design clean REST APIs and SDKs",
+      "source": {
+        "kind": "builtin",
+        "path": "skills/api-design"
+      }
+    },
+    {
+      "name": "security-audit",
+      "type": "skill",
+      "category": "skills",
+      "description": "Practical security audit of a codebase",
+      "source": {
+        "kind": "builtin",
+        "path": "skills/security-audit"
+      }
+    },
+    {
+      "name": "performance",
+      "type": "skill",
+      "category": "skills",
+      "description": "Profile-first performance optimization",
+      "source": {
+        "kind": "builtin",
+        "path": "skills/performance"
+      }
+    },
+    {
+      "name": "git-workflow",
+      "type": "skill",
+      "category": "skills",
+      "description": "Branches, rebases, conflict resolution, undo table",
+      "source": {
+        "kind": "builtin",
+        "path": "skills/git-workflow"
+      }
+    },
+    {
+      "name": "sql-optimizer",
+      "type": "skill",
+      "category": "skills",
+      "description": "Diagnose slow queries, index design",
+      "source": {
+        "kind": "builtin",
+        "path": "skills/sql-optimizer"
+      }
+    },
+    {
+      "name": "json-tool",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Plugin: validate and pretty-print JSON (tool json_format)",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/json-tool"
+      }
+    },
+    {
+      "name": "notes",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Plugin: persistent quick notes (tool notes)",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/notes"
+      }
+    },
+    {
+      "name": "sysinfo",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Plugin: system info report (tool sysinfo)",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/sysinfo"
+      }
+    },
+    {
+      "name": "filesystem",
+      "type": "mcp",
+      "category": "mcp",
+      "description": "MCP: read/write/search files in allowed directories",
+      "source": {
+        "kind": "mcp",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "."
+        ]
+      }
+    },
+    {
+      "name": "git",
+      "type": "mcp",
+      "category": "mcp",
+      "description": "MCP: git operations (status, diff, log, branches)",
+      "source": {
+        "kind": "mcp",
+        "command": "npx",
+        "args": [
+          "-y",
+          "mcp-git",
+          "."
+        ]
+      }
+    },
+    {
+      "name": "ripgrep",
+      "type": "mcp",
+      "category": "mcp",
+      "description": "MCP: fast code search via ripgrep",
+      "source": {
+        "kind": "mcp",
+        "command": "npx",
+        "args": [
+          "-y",
+          "mcp-ripgrep",
+          "."
+        ]
+      }
+    },
+    {
+      "name": "memory",
+      "type": "mcp",
+      "category": "mcp",
+      "description": "MCP: persistent knowledge-graph memory across sessions",
+      "source": {
+        "kind": "mcp",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-memory"
+        ]
+      }
+    },
+    {
+      "name": "sequential-thinking",
+      "type": "mcp",
+      "category": "mcp",
+      "description": "MCP: structured step-by-step reasoning tool",
+      "source": {
+        "kind": "mcp",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-sequential-thinking"
+        ]
+      }
+    },
+    {
+      "name": "playwright",
+      "type": "mcp",
+      "category": "mcp",
+      "description": "MCP: browser automation (navigate, click, screenshot)",
+      "source": {
+        "kind": "mcp",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@playwright/mcp"
+        ]
+      }
+    },
+    {
+      "name": "fetch",
+      "type": "mcp",
+      "category": "mcp",
+      "description": "MCP: fetch web pages and convert to markdown",
+      "source": {
+        "kind": "mcp",
+        "command": "uvx",
+        "args": [
+          "mcp-server-fetch"
+        ]
+      }
+    },
+    {
+      "name": "sqlite",
+      "type": "mcp",
+      "category": "mcp",
+      "description": "MCP: read/write SQLite databases",
+      "source": {
+        "kind": "mcp",
+        "command": "uvx",
+        "args": [
+          "mcp-server-sqlite",
+          "--db",
+          "data.db"
+        ]
+      }
+    },
+    {
+      "name": "time",
+      "type": "mcp",
+      "category": "mcp",
+      "description": "MCP: current time and timezone conversions",
+      "source": {
+        "kind": "mcp",
+        "command": "uvx",
+        "args": [
+          "mcp-server-time"
+        ]
+      }
+    },
+    {
+      "name": "everything",
+      "type": "mcp",
+      "category": "mcp",
+      "description": "MCP: reference server exercising every MCP feature",
+      "source": {
+        "kind": "mcp",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-everything"
+        ]
+      }
+    },
+    {
+      "name": "word-count",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Example extension: word_count tool, /wc command, a setting, an event listener",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/word-count"
+      }
+    },
+    {
+      "name": "plain",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Frameless interface: no panel borders, static logo, quiet waiting line",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/plain"
+      }
+    }
+  ]
 }

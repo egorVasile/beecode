@@ -41,6 +41,14 @@ class Command:
     category: str = "general"
 
 
+def add_command(name: str, description: str, usage: str = "", category: str = "plugins") -> Command:
+    """Advertise a command contributed by a plugin, so /help and completion see it."""
+    command = Command(name=name, description=description, usage=usage or f"/{name}",
+                      category=category)
+    COMMANDS.append(command)
+    return command
+
+
 COMMANDS: list[Command] = [
     # help / info
     Command("help", "Show all available commands", category="info"),
@@ -64,6 +72,8 @@ COMMANDS: list[Command] = [
     Command("allow", "Grant one unsafe tool for this session", arg="tool",
             usage="/allow <tool>", category="engine"),
     Command("lang", "Switch the interface language", usage="/lang <en|ru>", category="engine"),
+    Command("skin", "Choose interface variants: frames, banner, spinner", usage="/skin [slot] [variant]", category="engine"),
+    Command("extensions", "What the installed plugins added", category="engine"),
     # direct tool commands
     Command("run", "Run a shell command", usage="/run <command>", category="tools"),
     Command("read", "Read a file", arg="path", usage="/read <path>", category="tools"),
@@ -612,6 +622,78 @@ def _cmd_provider(ctx, args):
     _persist_config(ctx)
     return _ok(L(f"provider → {name}   its models: /models",
                  f"провайдер → {name}   его модели: /models"))
+
+
+def _cmd_skin(ctx, args):
+    """Choose an interface variant, or show what is available.
+
+    `/skin` lists the slots, `/skin frame none` takes the frames away,
+    `/skin banner none` removes the animated logo, `/skin spinner dots` makes
+    the waiting line quiet. The choice is saved, so it survives a restart.
+    """
+    from beeagent.ui import skin
+
+    if not args:
+        table = Table(title=bee_title("🐝 interface slots"), **skin.frame_kwargs(BORDER),
+                      header_style="bold " + HONEY, expand=False)
+        table.add_column("slot", style="bold #ffcc00")
+        table.add_column("now")
+        table.add_column("choices", style="dim")
+        for slot in ("frame", "banner", "spinner", "stream"):
+            table.add_row(slot, skin.get(slot), ", ".join(skin.variants(slot)))
+        table.caption = Text(
+            L("change one: /skin <slot> <variant> · back to defaults: /skin reset",
+              "изменить: /skin <слот> <вариант> · вернуть как было: /skin reset"),
+            style="dim")
+        return CommandResult(output=table)
+
+    if args[0] == "reset":
+        skin.reset()
+        ctx.config.ui = {}
+        _persist_config(ctx)
+        return _ok(L("interface slots are back to their defaults",
+                     "слоты интерфейса вернули к значениям по умолчанию"))
+
+    if len(args) < 2:
+        return _err(L("usage: /skin <slot> <variant> — /skin lists them",
+                      "использование: /skin <слот> <вариант> — список по /skin"))
+    slot, name = args[0].lower(), args[1].lower()
+    if not skin.choose(slot, name):
+        return _err(L(f"no variant “{name}” for {slot} — /skin lists them",
+                      f"нет варианта «{name}» для {slot} — список по /skin"))
+    ui = dict(getattr(ctx.config, "ui", {}) or {})
+    ui[slot] = name
+    ctx.config.ui = ui
+    _persist_config(ctx)
+    return _ok(L(f"{slot} → {name}", f"{slot} → {name}"))
+
+
+def _cmd_extensions(ctx, args):
+    """What every installed plugin actually added."""
+    from beeagent.ui import skin
+    from beeagent.ext.api import ExtensionRegistry
+
+    registry = getattr(getattr(ctx.agent, "plugins", None), "extensions", None) or ExtensionRegistry()
+    table = Table(title=bee_title("🐝 extensions"), **skin.frame_kwargs(BORDER),
+                  header_style="bold " + HONEY, expand=False)
+    table.add_column("plugin", style="bold #ffcc00")
+    table.add_column("kind", style="dim")
+    table.add_column("name")
+    table.add_column("note", style="dim")
+    for contribution in registry.contributions:
+        table.add_row(contribution.plugin, contribution.kind, contribution.name, contribution.note)
+    if not registry.contributions:
+        table.add_row("—", "", L("nothing registered via the extension API yet",
+                                 "через API расширений пока ничего не добавлено"),
+                      L("a plugin exposes setup(api) to add commands, tools, "
+                        "settings, events and interface variants",
+                        "плагин объявляет setup(api) — так добавляют команды, инструменты, "
+                        "настройки, события и варианты интерфейса"))
+    errors = list(getattr(getattr(ctx.agent, "plugins", None), "load_errors", []) or [])
+    if errors:
+        table.caption = Text(L("failed to load: " + "; ".join(errors),
+                               "не загрузились: " + "; ".join(errors)), style="red")
+    return CommandResult(output=table)
 
 
 def _cmd_lang(ctx, args):
@@ -1284,6 +1366,8 @@ HANDLERS: dict[str, Callable] = {
     "model": _cmd_model,
     "provider": _cmd_provider,
     "lang": _cmd_lang,
+    "skin": _cmd_skin,
+    "extensions": _cmd_extensions,
     "mode": _cmd_mode,
     "permissions": _cmd_permissions,
     "allow": _cmd_allow,

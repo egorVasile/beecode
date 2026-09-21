@@ -93,6 +93,24 @@ def _make_key_bindings() -> KeyBindings:
     return kb
 
 
+def agent_callback(agent):
+    """The REPL's event handler, with plugin listeners hanging off it.
+
+    Plugins subscribe through `api.event(...)` and never patch the UI: the same
+    stream of events the terminal draws from is handed to them afterwards, and a
+    listener that throws cannot break the answer it was watching.
+    """
+    from beeagent.ext.api import emit
+
+    def callback(event: str, data: dict):
+        handle_callback(event, data)
+        registry = getattr(getattr(agent, "plugins", None), "extensions", None)
+        if registry is not None:
+            emit(registry, event, data)
+
+    return callback
+
+
 def handle_callback(event: str, data: dict):
     """Bridge agent events into the streaming UI."""
     stream = get_stream()
@@ -302,7 +320,7 @@ def _spawn_agent_task(agent, line: str, ctx: ReplContext):
     # Set synchronously so a fast next input is queued, not started in parallel.
     agent.is_busy = True
     _ACTIVE_TASK = asyncio.create_task(
-        agent.run(line, session=ctx.session, callback=handle_callback)
+        agent.run(line, session=ctx.session, callback=agent_callback(agent))
     )
     _ACTIVE_TASK.add_done_callback(_on_done)
 

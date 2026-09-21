@@ -3,6 +3,7 @@ import os
 import sys
 import time
 from typing import Optional
+from beeagent.ui import skin
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
@@ -217,12 +218,19 @@ def _banner_frames() -> list:
 
 
 def print_banner(animate: Optional[bool] = None):
-    """Draw the logo: it appears pixel by pixel, then its colours settle down."""
-    if console.is_terminal:
+    """Draw the logo: it appears pixel by pixel, then its colours settle down.
+
+    Which of those happen is the `banner` slot: "shimmer" animates, "static"
+    prints the settled logo, "none" prints nothing at all.
+    """
+    mode = skin.get("banner") or "shimmer"
+    if mode == "none":
+        return
+    if console.is_terminal and mode == "shimmer":
         # Wipe the screen at launch so the logo lands on a clean page.
         console.clear()
     console.print()
-    if _banner_animates(animate):
+    if mode == "shimmer" and _banner_animates(animate):
         # Runs before the prompt starts, so Live's cursor movement cannot
         # fight with patch_stdout; `transient` erases the frames afterwards.
         try:
@@ -244,8 +252,7 @@ def print_welcome():
     console.print()
     panel = Panel(
         Align.center(Text("Type a request, or '/' for commands — 'quit' to exit", style="dim")),
-        border_style=BORDER,
-        box=box.ROUNDED,
+        **skin.frame_kwargs(BORDER),
         padding=(0, 2),
     )
     console.print(panel)
@@ -318,8 +325,7 @@ def _render_code_preview(content: str):
     syntax = Syntax(code, "python", theme="monokai", line_numbers=False)
     panel = Panel(
         syntax,
-        border_style=BORDER,
-        box=box.ROUNDED,
+        **skin.frame_kwargs(BORDER),
         padding=(0, 1),
     )
     console.print(panel)
@@ -333,8 +339,7 @@ def _render_bash_output(output: str):
     text = "\n".join(preview)
     panel = Panel(
         Text(text, style="dim"),
-        border_style=HEAVY_BORDER,
-        box=box.ROUNDED,
+        **skin.frame_kwargs(HEAVY_BORDER),
         padding=(0, 1),
     )
     console.print(panel)
@@ -344,8 +349,7 @@ def render_response(text: str):
     md = Markdown(text)
     panel = Panel(
         md,
-        border_style=BORDER,
-        box=box.ROUNDED,
+        **skin.frame_kwargs(BORDER),
         title=bee_title("🐝 BeeCode"),
         title_align="left",
         padding=(0, 1),
@@ -357,8 +361,7 @@ def render_error(message: str):
     console.print()
     panel = Panel(
         Text(message, style="red"),
-        border_style="bold red",
-        box=box.ROUNDED,
+        **skin.frame_kwargs("bold red"),
         title="[bold red]Error[/]",
         title_align="left",
     )
@@ -417,8 +420,7 @@ def render_model_info(model: str, provider: str, mode: str, permissions: str = "
 def models_table(models: list[str]) -> Table:
     table = Table(
         title=bee_title("🐝 Models"),
-        box=box.ROUNDED,
-        border_style=BORDER,
+        **skin.frame_kwargs(BORDER),
         show_header=True,
         header_style="bold " + HONEY,
         expand=False,
@@ -434,8 +436,7 @@ def models_table(models: list[str]) -> Table:
 def providers_table(providers: list[dict]) -> Table:
     table = Table(
         title=bee_title("🐝 Providers"),
-        box=box.ROUNDED,
-        border_style=BORDER,
+        **skin.frame_kwargs(BORDER),
         show_header=True,
         header_style="bold " + HONEY,
         expand=False,
@@ -451,8 +452,7 @@ def providers_table(providers: list[dict]) -> Table:
 def commands_table(commands: list) -> Table:
     table = Table(
         title=bee_title("🐝 Commands"),
-        box=box.ROUNDED,
-        border_style=BORDER,
+        **skin.frame_kwargs(BORDER),
         show_header=True,
         header_style="bold " + HONEY,
         expand=False,
@@ -468,8 +468,7 @@ def commands_table(commands: list) -> Table:
 def tools_table(tools: list) -> Table:
     table = Table(
         title=bee_title("🐝 Tools"),
-        box=box.ROUNDED,
-        border_style=BORDER,
+        **skin.frame_kwargs(BORDER),
         show_header=True,
         header_style="bold " + HONEY,
         expand=False,
@@ -511,7 +510,14 @@ PENDING_STATES = [
 
 
 def pending_text() -> str:
+    """What the "working" line says — or nothing, when the spinner is off."""
     import random
+
+    mode = skin.get("spinner") or "honey"
+    if mode == "none":
+        return ""
+    if mode == "dots":
+        return "…"
     return L(*random.choice(PENDING_STATES))
 
 
@@ -594,8 +600,11 @@ class ResponseStream:
         self._flush_pending()
         self._begin_turn()
         self._phase = "status"
+        pending = pending_text()
+        if not pending:
+            return                      # spinner off: no line at all
         header = Text("  💬 ", style="bold")
-        header.append(pending_text(), style="dim italic")
+        header.append(pending, style="dim italic")
         console.print(header)
 
     def on_thinking(self, text):
@@ -828,7 +837,6 @@ def show_thinking_fallback():
         Text(numbered),
         title=f"💭 мысли ({len(lines)} строк)",
         title_align="left",
-        border_style=BORDER,
-        box=box.ROUNDED,
+        **skin.frame_kwargs(BORDER),
         padding=(0, 1),
     ))

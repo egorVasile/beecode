@@ -15,5 +15,11 @@
     "cache_enabled": true,
     "cache_dir": ".beeagent/cache",
     "cache_ttl_minutes": 30
-  }
+  },
+  "ui": {
+    "frame": "rounded",
+    "banner": "shimmer",
+    "spinner": "honey"
+  },
+  "extensions": {}
 }
