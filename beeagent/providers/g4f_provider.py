@@ -66,9 +66,13 @@ async def _await_or_keep(response):
 
 class G4fProvider(BaseProvider):
     name = "g4f"
-    # Curated quick picks (verified keyless). The full catalog of every
-    # working provider is available via discover_models().
+    # Curated quick picks. The first one is the route measured on 2026-09-21 to
+    # read a 64k-token prompt keyless; the rest are popular names that g4f
+    # routes through whatever upstream it finds — several of them only carry a
+    # couple of thousand tokens before the free path gives up, which
+    # `/window measure <model>` will show rather than guess.
     models = [
+        "command-a-03-2025",
         "glm-4.7-flash", "glm-5.2",
         "gpt-4", "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.5",
         "gpt-oss-120b", "o4-mini",

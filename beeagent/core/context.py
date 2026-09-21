@@ -154,6 +154,10 @@ _MODEL_FAMILIES = (
     ("claude", 200000), ("gemini", 1000000),
     ("llama-3", 8192), ("llama3", 8192), ("mistral-nemo", 128000),
     ("qwen2.5", 32768), ("qwen", 32768), ("glm-4", 8192), ("deepseek", 65536),
+    # Measured, not advertised: on 2026-09-21 the keyless Cohere ForAI route
+    # repeated the needle back from a 65536-token prompt, twice. Still clamped
+    # to MAX_WINDOW until a user measures it in their own session.
+    ("command-a", 65536),
 )
 
 

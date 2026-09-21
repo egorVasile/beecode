@@ -70,8 +70,8 @@ def test_g4f_curated_models_include_glm():
     p = G4fProvider()
     assert "glm-4.7-flash" in p.models
     assert "glm-5.2" in p.models
-    # curated quick picks come first
-    assert p.models[0] == "glm-4.7-flash"
+    # the route measured to carry a 64k prompt keyless leads the list
+    assert p.models[0] == "command-a-03-2025"
 
 
 def test_every_keyless_provider_still_resolves():
