@@ -485,3 +485,95 @@ def test_a_promising_answer_is_nudged_once_and_the_push_stays_out_of_history(tmp
     stored = " ".join(str(m.content) for m in session.messages)
     assert "no tool call" not in stored, "the push is not part of the user's history"
     assert sum("Сейчас прочитаю" in str(m.content) for m in session.messages) == 1
+
+
+def test_a_small_window_still_leaves_a_summary_of_what_was_dropped():
+    """digest_room() returned 0 under a tight budget and the history vanished."""
+    from beeagent.core import windows
+    from beeagent.core.context import ContextManager
+
+    windows.remember("gpt-4", 2048)
+    manager = ContextManager(model="gpt-4")
+    messages = [{"role": "user" if i % 2 == 0 else "assistant",
+                 "content": f"шаг {i}: " + "текст " * 12} for i in range(60)]
+
+    built = manager.build_messages(messages, [])
+    system = next(m["content"] for m in built if m["role"] == "system")
+
+    assert manager.trimmed > 0, "the conversation had to be cut"
+    assert "CONVERSATION SO FAR" in system or "ДИАЛОГ" in system, \
+        "dropped turns must be summarised, not discarded"
+
+
+def test_the_idle_budget_is_not_rounded_up_to_a_heartbeat():
+    import asyncio
+
+    class Silent:
+        def __anext__(self):
+            raise NotImplementedError
+
+    async def never_ending():
+        async def iterator():
+            if False:
+                yield
+            while True:
+                await asyncio.sleep(30)
+        return iterator()
+
+    async def scenario():
+        agent = Agent(config=BeeConfig())
+        stream = await never_ending()
+        started = asyncio.get_event_loop().time()
+        try:
+            await agent._next_token(stream.__aiter__(), idle=1, callback=None, announce=False)
+        except asyncio.TimeoutError:
+            return asyncio.get_event_loop().time() - started
+        return None
+
+    waited = asyncio.run(scenario())
+    assert waited is not None and waited < 3, f"idle=1 waited {waited}s"
+
+
+def test_a_message_less_exception_does_not_erase_the_diagnosis():
+    import asyncio
+
+    from beeagent.core.agent import _reason
+
+    descriptive = TimeoutError("эндпоинт молчит 90 секунд")
+    assert _reason(descriptive, None).startswith("эндпоинт")
+    # asyncio's own TimeoutError has no text at all: keep what we already knew.
+    assert _reason(asyncio.TimeoutError(), "stream stalled") == "stream stalled"
+    assert _reason(asyncio.TimeoutError(), None) == "TimeoutError"
+
+
+def test_a_cached_answer_is_recorded_in_the_session(tmp_path):
+    """The cache-hit path returned without storing the assistant turn."""
+    import asyncio
+
+    class Once:
+        name = "once"
+        models = ["m"]
+
+        def __init__(self):
+            self.calls = 0
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            yield ("content", "готово из кэша" if self.calls > 1 else "первый раз")
+
+        async def chat(self, messages, model=""):
+            return "первый раз"
+
+    agent = Agent(config=BeeConfig(mode="economy"), workdir=str(tmp_path))
+    endpoint = Once()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+
+    first = asyncio.run(agent.run("вопрос", session=Session()))
+    second_session = Session()
+    second = asyncio.run(agent.run("вопрос", session=second_session))
+
+    assert first == "первый раз"
+    assert second == "первый раз", "the cached reply should be served"
+    assert [m.role for m in second_session.messages] == ["user", "assistant"], \
+        "a cached answer still has to land in the transcript"

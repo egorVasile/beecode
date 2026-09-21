@@ -355,8 +355,15 @@ class ContextManager:
     # --- digest -----------------------------------------------------------
 
     def digest_room(self, budget: int) -> int:
-        """Tokens the summary may take out of the history budget."""
-        return max(256, min(1200, budget // 6)) if budget > 0 else 0
+        """Tokens the summary may take out of the history budget.
+
+        The floor is unconditional. Returning 0 for a small window made `_digest`
+        give up entirely, so a 2k model lost the whole transcript with nothing in
+        its place — the one case where an outline matters most, and the reason
+        the UI could claim a summary that did not exist. `_digest` fits itself to
+        whatever room it is given, so a generous ask costs nothing.
+        """
+        return max(256, min(1200, max(budget, 0) // 6))
 
     def _digest(self, dropped: list[dict], budget: int, base: str = "") -> str:
         """A compressed outline of the turns that did not fit, in the system message.

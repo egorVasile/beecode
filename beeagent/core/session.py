@@ -1,4 +1,6 @@
 import json
+import os
+import secrets
 from pathlib import Path
 from datetime import datetime
 
@@ -20,7 +22,10 @@ class Message:
 
 class Session:
     def __init__(self, session_id: str = None):
-        self.session_id = session_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Seconds are not unique: two sessions started in the same second share an
+        # id, and the second save quietly overwrites the first transcript.
+        self.session_id = session_id or (
+            datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(3))
         self.messages: list[Message] = []
         self.created_at = datetime.now().isoformat()
 
@@ -44,12 +49,19 @@ class Session:
             "created_at": self.created_at,
             "messages": [m.to_dict() for m in self.messages],
         }
-        path.write_text(json.dumps(data, indent=2))
+        # Writing in place means a crash, a full disk or Ctrl+C mid-save leaves a
+        # half a file — and then `--continue` cannot start at all. Replace atomically.
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
 
     @classmethod
     def load(cls, session_id: str, workdir: str = ".") -> "Session":
         path = Path(workdir) / ".beeagent" / "sessions" / f"{session_id}.json"
-        data = json.loads(path.read_text())
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise ValueError(f"session {session_id} is unreadable ({e.__class__.__name__})") from e
         session = cls(session_id=data["id"])
         session.created_at = data["created_at"]
         for m in data["messages"]:
@@ -63,7 +75,20 @@ class Session:
 
     @classmethod
     def list_sessions(cls, workdir: str = ".") -> list[str]:
+        """Readable session ids, oldest first — `--continue` takes the last one.
+
+        A file that does not parse is skipped rather than offered: picking a torn
+        transcript would only move the crash into `load`.
+        """
         path = Path(workdir) / ".beeagent" / "sessions"
         if not path.exists():
             return []
-        return [f.stem for f in path.glob("*.json")]
+        ids = []
+        for candidate in sorted(path.glob("*.json")):
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(data, dict) and data.get("messages") is not None:
+                ids.append(candidate.stem)
+        return ids

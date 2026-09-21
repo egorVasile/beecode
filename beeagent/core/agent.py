@@ -58,6 +58,20 @@ ACT_NOW = ("[SYSTEM: you described a next step but sent no tool call, so nothing
            "or answer without promising to act.]")
 
 
+def _reason(error, previous) -> str:
+    """What to tell the user about a failed attempt, without losing the diagnosis.
+
+    asyncio's own TimeoutError carries no message, so storing the exception as-is
+    replaced the descriptive "the endpoint has been silent for N seconds" with an
+    empty string and the retry report ended "(last error: )".
+    """
+    text = str(error).strip()
+    if text:
+        return text
+    known = "" if previous is None else str(previous).strip()
+    return known or type(error).__name__
+
+
 class Agent:
     def __init__(self, config: BeeConfig = None, workdir: str = "."):
         self.config = config or load_config(workdir)
@@ -169,15 +183,21 @@ class Agent:
         pending chunk is deliberately not wrapped in wait_for: cancelling an
         async generator's __anext__ closes the stream and would silently
         truncate the answer.
+
+        The slice never outlasts the budget it is measuring. Fixed 15-second
+        slices made `stream_idle_timeout=2` fire after 15 s — and for any budget
+        of 15 or less the "waiting" notice could not be reached before the
+        timeout, which is the exact case the heartbeat exists to cover.
         """
         task = asyncio.create_task(iterator.__anext__())
         waited = 0
         try:
             while True:
-                done, _ = await asyncio.wait({task}, timeout=HEARTBEAT_SECONDS)
+                slice_seconds = min(HEARTBEAT_SECONDS, max(1, idle - waited))
+                done, _ = await asyncio.wait({task}, timeout=slice_seconds)
                 if done:
                     return task.result()          # StopAsyncIteration propagates
-                waited += HEARTBEAT_SECONDS
+                waited += slice_seconds
                 if waited >= idle:
                     raise asyncio.TimeoutError()
                 if callback and announce:
@@ -237,7 +257,7 @@ class Agent:
                     else:
                         return content
                 except Exception as e:
-                    last_error = e  # fall through to retry
+                    last_error = _reason(e, last_error)   # fall through to retry
                 finally:
                     if stream is not None:
                         try:
@@ -262,7 +282,7 @@ class Agent:
                         callback("stream_delta", {"text": text})
                     return text
             except Exception as e:
-                last_error = e
+                last_error = _reason(e, last_error)
 
             await asyncio.sleep(1.5 * (attempt + 1))  # backoff
 
@@ -288,6 +308,10 @@ class Agent:
         if callable(getattr(provider, "discover_models", None)):
             return wanted
         model = known[0]
+        # Deliberate, documented and announced: `/provider groq` with gpt-4 in
+        # config would otherwise 404 forever. The UI prints the substitution
+        # ("this provider has no “gpt-4” — answering with …"), so the change is
+        # never silent.
         self.config.model = model
         self.context.model = model
         if callback:
@@ -347,6 +371,10 @@ class Agent:
                     if callback:
                         callback("economy_hit", {})
                         callback("response", {"text": cached})
+                    # The turn has to land in the transcript: without it the
+                    # saved session ends on an unanswered user message, and every
+                    # later turn answers the same question again.
+                    session.add_assistant_message(cached)
                     return cached
                 # A reply that carries a tool call is one step of the loop, not
                 # an answer — serving it from cache would print JSON and run
