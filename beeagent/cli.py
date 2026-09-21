@@ -41,9 +41,9 @@ def update_self(root=None) -> int:
 
     base = Path(root) if root is not None else Path(__file__).resolve().parent.parent
     if (base / ".git").exists():
-        print(f"updating the checkout at {base}")
+        print(f"updating the checkout at {base}", flush=True)
         return subprocess.call(["git", "-C", str(base), "pull", "--ff-only"])
-    print("updating the installed BeeCode and g4f")
+    print("updating the installed BeeCode and g4f", flush=True)
     return subprocess.call([sys.executable, "-m", "pip", "install", "--upgrade",
                             "git+https://github.com/egorVasile/beecode.git"])
 
