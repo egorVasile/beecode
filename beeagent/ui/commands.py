@@ -49,6 +49,12 @@ def add_command(name: str, description: str, usage: str = "", category: str = "p
     return command
 
 
+def drop_command(name: str) -> None:
+    """Take a plugin's command back out: it lives in two places at once."""
+    COMMANDS[:] = [c for c in COMMANDS if c.name != name]
+    HANDLERS.pop(name, None)
+
+
 COMMANDS: list[Command] = [
     # help / info
     Command("help", "Show all available commands", category="info"),

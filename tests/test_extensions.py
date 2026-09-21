@@ -315,3 +315,36 @@ def test_setup_api_is_called_when_a_plugin_loads(tmp_path):
     assert not [e for e in agent.plugins.load_errors if "demo-ext" in e], agent.plugins.load_errors
     out = dispatch(ReplContext(agent=agent, config=agent.config, session=Session()), "/greet")
     assert out.output == "привет!"
+
+
+def test_a_reload_does_not_double_what_a_plugin_added(tmp_path):
+    """Installing one plugin reloads them all, so setup() runs a second time."""
+    from beeagent.core.agent import Agent
+    from beeagent.plugins.loader import PluginLoader
+
+    plugin = tmp_path / ".beeagent" / "plugins" / "demo-twice"
+    plugin.mkdir(parents=True)
+    (plugin / "plugin.py").write_text(
+        "def setup(api):\n"
+        "    api.command('twice', 'counted once', lambda ctx, args: 'ok')\n"
+        "    api.event('done', lambda payload: None)\n",
+        encoding="utf-8")
+
+    agent = Agent(config=BeeConfig(), workdir=str(tmp_path))
+    agent.plugins = PluginLoader(agent)
+    manager = agent.plugins.manager
+    manager.plugins_dir = plugin.parent
+    manager.state_path.parent.mkdir(parents=True, exist_ok=True)
+    manager.state_path.write_text(json.dumps(
+        {"installed": {"demo-twice": {"type": "plugin", "enabled": True}}}), encoding="utf-8")
+
+    for _ in range(2):
+        agent.plugins.reset()
+        agent.plugins.load_all()
+
+    mine = [c for c in agent.plugins.extensions.contributions if c.plugin == "demo-twice"]
+    assert sorted(c.kind for c in mine) == ["command", "event"], mine
+    assert not [c for c in mine if "refused" in c.note], mine
+    assert len(agent.plugins.extensions.listeners["done"]) == 1
+    out = dispatch(ReplContext(agent=agent, config=agent.config, session=Session()), "/twice")
+    assert out.output == "ok"

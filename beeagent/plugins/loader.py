@@ -132,6 +132,7 @@ class PluginLoader:
         self.skills.clear()
         self.load_errors.clear()
         self.pending_mcp.clear()
+        self.extensions.clear()
 
     def _register(self, tool: BaseTool, from_extension: bool = False) -> bool:
         """Register one tool, remembering only the ones that actually landed.

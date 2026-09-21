@@ -41,6 +41,23 @@ class ExtensionRegistry:
     def by_plugin(self, plugin: str) -> list[Contribution]:
         return [c for c in self.contributions if c.plugin == plugin]
 
+    def clear(self) -> None:
+        """Forget everything plugins contributed, so a reload starts from nothing.
+
+        Reloading runs every plugin's setup() a second time. Without this the
+        same listener fires twice per event, /extensions repeats every row, and
+        a plugin collides with the command it registered on the previous pass.
+        """
+        from beeagent.ui import commands as core
+
+        for contribution in self.contributions:
+            if contribution.kind == "command":
+                core.drop_command(contribution.name)
+        self.contributions.clear()
+        self.commands.clear()
+        self.listeners.clear()
+        self.settings.clear()
+
     def setting_keys(self, plugin: str) -> list[str]:
         return sorted(k for k in self.settings if k.startswith(plugin + "."))
 
