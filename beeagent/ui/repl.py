@@ -164,6 +164,14 @@ def handle_callback(event: str, data: dict):
               "неполный вызов починен: " + ", ".join(data["notes"])
               + " — модели показали правильный формат")
 
+    elif event == "tool_dropped":
+        # Not repaired: the bytes never arrived, so nothing was run and the
+        # model is asked for the call again.
+        _note("✂️", "a tool call arrived cut off and was not run — asking again: "
+              + ", ".join(data["notes"]),
+              "вызов инструмента пришёл обрезанным, ничего не запущено — прошу заново: "
+              + ", ".join(data["notes"]))
+
     elif event == "tool_unknown":
         # Recoverable: the model gets the real tool list back and continues.
         _note("🤔", f"unknown tool “{data['tool']}” — showed the model the real list, it continues",

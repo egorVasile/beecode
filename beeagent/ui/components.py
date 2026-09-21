@@ -31,6 +31,16 @@ for _stream in (sys.stdout, sys.stderr):
 console = Console()
 _parser = CommandParser()
 
+
+def _looks_like_call(text: str) -> bool:
+    """Whether a fenced block is a tool call — run or broken, either way not prose.
+
+    A call that arrived cut off never runs, but dumping its bytes on the screen
+    helps nobody: the model is asked for it again instead.
+    """
+    parsed = _parser.parse(text)
+    return parsed.has_commands or bool(parsed.dropped)
+
 # Chunky 5x5 pixel font used for the banner.
 PIXEL_FONT = {
     "B": ["████ ", "█   █", "████ ", "█   █", "████ "],
@@ -657,7 +667,7 @@ class ResponseStream:
                 close = self._buf.find(self.FENCE, len(self.FENCE))
                 if close == -1:
                     if len(self._buf) > self.FENCE_MAX:
-                        if _parser.parse(self._buf).has_commands:
+                        if _looks_like_call(self._buf):
                             # A payload the model never closed the fence on is
                             # still going to run, so a 7 KB HTML dump has no
                             # business on the screen. Keep holding the rest.
@@ -670,7 +680,7 @@ class ResponseStream:
                 block = self._buf[:close + len(self.FENCE)]
                 self._buf = self._buf[close + len(self.FENCE):]
                 self._in_fence = False
-                if not _parser.parse(block).has_commands:
+                if not _looks_like_call(block):
                     self._print(block)
                 continue
             open_at = self._buf.find(self.FENCE)
@@ -739,7 +749,7 @@ class ResponseStream:
 
     def on_done(self):
         pending = self._lead_buf if self._lead_json else self._buf
-        if pending.strip() and not _parser.parse(pending).has_commands:
+        if pending.strip() and not _looks_like_call(pending):
             self._print(pending)
         self._flush_pending()
         if self._thinking.strip():

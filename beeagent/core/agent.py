@@ -57,6 +57,24 @@ ACT_NOW = ("[SYSTEM: you described a next step but sent no tool call, so nothing
            "Either send the ```json {\"tool\": ..., \"args\": {...}}``` block now, "
            "or answer without promising to act.]")
 
+# Sent back when a call was recognised but could not be read. It goes into the
+# transcript, not just the request: an attempt really was made and refused.
+_RESEND_CALL = ("[BeeCode] Your tool call arrived broken, so nothing was run: {note}. "
+                "Send it again in one ```json block, with every value on one line — "
+                "write a newline inside a string as \\n, a backslash as \\\\ and a "
+                "quote as \\\". If the content is long, write the first part with "
+                "`write` and add the rest with `edit`.")
+
+
+def _carries_a_call(parser, text: str) -> bool:
+    """Whether this reply is a step of the loop rather than an answer.
+
+    A cached reply that names a tool — even one whose payload arrived cut off —
+    must not be served from the cache: it would print and run nothing.
+    """
+    parsed = parser.parse(text)
+    return parsed.has_commands or bool(parsed.dropped)
+
 
 def _reason(error, previous) -> str:
     """What to tell the user about a failed attempt, without losing the diagnosis.
@@ -334,6 +352,7 @@ class Agent:
             trim_reported = False
             nudged = False
             nudge_pending = False
+            rescued = False
 
             for turn in range(self.config.max_turns):
                 # 1. Deliver messages the user typed while we were busy:
@@ -367,7 +386,7 @@ class Agent:
                     if callback:
                         callback("context_trimmed", {"dropped": self.context.trimmed})
                 cached = self.economy.check_cache(prompt_str, model)
-                if cached and not self.parser.parse(cached).has_commands:
+                if cached and not _carries_a_call(self.parser, cached):
                     if callback:
                         callback("economy_hit", {})
                         callback("response", {"text": cached})
@@ -399,6 +418,17 @@ class Agent:
                         callback("tool_repaired", {"notes": parsed.repaired})
 
                 if not parsed.has_commands:
+                    if parsed.dropped and not rescued:
+                        # The model meant to act and its payload died on the way
+                        # out. Ending the turn on "I will create the file now" is
+                        # exactly what the user reads as being ignored.
+                        rescued = True
+                        session.add_assistant_message(response)
+                        session.add_tool_result(
+                            _RESEND_CALL.format(note="; ".join(parsed.dropped)))
+                        if callback:
+                            callback("tool_dropped", {"notes": parsed.dropped})
+                        continue
                     session.add_assistant_message(response)
                     if not nudged and _PROMISE_TO_ACT.search(response or ""):
                         # "Now I will read the file" is a half-finished turn.
