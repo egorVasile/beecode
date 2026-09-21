@@ -53,7 +53,8 @@ COMMANDS: list[Command] = [
     Command("window", "Show or measure the model context window", usage="/window [measure] [model]", category="info"),
     # model / provider / mode
     Command("model", "Switch the active model", arg="model", usage="/model <name>", category="engine"),
-    Command("models", "List available models", category="engine"),
+    Command("models", "List models with the widest context first, --all for every one",
+            arg="model", usage="/models [name|upstream] [--all]", category="engine"),
     Command("provider", "Switch the active provider", arg="provider", usage="/provider <name>", category="engine"),
     Command("providers", "List providers and which ones have a key", category="engine"),
     Command("key", "Store your own API key for a provider", usage="/key <provider> <token>", category="engine"),
@@ -373,9 +374,13 @@ def _cmd_models(ctx, args):
         return _err(L("this provider reported no models — /providers shows what is configured",
                       "провайдер не вернул моделей — что настроено, видно в /providers"))
 
-    query = (args[0] if args else "").lower()
-    if query in ("--upstream", "-u") and len(args) > 1:
-        query = args[1].lower()
+    flags = ("-a", "--all")
+    given = [a.lower() for a in args]
+    show_all = any(a in flags for a in given)
+    rest = [a for a in given if a not in flags]
+    if rest and rest[0] in ("-u", "--upstream"):
+        rest = rest[1:]
+    query = rest[0] if rest else ""
     upstream_map = G4fProvider.upstream_map()
     if query:
         models = [m for m in models
@@ -387,16 +392,44 @@ def _cmd_models(ctx, args):
     if provider_name != "g4f":
         return CommandResult(output=models_table(models))
 
-    table = Table(title=bee_title(f"🐝 g4f models ({len(models)})"), box=box.ROUNDED,
-                  border_style=BORDER, header_style="bold " + HONEY, expand=False)
+    from beeagent.core import windows
+    from beeagent.core.context import advertised_window
+
+    def shown_tokens(size: int) -> str:
+        return f"{size // (1000 * 1000)}M" if size >= 1000 * 1000 else f"{size // 1000}k"
+
+    total = len(models)
+    models = G4fProvider.by_window(models)
+    heading = L("biggest context first", "сначала с самым большим контекстом")
+    if not query and not show_all:
+        # Only the widest windows: nobody scans 600 rows, and a model that
+        # cannot hold the conversation is not a choice at all.
+        wide = set(G4fProvider.recommended_models())
+        models = [m for m in models if m in wide]
+        heading = L("recommended: widest context", "рекомендуемые: самый большой контекст")
+
+    table = Table(title=bee_title(f"🐝 g4f models — {heading} "
+                                 f"({len(models)} of {total})"),
+                  box=box.ROUNDED, border_style=BORDER, header_style="bold " + HONEY,
+                  expand=False)
     table.add_column("#", style="dim", width=4)
     table.add_column("model", style="bold #ffcc00")
+    table.add_column("window", justify="right")
     table.add_column("served by", style="dim")
     for i, model in enumerate(models, 1):
-        table.add_row(str(i), model, ", ".join(upstream_map.get(model, [])[:3]) or "—")
+        measured = windows.measured(model)
+        table.add_row(str(i), model,
+                      ("✔ " if measured else "~ ") + shown_tokens(advertised_window(model)),
+                      ", ".join(upstream_map.get(model, [])[:3]) or "—")
     table.caption = Text(
-        L("filter: /models <name|upstream> · pick with the mouse: /models · switch: /model <name>",
-          "фильтр: /models <имя|провайдер> · выбор мышью: /models · переключить: /model <имя>"),
+        L("✔ window measured on this machine · ~ claimed by the model name · requests are capped "
+          "at 32k tokens unless you raise max_context_tokens\n"
+          "every model: /models --all · measure one: /window measure <model> · "
+          "filter: /models <name|upstream> · switch: /model <name>",
+          "✔ окно измерено на этой машине · ~ заявлено в имени модели · запросы режутся до 32k, "
+          "пока не поднят max_context_tokens\n"
+          "все модели: /models --all · померить: /window measure <модель> · "
+          "фильтр: /models <имя|провайдер> · переключить: /model <имя>"),
         style="dim")
     return CommandResult(output=table)
 

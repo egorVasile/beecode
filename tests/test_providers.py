@@ -139,3 +139,28 @@ def test_available_models_uses_full_catalog():
     models = available_models(ctx)
     assert "glm-4.7-flash" in models
     assert "gpt-4" in models
+
+
+def test_by_window_leads_with_the_biggest_context():
+    from beeagent.core import windows
+
+    ordered = G4fProvider.by_window(["gpt-4", "gemini-2.5-pro", "glm-4.7-flash"])
+    assert ordered[0] == "gemini-2.5-pro", "a 1M-window name beats an 8k one"
+    assert ordered[-1] == "gpt-4"
+
+    # A measured wide window outranks any claim, and a measured small one sinks
+    # to where its real size belongs rather than taking a top slot by luck.
+    windows.remember("command-a-03-2025", 65536)
+    assert G4fProvider.by_window(["gemini-2.5-pro", "command-a-03-2025"])[0] == "command-a-03-2025"
+    windows.remember("gemini-2.5-pro", 4096)
+    assert G4fProvider.by_window(["gpt-4", "gemini-2.5-pro"]) == ["gpt-4", "gemini-2.5-pro"]
+
+
+def test_recommended_models_only_lists_wide_windows():
+    from beeagent.core.context import window_for
+
+    picks = G4fProvider.recommended_models(limit=12)
+    assert picks, "the catalog has wide-window models"
+    assert len(picks) <= 12
+    assert all(window_for(m) >= G4fProvider.RECOMMENDED_MIN_TOKENS for m in picks)
+    assert picks == G4fProvider.by_window(picks), "already in recommended order"

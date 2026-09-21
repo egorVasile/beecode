@@ -161,32 +161,49 @@ _MODEL_FAMILIES = (
 )
 
 
+def _claimed_window(name: str) -> int:
+    """What a model id says about itself, uncapped: "-128k" or the family table.
+
+    The "8b" form is parameter count, not window, so only k/m markers are read.
+    """
+    for pattern, unit in ((_WINDOW_MARKERS, 1024), (_WINDOW_MARKERS_M, 1024 * 1024)):
+        match = pattern.search(name)
+        if match:
+            try:
+                return max(1024, int(float(match.group(1)) * unit))
+            except ValueError:
+                continue
+    for token, size in _MODEL_FAMILIES:
+        if token in name:
+            return size
+    return DEFAULT_WINDOW
+
+
+def advertised_window(model: str) -> int:
+    """The window to rank models by — measured where we have it, else claimed.
+
+    Not clamped on purpose: a ranking that caps Claude at the same number as a
+    32k model tells the user nothing true about either.
+    """
+    from beeagent.core import windows
+
+    measured = windows.measured(model or "")
+    return measured or _claimed_window((model or "").lower())
+
+
 def window_for(model: str) -> int:
-    """The context window a model id advertises, conservative when unknown.
+    """How large a prompt we may send this model, conservative when unknown.
 
     A measured value wins: it came from the endpoint refusing a real prompt,
-    while everything below is a guess from the model's name.
-    Sizes written into the id take precedence over the family table
-    ("llama-3.1-8b-128k", "glm-4-9b-32k"); the "8b" form is parameter count,
-    not window, so only k/m markers are read.
+    while everything else below is a guess from the model's name. The cost clamp
+    is what separates this from `advertised_window`.
     """
     from beeagent.core import windows
 
     measured = windows.measured(model or "")
     if measured:
         return max(1024, min(MEASURED_MAX_WINDOW, measured))
-    name = (model or "").lower()
-    for pattern, unit in ((_WINDOW_MARKERS, 1024), (_WINDOW_MARKERS_M, 1024 * 1024)):
-        match = pattern.search(name)
-        if match:
-            try:
-                return max(1024, min(MAX_WINDOW, int(float(match.group(1)) * unit)))
-            except ValueError:
-                continue
-    for token, size in _MODEL_FAMILIES:
-        if token in name:
-            return max(1024, min(MAX_WINDOW, size))
-    return DEFAULT_WINDOW
+    return max(1024, min(MAX_WINDOW, _claimed_window((model or "").lower())))
 
 
 class ContextManager:

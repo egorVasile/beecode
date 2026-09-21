@@ -184,10 +184,16 @@ free-tier endpoint that speaks the OpenAI API once **you** add your own key.
 /providers            what can serve requests right now, and what still needs a key
 /key groq <token>     store a key you obtained yourself (saved to beeagent.json, never echoed)
 /provider groq        switch; the model list and the default model follow the provider
-/models               the models of the provider you selected — for g4f, with its upstreams
+/models               recommended first: widest context, then the rest of the catalog
+/models --all         every model g4f knows about (600+), still biggest window first
 /models Cloudflare    filter by name or by g4f upstream
 /model command-a-03-2025  pick one
 ```
+
+Each row carries a window: `✔ 32k` was measured on this machine by the endpoint
+refusing or forgetting a prompt, `~ 1M` is what the model id claims. Measured wide
+models lead the list; a model measured at 2k sits at the bottom whatever its name
+says, because the claim describes a name and the measurement describes your route.
 
 ### What answers without a key
 
@@ -198,10 +204,13 @@ first line holds a random code the model has to repeat back:
 | Route | Keyless | Result of the measurement |
 | --- | --- | --- |
 | `command-a-03-2025` (Cohere ForAI) | no | read the code back from **65536 tokens, twice**, ~2 s a step |
-| `LLM7` | no | read 65536 once, then answered round two with `429 rate_limit_exceeded` |
-| `gpt-4` (Yqcloud) | no | answers in seconds, refuses 4k with 文字过长 — "text too long" |
-| `glm-4.7-flash`, `deepseek-chat`, `gemini-2.5-flash` | no | fine at 2048; at 4096 the free path returns 401, a key request, or goes silent for minutes |
-| most other names | no | now hidden behind g4f's own broker, which wants proof-of-work "cake credits" |
+| `LLM7` (model id `default`) | no | read 65536 once, then answered round two with `429 rate_limit_exceeded` |
+| `gpt-4` (Yqcloud) | no | **measured 2048** — refused 4k with 文字过长, "text too long" |
+| `search` (GoogleSearch) | no | took 32768 without complaining, recall not verified |
+| Cloudflare | no | went silent on a 2048-token prompt for 90 s |
+| `glm-4.7-flash`, `deepseek-chat`, `gemini-2.5-flash` | no | fine at 2048; at 4096 the free path returns 401, a key request, or goes quiet for minutes |
+| OpenRouterFree, Nvidia, Pollinations, GeminiPro, G4FSpace, RelayRouter, OrcaRouter | no | hidden behind g4f's own broker, which demands proof-of-work "cake credits" (402) |
+| DeepInfra, Copilot, Cerebras, HuggingChat, Airforce, KiloCode, OpenCode, MetaAI, OperaAria, DeepSeek | no | Turnstile token, a live Chrome over CDP, your browser cookies, an account, or a plain 401 |
 
 That is why `command-a-03-2025` is the default model: it is the one keyless route
 measured to hold a real working session, and the same file-reading turn through it
@@ -299,7 +308,7 @@ mouse-clickable picker.
 | `/lang` | Switch the interface language | `/lang <en|ru>` |
 | `/mode` | Switch between normal and economy | `/mode <normal|economy>` |
 | `/model` | Switch the active model | `/model <name>` |
-| `/models` | List available models | `/models` |
+| `/models` | List models with the widest context first, --all for every one | `/models [name|upstream] [--all]` |
 | `/permissions` | Who may touch the machine: ask, auto or readonly | `/permissions <ask|auto|readonly>` |
 | `/provider` | Switch the active provider | `/provider <name>` |
 | `/providers` | List providers and which ones have a key | `/providers` |

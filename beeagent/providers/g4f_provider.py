@@ -66,23 +66,21 @@ async def _await_or_keep(response):
 
 class G4fProvider(BaseProvider):
     name = "g4f"
-    # Curated quick picks. The first one is the route measured on 2026-09-21 to
-    # read a 64k-token prompt keyless; the rest are popular names that g4f
-    # routes through whatever upstream it finds — several of them only carry a
-    # couple of thousand tokens before the free path gives up, which
-    # `/window measure <model>` will show rather than guess.
+    # Quick picks, ordered by how much context they can carry: first the one
+    # route measured here to read a 32k prompt keyless, then the wide-window
+    # names, then the popular small ones. `/models` sorts the whole catalog the
+    # same way and marks what was measured rather than guessed.
     models = [
         "command-a-03-2025",
-        "glm-4.7-flash", "glm-5.2",
-        "gpt-4", "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.5",
-        "gpt-oss-120b", "o4-mini",
-        "deepseek-v3", "deepseek-r1", "deepseek-chat",
-        "gemini-2.5-flash", "gemini-2.5-pro", "gemini-3.5-flash", "gemini-3.8-pro",
-        "grok-3", "kimi-k2",
-        "qwen-3-235b", "qwen-3-32b", "qwen-72b",
-        "llama-3.1-70b", "llama-4-scout", "llama-4-maverick",
-        "mistral-small-3.1-24b", "sonar",
-        "claude-3.5-sonnet", "claude-3-haiku", "gemini-pro", "gpt-3.5-turbo",
+        "gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.8-pro",
+        "claude-3.5-sonnet", "claude-3-haiku",
+        "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.5", "gpt-oss-120b",
+        "o4-mini", "kimi-k2", "qwen-3-235b", "qwen-3-32b", "qwen-72b",
+        "llama-4-scout", "llama-4-maverick", "mistral-small-3.1-24b", "sonar",
+        "deepseek-v3", "deepseek-r1", "deepseek-chat", "glm-5.2",
+        "grok-3", "gemini-pro",
+        # Measured here at 2048 tokens: answers fast, refuses anything longer.
+        "gpt-4", "glm-4.7-flash", "gpt-3.5-turbo",
     ]
 
     # Cache for the discovered cross-provider catalog.
@@ -116,6 +114,38 @@ class G4fProvider(BaseProvider):
         return list(found)
 
     _upstream_map: dict[str, list[str]] | None = None
+
+    # A model is only worth recommending if it can hold a real working session:
+    # the tool catalog, skills and file dumps spend tokens quickly.
+    RECOMMENDED_MIN_TOKENS = 32768
+
+    @classmethod
+    def by_window(cls, models: list[str]) -> list[str]:
+        """Order models by context window, biggest first.
+
+        A window BeeCode measured itself leads a window a model id merely
+        claims — but only while it is wide: measuring `gpt-4` at 2k says it is
+        small, so it sinks to where 2k belongs instead of taking third place in
+        a list about capacity. `/models` marks ✔ measured and ~ claimed.
+        """
+        from beeagent.core import windows
+        from beeagent.core.context import advertised_window
+
+        def rank(model: str):
+            size = advertised_window(model)
+            proven_wide = bool(windows.measured(model)) and size >= cls.RECOMMENDED_MIN_TOKENS
+            return (0 if proven_wide else 1, -size, model)
+
+        return sorted(models, key=rank)
+
+    @classmethod
+    def recommended_models(cls, limit: int = 40) -> list[str]:
+        """Catalog models that can carry a long session, largest window first."""
+        from beeagent.core.context import advertised_window
+
+        wide = [m for m in cls.discover_models()
+                if advertised_window(m) >= cls.RECOMMENDED_MIN_TOKENS]
+        return cls.by_window(wide)[:limit]
 
     @classmethod
     def upstream_map(cls) -> dict[str, list[str]]:
