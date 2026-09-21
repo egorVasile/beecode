@@ -11,7 +11,11 @@ def _seconds(value) -> int:
         seconds = int(float(value))
     except (TypeError, ValueError):
         seconds = 60
-    return max(1, min(seconds, 1800))
+    if seconds <= 0:
+        # Zero and negatives are the model not meaning "fast" — that reads as
+        # "no idea", which is the default, not the smallest value in the range.
+        seconds = 60
+    return min(seconds, 1800)
 
 class BashTool(BaseTool):
     name = "bash"
