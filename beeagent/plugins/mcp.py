@@ -142,7 +142,11 @@ class McpStdioClient:
                 self._proc.terminate()
                 await asyncio.wait_for(self._proc.wait(), timeout=5)
             except Exception:
-                self._proc.kill()
+                from beeagent.tools.shell import kill_process_tree
+
+                # A `.cmd` shim (npx on Windows) is a wrapper: terminating it
+                # leaves the real server running with its pipes open.
+                kill_process_tree(self._proc)
         self._proc = None
 
 
@@ -263,6 +267,11 @@ class McpManager:
         try:
             tools = run_coro_blocking(lambda: _with_timeout(go(), timeout))
         except Exception as e:
+            # The server was started for this call. Leaving it behind means every
+            # failed `/mcp connect` costs a live subprocess.
+            run_coro_blocking(lambda: client.stop(), timeout=10)
+            with self._clients_lock:
+                self._clients.pop(server, None)
             raise RuntimeError(f"server '{server}' unreachable: {e}") from e
         self.store_tools(server, tools)
         return tools

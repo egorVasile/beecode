@@ -44,7 +44,7 @@ def decode(data: bytes) -> str:
     return text.replace("\r\n", "\n")
 
 
-def _kill_tree(process) -> None:
+def kill_process_tree(process) -> None:
     """Kill the child *and its children*.
 
     `subprocess.run(timeout=…)` kills only the direct child, then waits on the
@@ -86,7 +86,7 @@ def run_shell(command: str, timeout: int = 60) -> subprocess.CompletedProcess:
     try:
         stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        _kill_tree(process)
+        kill_process_tree(process)
         stdout, stderr = process.communicate()
         raise subprocess.TimeoutExpired(argv, timeout, output=stdout, stderr=stderr)
     return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)

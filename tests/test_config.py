@@ -73,3 +73,41 @@ def test_economy_nested_default():
 def test_custom_providers_empty_list():
     config = BeeConfig()
     assert config.custom_providers == []
+
+
+def test_a_torn_config_starts_on_defaults_instead_of_crashing(tmp_path, capsys):
+    """A half-written beeagent.json used to make the agent unstartable."""
+    (tmp_path / "beeagent.json").write_text('{"model": "gpt-4", "max_turns": ', encoding="utf-8")
+
+    loaded = load_config(str(tmp_path))
+
+    assert loaded.model != "gpt-4", "the broken file is not applied"
+    assert loaded.max_turns == BeeConfig().max_turns
+    assert "beeagent.json" in capsys.readouterr().out, "the user is told which file failed"
+
+
+def test_an_invalid_value_falls_back_and_says_so(tmp_path, capsys):
+    (tmp_path / "beeagent.json").write_text('{"max_turns": "many"}', encoding="utf-8")
+
+    loaded = load_config(str(tmp_path))
+
+    assert loaded.max_turns == BeeConfig().max_turns
+    assert "beeagent.json" in capsys.readouterr().out
+
+
+def test_unknown_keys_are_announced_before_they_are_dropped(tmp_path, capsys):
+    """pydantic ignores extras and the next save erases them from disk."""
+    (tmp_path / "beeagent.json").write_text('{"tempreture": 0.2}', encoding="utf-8")
+
+    load_config(str(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "tempreture" in out
+
+
+def test_save_leaves_no_temp_file_and_round_trips(tmp_path):
+    config = BeeConfig(model="command-a-03-2025", max_turns=7)
+    save_config(config, str(tmp_path))
+
+    assert list(tmp_path.glob("*.tmp")) == []
+    assert load_config(str(tmp_path)).max_turns == 7

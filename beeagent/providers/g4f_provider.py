@@ -299,6 +299,12 @@ class G4fProvider(BaseProvider):
                 last_error = "empty stream"
                 # empty stream -> try next provider
             except Exception as e:
+                if got_any:
+                    # Half an answer already reached the user. Falling through to
+                    # the next provider here glued two different replies into one
+                    # message — the caller resets the stream and asks again, which
+                    # is the only honest recovery left.
+                    raise
                 # Swallowing this left the user staring at "empty response" while
                 # the real cause (rate limit, dead endpoint) went unsaid.
                 last_error = f"{getattr(cls, '__name__', 'auto')}: {e}"

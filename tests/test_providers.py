@@ -164,3 +164,55 @@ def test_recommended_models_only_lists_wide_windows():
     assert len(picks) <= 12
     assert all(window_for(m) >= G4fProvider.RECOMMENDED_MIN_TOKENS for m in picks)
     assert picks == G4fProvider.by_window(picks), "already in recommended order"
+
+
+def test_a_stream_that_dies_mid_answer_is_not_glued_to_the_next_one(monkeypatch):
+    """Provider A answers then loses the connection; B answers differently.
+
+    The loop used to swallow A's error and keep going, so the user received
+    "ПЕРВАЯ" + "ВТОРАЯ" as one reply and the session stored it as the answer.
+    """
+    import asyncio
+    import sys
+    import types
+
+    from beeagent.providers import g4f_provider
+
+    state = {"calls": 0}
+
+    def chunk(text):
+        delta = types.SimpleNamespace(content=text)
+        return types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta)])
+
+    class Completions:
+        async def create(self, model, messages, stream=True):
+            state["calls"] += 1
+            first = state["calls"] == 1
+            yield chunk("ПЕРВАЯ")
+            if first:
+                raise RuntimeError("connection reset")
+            yield chunk("ВТОРАЯ")
+
+    class Chat:
+        completions = Completions()
+
+    class FakeClient:
+        def __init__(self, provider=None):
+            self.chat = types.SimpleNamespace(completions=Chat.completions)
+
+    monkeypatch.setitem(sys.modules, "g4f.client", types.SimpleNamespace(AsyncClient=FakeClient))
+    provider = G4fProvider()
+
+    async def drain():
+        collected = []
+        async for kind, text in provider.chat_stream([{"role": "user", "content": "x"}],
+                                                    model="m"):
+            collected.append(text)
+        return "".join(collected)
+
+    try:
+        answer = asyncio.run(drain())
+    except RuntimeError as e:
+        assert "connection reset" in str(e), "the real cause must reach the caller"
+    else:
+        raise AssertionError(f"the broken stream was stitched into: {answer!r}")
