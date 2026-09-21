@@ -356,7 +356,7 @@ def render_response(text: str):
         md,
         **skin.frame_kwargs(BORDER),
         title=bee_title("🐝 BeeCode"),
-        title_align="left",
+        title_align="center",
         padding=(0, 1),
     )
     console.print(panel)
@@ -368,7 +368,7 @@ def render_error(message: str):
         Text(message, style="red"),
         **skin.frame_kwargs("bold red"),
         title="[bold red]Error[/]",
-        title_align="left",
+        title_align="center",
     )
     console.print(panel)
     console.print()
@@ -866,7 +866,7 @@ def show_thinking_fallback():
     console.print(Panel(
         Text(numbered),
         title=f"💭 мысли ({len(lines)} строк)",
-        title_align="left",
+        title_align="center",
         **skin.frame_kwargs(BORDER),
         padding=(0, 1),
     ))

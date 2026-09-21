@@ -368,7 +368,7 @@ def _tool_panel(title: str, output: str, error: bool) -> Panel:
     return Panel(
         Text(output),
         title=bee_title(title),
-        title_align="left",
+        title_align="center",
         border_style="bold red" if error else BORDER,
         box=box.ROUNDED,
         padding=(0, 1),
@@ -406,7 +406,8 @@ def _cmd_about(ctx, args):
     text.append(f"mode:    ", style="dim"); text.append(f"{ctx.config.mode}\n", style="bold #ffcc00")
     text.append(f"tools:   ", style="dim"); text.append(f"{tools_n}\n", style="bold #ffcc00")
     text.append(f"commands:", style="dim"); text.append(f"{len(COMMANDS)}\n", style="bold #ffcc00")
-    return CommandResult(output=Panel(text, title=bee_title("About"), border_style=BORDER, box=box.ROUNDED))
+    return CommandResult(output=Panel(text, title=bee_title("About"), title_align="center",
+                                      border_style=BORDER, box=box.ROUNDED))
 
 
 def _cmd_models(ctx, args):
@@ -1244,7 +1245,7 @@ def _cmd_skill(ctx, args):
             from rich.markdown import Markdown
             return CommandResult(output=Panel(
                 Markdown(s.body()),
-                title=bee_title(f"📚 {s.name}"),
+                title=bee_title(f"📚 {s.name}"), title_align="center",
                 border_style=BORDER, box=box.ROUNDED, padding=(0, 1),
             ))
     return _err(L(f"Skill “{name}” not found. /skills lists them.", f"Скил «{name}» не найден. /skills — список."))
