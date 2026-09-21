@@ -230,6 +230,8 @@ model and wins over any name-based guess.
 | `github` | github.com/settings/tokens | gpt-4o/llama endpoints for your own account |
 | `cerebras` | cloud.cerebras.ai | qwen/llama at high speed, free tier |
 | `mistral` | console.mistral.ai | experiment tier, rate limited |
+| `nvidia` | build.nvidia.com | free credits without a card, wide open-model catalog |
+| `deepinfra` | deepinfra.com | trial credits on signup, pay-per-token after |
 | `together` | api.together.xyz/settings/api-keys | one-time credit, some open models free |
 
 Keys are read from `beeagent.json` (`api_keys`) or the matching environment

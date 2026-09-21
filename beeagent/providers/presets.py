@@ -84,6 +84,21 @@ ENDPOINTS = (
         free="a one-time credit; some open models stay free",
         models=("meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",),
     ),
+    Endpoint(
+        name="nvidia", label="NVIDIA NIM",
+        url="https://integrate.api.nvidia.com/v1", env="NVIDIA_API_KEY",
+        signup="https://build.nvidia.com",
+        free="free credits on an account without a card, generous rate limits",
+        models=("meta-llama/llama-3.3-70b-instruct", "deepseek-ai/deepseek-r1",
+                "qwen/qwen3-235b-a22b"),
+    ),
+    Endpoint(
+        name="deepinfra", label="DeepInfra",
+        url="https://api.deepinfra.com/v1/openai", env="DEEPINFRA_API_KEY",
+        signup="https://deepinfra.com",
+        free="trial credits on signup; the serverless catalog is pay-per-token",
+        models=("deepseek-ai/DeepSeek-R1", "meta-llama/Llama-3.3-70B-Instruct"),
+    ),
 )
 
 
