@@ -9,7 +9,7 @@ from beeagent.config.loader import load_config, save_config
 
 def test_default_config():
     config = BeeConfig()
-    assert config.model == "gpt-4"
+    assert config.model == "command-a-03-2025"
     assert config.provider == "g4f"
     assert config.mode == "normal"
     assert config.max_turns == 50
@@ -17,8 +17,23 @@ def test_default_config():
 def test_economy_config_defaults():
     econ = EconomyConfig()
     assert econ.cache_enabled is True
-    assert econ.batch_tools is True
-    assert econ.smart_routing is True
+    assert econ.cache_ttl_minutes > 0
+    # batch_tools / smart_routing were advertised but no code read them; the
+    # cache is the whole of economy mode.
+    assert not hasattr(econ, "batch_tools")
+    assert not hasattr(econ, "smart_routing")
+
+def test_permissions_default_asks():
+    """Writing to disk must not happen on a model's say-so."""
+    from beeagent.config.schema import PermissionsConfig
+
+    config = BeeConfig()
+    assert config.permissions.mode == "ask"
+    assert config.permissions.allowed == []
+    assert PermissionsConfig(mode="nonsense").mode == "nonsense"
+
+def test_context_window_is_a_ceiling_not_a_pin():
+    assert BeeConfig().max_context_tokens == 0        # 0 = detect from the model
 
 def test_custom_provider():
     prov = CustomProvider(
@@ -42,7 +57,7 @@ def test_loader_round_trip():
 def test_loader_missing_file():
     with tempfile.TemporaryDirectory() as tmp:
         loaded = load_config(workdir=tmp)
-        assert loaded.model == "gpt-4"
+        assert loaded.model == "command-a-03-2025"
         assert loaded.max_turns == 50
         assert loaded.economy.cache_enabled is True
         assert loaded.custom_providers == []

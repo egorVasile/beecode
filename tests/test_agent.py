@@ -7,7 +7,7 @@ from beeagent.core.session import Session
 def test_agent_init():
     config = BeeConfig()
     agent = Agent(config=config)
-    assert agent.config.model == "gpt-4"
+    assert agent.config.model == "command-a-03-2025"
     assert agent.tools.get("read") is not None
     assert agent.tools.get("write") is not None
     assert agent.tools.get("edit") is not None

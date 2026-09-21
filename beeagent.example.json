@@ -1,14 +1,19 @@
 {
-  "model": "gpt-4",
+  "model": "command-a-03-2025",
   "provider": "g4f",
   "mode": "normal",
   "language": "en",
   "max_turns": 50,
+  "max_context_tokens": 0,
   "custom_providers": [],
+  "api_keys": {},
+  "permissions": {
+    "mode": "ask",
+    "allowed": []
+  },
   "economy": {
     "cache_enabled": true,
-    "batch_tools": true,
-    "smart_routing": true,
-    "cache_dir": ".beeagent/cache"
+    "cache_dir": ".beeagent/cache",
+    "cache_ttl_minutes": 30
   }
 }

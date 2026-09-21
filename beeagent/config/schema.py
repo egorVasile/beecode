@@ -21,7 +21,10 @@ class CustomProvider(BaseModel):
     key: Optional[str] = None
 
 class BeeConfig(BaseModel):
-    model: str = "gpt-4"
+    # Command A is the one g4f route measured (2026-09-21) to read a 32k
+    # prompt keyless and answer in seconds; "gpt-4" landed on a route that
+    # refuses anything past ~4k, which is what made the agent seem amnesic.
+    model: str = "command-a-03-2025"
     provider: str = "g4f"
     mode: str = "normal"  # "normal" | "economy"
     language: str = "en"  # "en" | "ru"

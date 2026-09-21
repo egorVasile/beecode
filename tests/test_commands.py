@@ -91,8 +91,9 @@ def test_dispatch_model_switch(ctx):
 
 
 def test_dispatch_model_unknown_does_not_switch(ctx):
+    before = ctx.config.model
     dispatch(ctx, "/model does-not-exist")
-    assert ctx.config.model == "gpt-4"
+    assert ctx.config.model == before, "an unknown name must not clobber the model"
 
 
 def test_dispatch_mode_switch(ctx):
@@ -133,3 +134,18 @@ def test_completer_yields_completions(ctx):
     completer = BeeCompleter(ctx)
     comps = list(completer.get_completions(_Doc(), None))
     assert {c.text for c in comps} == {"/model", "/models", "/mode"}
+
+
+def test_readme_command_table_matches_the_registry():
+    """The table is generated — a forgotten /key must fail here, not in review."""
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(root / "scripts"))
+    from sync_readme import BEGIN, END, build_table
+
+    text = (root / "README.md").read_text(encoding="utf-8")
+    assert BEGIN in text and END in text
+    documented = text.split(BEGIN, 1)[1].split(END, 1)[0].strip()
+    assert documented == build_table().strip(), "run: python scripts/sync_readme.py"

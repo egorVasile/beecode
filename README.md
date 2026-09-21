@@ -71,7 +71,7 @@ python -m beeagent.cli
 | Command | What it does |
 | --- | --- |
 | `beecode` | Interactive REPL (the default interface) |
-| `beecode --model glm-4.7-flash` | Start with a specific model |
+| `beecode --model command-a-03-2025` | Start with a specific model |
 | `beecode --provider g4f` | Start with a specific provider |
 | `beecode --mode economy` | Cache answers and reuse them across identical requests |
 | `beecode --lang ru` | Russian interface (default is English) |
@@ -186,8 +186,28 @@ free-tier endpoint that speaks the OpenAI API once **you** add your own key.
 /provider groq        switch; the model list and the default model follow the provider
 /models               the models of the provider you selected — for g4f, with its upstreams
 /models Cloudflare    filter by name or by g4f upstream
-/model glm-4.7-flash  pick one
+/model command-a-03-2025  pick one
 ```
+
+### What answers without a key
+
+"Free" upstreams move constantly, so this is measured rather than believed — and
+the numbers below were taken on g4f 8.5.7 on 2026-09-21 by sending prompts whose
+first line holds a random code the model has to repeat back:
+
+| Route | Keyless | Result of the measurement |
+| --- | --- | --- |
+| `command-a-03-2025` (Cohere ForAI) | no | read the code back from **65536 tokens, twice**, ~2 s a step |
+| `LLM7` | no | read 65536 once, then answered round two with `429 rate_limit_exceeded` |
+| `gpt-4` (Yqcloud) | no | answers in seconds, refuses 4k with 文字过长 — "text too long" |
+| `glm-4.7-flash`, `deepseek-chat`, `gemini-2.5-flash` | no | fine at 2048; at 4096 the free path returns 401, a key request, or goes silent for minutes |
+| most other names | no | now hidden behind g4f's own broker, which wants proof-of-work "cake credits" |
+
+That is why `command-a-03-2025` is the default model: it is the one keyless route
+measured to hold a real working session, and the same file-reading turn through it
+took 5.0 s against 35.1 s on the `gpt-4` route. Run `/window measure <model>` in
+your own session to see what *your* route carries today — the answer is cached per
+model and wins over any name-based guess.
 
 `/providers` lists the built-in free-tier endpoints with the page where each key is issued:
 
@@ -373,7 +393,7 @@ startup loads cached schemas only, and `/mcp connect` does the rest explicitly.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `model` | `gpt-4` | Model id passed to the provider |
+| `model` | `command-a-03-2025` | Model id passed to the provider |
 | `provider` | `g4f` | Which registered provider to use |
 | `mode` | `normal` | `economy` enables answer caching |
 | `max_turns` | `50` | Tool-loop iterations per request |
