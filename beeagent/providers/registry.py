@@ -1,4 +1,7 @@
 from typing import Optional
+
+from beeagent.i18n import L
+
 from .base import BaseProvider
 
 class ProviderRegistry:
@@ -7,6 +10,10 @@ class ProviderRegistry:
     
     def register(self, provider: BaseProvider):
         self._providers[provider.name] = provider
+
+    def unregister(self, name: str) -> bool:
+        """Drop a provider; True when one was actually removed."""
+        return self._providers.pop(name, None) is not None
     
     def get(self, name: str) -> Optional[BaseProvider]:
         return self._providers.get(name)
@@ -23,8 +30,11 @@ class ProviderRegistry:
         """
         provider = self._providers.get(preferred)
         if provider is None:
-            available = ", ".join(self._providers) or "нет"
-            raise RuntimeError(
-                f"провайдер '{preferred}' не настроен — доступны: {available}"
-            )
+            available = ", ".join(self._providers) or L("none", "ни одного")
+            raise RuntimeError(L(
+                f"provider '{preferred}' is not configured — available: {available} "
+                f"(run /providers)",
+                f"провайдер '{preferred}' не настроен — доступны: {available} "
+                f"(выполни /providers)",
+            ))
         return provider
