@@ -103,6 +103,25 @@ def test_doctor_reports_the_install_without_touching_the_network(project, monkey
         assert line in text, text
 
 
+def test_doctor_names_the_android_commands_that_make_the_rest_work(project, monkeypatch):
+    """On Termux the usual fixes are wrong: there is no apt, no compiler, and the
+    SD card is invisible until the user mounts it. The check-up has to say the
+    `pkg` and `termux-…` lines, or it tells a phone user to do impossible things."""
+    agent = load(project, "doctor")
+    monkeypatch.setenv("PREFIX", "/data/data/com.termux/files/usr")
+    monkeypatch.setenv("HOME", "/data/data/com.termux/files/home")
+
+    text = plain(run(agent, "/doctor"))
+    for label in ("termux prefix", "bash for the shell tool", "shared storage"):
+        assert label in text, f"{label} missing from:\n{text}"
+    assert "termux-setup-storage" in text, "the SD card is invisible until it is mounted"
+
+    # A desktop must not be lectured about pkg.
+    monkeypatch.delenv("PREFIX", raising=False)
+    monkeypatch.setenv("HOME", str(project))
+    assert "termux prefix" not in plain(run(agent, "/doctor"))
+
+
 def test_changes_lists_what_this_session_wrote(project):
     agent = load(project, "changes")
     (project / "app.py").write_text("print(1)", encoding="utf-8")
