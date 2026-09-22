@@ -54,7 +54,7 @@ class OpenAICompatProvider(BaseProvider):
             data = resp.json()
             return data["choices"][0]["message"]["content"]
 
-    async def chat_stream(self, messages: list[dict], model: str = "") -> AsyncIterator[str]:
+    async def chat_stream(self, messages: list[dict], model: str = "") -> AsyncIterator[tuple[str, str]]:
         model = model or self.default_model
         headers = self._headers()
         headers["Accept"] = "text/event-stream"
@@ -68,9 +68,11 @@ class OpenAICompatProvider(BaseProvider):
             ) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
+                    # Several gateways and vLLM behind nginx send `data:{...}` with
+                    # no space — legal per the SSE spec, and silently dropped before.
+                    if not line.startswith("data:"):
                         continue
-                    payload = line[6:]
+                    payload = line[5:].strip()
                     if payload.strip() == "[DONE]":
                         return
                     try:
@@ -82,4 +84,4 @@ class OpenAICompatProvider(BaseProvider):
                         continue
                     piece = (choices[0].get("delta") or {}).get("content")
                     if piece:
-                        yield piece
+                        yield ("content", piece)

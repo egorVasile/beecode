@@ -5,11 +5,16 @@ this operation and `glob` cannot answer them — it only returns files. The
 invented names are registered as aliases so the call still works, while the
 catalog advertises the single canonical `list_directory`.
 """
+import os
 from pathlib import Path
 
 from .base import BaseTool, ToolResult
 
 MAX_ENTRIES = 300
+# A listing that walks a venv or a .git spends minutes stating files nobody
+# asked about — and the old code did it before the first line was printed.
+SKIP_DIRS = {".git", ".beeagent", "node_modules", "__pycache__", ".venv", "venv",
+             "env", ".tox", ".mypy_cache", ".pytest_cache", ".idea", ".vscode"}
 
 
 def _size(n: int) -> str:
@@ -51,12 +56,11 @@ class ListDirectoryTool(BaseTool):
                     output=f"Not a directory: {path} — use the read tool for a file", error=True
                 )
 
-            walker = folder.rglob("*") if recursive else folder.iterdir()
             entries, hidden = [], 0
-            for item in sorted(walker, key=lambda f: (f.is_file(), f.name.lower())):
+            for item in _walk(folder, recursive):
                 if len(entries) >= MAX_ENTRIES:
                     hidden += 1
-                    continue
+                    break
                 try:
                     label = item.relative_to(folder).as_posix()
                 except ValueError:      # symlink pointing outside the folder
@@ -85,3 +89,21 @@ class ListDirectoryTool(BaseTool):
 
     def is_safe(self) -> bool:
         return True
+
+
+def _key(item: Path) -> tuple:
+    return (item.is_file(), item.name.lower())
+
+
+def _walk(folder: Path, recursive: bool):
+    """Yield entries lazily, and never descend into another tool's output."""
+    if not recursive:
+        yield from sorted(folder.iterdir(), key=_key)
+        return
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+        base = Path(root)
+        for name in sorted(dirs, key=str.lower):
+            yield base / name
+        for name in sorted(files, key=str.lower):
+            yield base / name

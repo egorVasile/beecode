@@ -83,7 +83,9 @@ class CraxProvider(BaseProvider):
         return [(i, key) for i, key in enumerate(self.keys) if self.spent.get(i, 0) <= now]
 
     def _cool(self, index: int, seconds: float) -> None:
-        self.spent[index] = time.time() + max(1.0, min(seconds, KEY_COOLDOWN * 20))
+        # Bounded by a day, not by our own cooldown constant: an endpoint that
+        # names a reset time knows better than we do.
+        self.spent[index] = time.time() + max(1.0, min(seconds, 24 * 3600))
 
     def _headers(self, key: str) -> dict:
         from beeagent import __version__
@@ -108,6 +110,8 @@ class CraxProvider(BaseProvider):
         from beeagent.i18n import L
 
         if error.kind == "daily":
+            # Never shorter than the endpoint's own stated reset: retrying a
+            # spent account an hour before midnight just spends the attempt.
             self._cool(index, max(KEY_COOLDOWN, error.retry_after or KEY_COOLDOWN))
             if self._usable():
                 return                       # the next key is another account: try it
@@ -185,6 +189,8 @@ class CraxProvider(BaseProvider):
                             await self._handle_limit(index, error)
                             continue
                         async for line in response.aiter_lines():
+                            if _is_done(line):
+                                break
                             piece = _chunk(line)
                             if piece is None:
                                 continue
@@ -196,7 +202,11 @@ class CraxProvider(BaseProvider):
                             yield kind, text
             except httpx.HTTPError as e:
                 if got_any:
-                    return              # half an answer reached the user already
+                    # The answer stopped mid-sentence. Handing it back as if it
+                    # were finished is how a half-written file gets reported as
+                    # written — the caller retries, and only the retry knows.
+                    raise CraxError("network",
+                                    f"crax-gpt stopped after {len(''.join(pieces))} characters: {e}")
                 raise CraxError("network", f"crax-gpt is not reachable: {e}")
             if got_any:
                 return
@@ -223,10 +233,28 @@ class CraxProvider(BaseProvider):
 
 
 def _retry_after(response) -> int:
+    """Seconds, from either shape the header is allowed to take."""
+    raw = (response.headers.get("Retry-After") or "").strip()
+    if not raw:
+        return 0
     try:
-        return max(0, int(float(response.headers.get("Retry-After") or 0)))
+        return max(0, int(float(raw)))
+    except ValueError:
+        pass
+    try:
+        from datetime import datetime, timezone
+        from email.utils import parsedate_to_datetime
+
+        when = parsedate_to_datetime(raw)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return max(0, int((when - datetime.now(timezone.utc)).total_seconds()))
     except (TypeError, ValueError):
         return 0
+
+
+def _is_done(line: str) -> bool:
+    return (line or "").strip() in ("data: [DONE]", "data:[DONE]")
 
 
 def _json_or_empty(text: str) -> dict:

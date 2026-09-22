@@ -139,6 +139,8 @@ class PoolProvider(BaseProvider):
                     raise PoolError(_reason(response.status_code, _safe_json(response)))
                 got_any = False
                 async for line in response.aiter_lines():
+                    if (line or "").strip() in ("data: [DONE]", "data:[DONE]"):
+                        break
                     piece = _chunk(line)
                     if piece is None:
                         continue
@@ -166,8 +168,12 @@ def _chunk(line: str):
         event = json.loads(payload)
     except ValueError:
         return None
-    if isinstance(event.get("error"), str):
-        return None
+    error = event.get("error")
+    if isinstance(error, str) and error:
+        # The pool said why; do not turn that into "streamed nothing".
+        raise PoolError(error)
+    if isinstance(error, dict) and error.get("message"):
+        raise PoolError(str(error["message"]))
     choices = event.get("choices") or []
     if not choices:
         return None

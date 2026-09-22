@@ -49,4 +49,6 @@ class WebSearchTool(BaseTool):
             return ToolResult(output=str(e), error=True)
     
     def is_safe(self) -> bool:
-        return True
+        # The query leaves the machine, and read + search is a working
+        # exfiltration pair: a file the model can read it can also send out.
+        return False

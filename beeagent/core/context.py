@@ -137,6 +137,7 @@ DEFAULT_WINDOW = 8192
 
 # Even a 1M-context model is not sent an unlimited prompt: the tool catalog,
 # skills and huge dumps make cost grow fast.
+MIN_HISTORY_BUDGET = 256      # the least we keep for the live turn
 MAX_WINDOW = 32768
 
 # A measured limit may be trusted further than a guess from the model name.
@@ -256,6 +257,13 @@ class ContextManager:
 
         # The reminder is appended to one message below, so it is paid for here.
         budget = self.max_tokens - self._cost(base) - self._cost(REMINDER_SUFFIX)
+        if budget < MIN_HISTORY_BUDGET and (self.skills_section or self.permissions_section):
+            # On a small window it is the catalog that does not fit, not the
+            # conversation. A negative budget used to clip the user's own
+            # message down to a couple of tokens and report nothing as trimmed.
+            base = SYSTEM_PROMPT + "\n" + tool_prompt
+            budget = self.max_tokens - self._cost(base) - self._cost(REMINDER_SUFFIX)
+        budget = max(budget, MIN_HISTORY_BUDGET)
 
         # First try to carry the conversation verbatim.
         kept, dropped = self._window(session_messages, budget)

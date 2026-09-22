@@ -73,5 +73,9 @@ class TodoTool(BaseTool):
 
         return ToolResult(output=f"Unknown action: {action} (add|list|done|remove)", error=True)
 
+    # It keeps its list in .beeagent/todo.json: safe to look with, but it
+    # does write, which is what /permissions readonly promises to stop.
+    writes_files = True
+
     def is_safe(self) -> bool:
         return True

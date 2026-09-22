@@ -1,5 +1,6 @@
 from pathlib import Path
 from .base import BaseTool, ToolResult, read_text_preserving
+from ._seen import remember
 
 class ReadTool(BaseTool):
     name = "read"
@@ -18,8 +19,15 @@ class ReadTool(BaseTool):
         "required": ["path"],
     }
     
+    MAX_LINES = 2000
+    MAX_LINE_CHARS = 2000
+
     def execute(self, path: str, offset: int = 0, limit: int = 2000) -> ToolResult:
         try:
+            # `limit` arrives from the model: an enormous value used to mean "read
+            # the whole file, split it, number it and keep all of it in memory".
+            limit = max(1, min(int(limit), self.MAX_LINES))
+            offset = max(0, int(offset))
             p = Path(str(path)).expanduser()
             if not p.exists():
                 return ToolResult(output=f"File not found: {path}", error=True)
@@ -34,6 +42,7 @@ class ReadTool(BaseTool):
             rest = len(lines) - offset - len(selected)
             if rest > 0:
                 output += f"\n… {rest} more lines (continue with offset={offset + len(selected)})"
+            remember(p)
             return ToolResult(output=output, error=False, metadata={"total_lines": len(lines)})
         except UnicodeDecodeError as e:
             # Saying "here is some text" about a run of U+FFFD is how a cp1251

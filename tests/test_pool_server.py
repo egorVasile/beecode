@@ -68,11 +68,11 @@ def complete(client, base, token, provider="groq", **body):
     return client.post(base + "/v1/chat/completions", json=payload, headers=headers)
 
 
-def test_health_answers_without_leaking_anything(pool):
+def test_health_says_alive_and_nothing_about_capacity(pool):
+    """Which upstreams are loaded and how many accounts sit behind them is a plan."""
     with httpx.Client() as client:
         body = client.get(pool.base + "/healthz").json()
-    assert body["ok"] is True and body["keys"] == 2
-    assert "gsk_first_secret" not in json.dumps(body)
+    assert body == {"ok": True}
 
 
 def test_a_completions_request_needs_a_seat(pool):
@@ -85,12 +85,15 @@ def test_a_completions_request_needs_a_seat(pool):
         assert answer.json()["choices"][0]["message"]["content"] == "жужж"
 
 
-def test_the_key_stays_on_the_server_and_only_its_tail_comes_back(pool):
+def test_the_key_never_leaves_the_server_at_all(pool):
+    """Not even its tail: that was a stable id for one account across every seat,
+    which let a stranger aim at an account and measure the pool through seats."""
     with httpx.Client() as client:
         token = enroll(client, pool.base)
         body = complete(client, pool.base, token).json()
-    assert body["pool_key"] == "…cret"
-    assert "gsk_first_secret" not in json.dumps(body)
+    assert "pool_key" not in body
+    assert "cret" not in json.dumps(body)
+    assert body["pool_lane"].startswith("groq-")
     assert pool.calls[0]["key"] == "gsk_first_secret", "the upstream really got the key"
 
 
@@ -133,16 +136,31 @@ def test_the_daily_budget_is_enforced_per_seat(pool):
         assert complete(client, pool.base, other).status_code == 200
 
 
-def test_one_address_cannot_mint_seats_forever(pool):
+def test_a_forged_forwarded_header_does_not_mint_seats(pool):
+    """The whole per-IP limit used to rest on a header the caller writes.
+
+    Nothing here spoofs an address: every request arrives from 127.0.0.1, and
+    without a declared trusted proxy that is what the pool counts.
+    """
+    with httpx.Client() as client:
+        for index in range(pool_server.ENROLLS_PER_IP_PER_DAY):
+            enroll(client, pool.base, ip=f"8.8.8.{index}")
+        blocked = client.post(pool.base + "/v1/enroll", json={},
+                              headers={"X-Forwarded-For": "8.8.8.99"})
+        assert blocked.status_code == 429
+
+
+def test_a_declared_proxy_is_the_only_one_whose_header_is_believed(pool, monkeypatch):
+    """With a trusted proxy in front, the counted address is the client's — so one
+    client keeps its limit and the building next to it is not punished for it."""
+    monkeypatch.setenv("BEECODE_POOL_TRUSTED_PROXY", "127.0.0.1")
     with httpx.Client() as client:
         for _ in range(pool_server.ENROLLS_PER_IP_PER_DAY):
-            enroll(client, pool.base, ip="203.0.113.9")
-        response = client.post(pool.base + "/v1/enroll", json={},
-                               headers={"X-Forwarded-For": "203.0.113.9"})
-        assert response.status_code == 429
-        # A different address still gets its own seat.
+            enroll(client, pool.base, ip="203.0.113.7")
         assert client.post(pool.base + "/v1/enroll", json={},
-                           headers={"X-Forwarded-For": "203.0.113.10"}).status_code == 200
+                           headers={"X-Forwarded-For": "203.0.113.7"}).status_code == 429
+        assert client.post(pool.base + "/v1/enroll", json={},
+                           headers={"X-Forwarded-For": "198.51.100.3"}).status_code == 200
 
 
 def test_a_client_cannot_point_the_pool_at_an_arbitrary_url(pool):

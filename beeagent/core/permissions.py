@@ -19,8 +19,8 @@ MODE_HELP = {
            "опасные инструменты — только после /allow <инструмент>"),
     AUTO: L("every tool runs without asking (trust the model)",
             "все инструменты исполняются без спроса (доверие модели)"),
-    READONLY: L("reading tools only; write/edit/bash are refused",
-                "только чтение; запись/правка/bash отклоняются"),
+    READONLY: L("reading tools only; nothing is written and nothing leaves the machine",
+                "только чтение; ничего не записывается и не уходит наружу"),
 }
 
 
@@ -62,7 +62,9 @@ class Permissions:
         core_safe = not getattr(tool, "from_extension", False) \
             and bool(getattr(tool, "is_safe", lambda: False)())
         if self.mode == READONLY:
-            return core_safe
+            # `is_safe()` means "only reads"; a tool can be safe to look with and
+            # still write its own state file. Read-only means nothing changes.
+            return core_safe and not getattr(tool, "writes_files", False)
         return core_safe or getattr(tool, "name", "") in self.granted
 
     def refusal(self, tool) -> str:

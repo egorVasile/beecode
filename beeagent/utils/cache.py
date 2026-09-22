@@ -7,6 +7,7 @@ written next to the project.
 """
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 
@@ -30,18 +31,56 @@ class ResponseCache:
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            # A file that parses but is not the shape we wrote — a list, a bare
+            # string, `saved_at` of "soon" — is a broken entry, not a crash.
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+            saved_at = float(data.get("saved_at", 0))
+            answer = data.get("response")
+            if not isinstance(answer, str):
+                raise ValueError("no answer in it")
+        except (OSError, ValueError, TypeError):
             path.unlink(missing_ok=True)
             return None
-        if time.time() - float(data.get("saved_at", 0)) > self.ttl_seconds:
+        if time.time() - saved_at > self.ttl_seconds:
             path.unlink(missing_ok=True)
             return None
-        return data.get("response")
+        return answer
 
     def store(self, prompt: str, model: str, response: str):
         path = self._path(self._key(prompt, model))
         payload = {"saved_at": time.time(), "model": model, "response": response}
-        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+        self.prune()
+
+    def prune(self, keep: int = 500) -> int:
+        """Drop what has expired, then the oldest beyond `keep`.
+
+        An entry is only ever deleted by the one prompt that would read it again,
+        so a question asked once left its file for the lifetime of the project.
+        """
+        if not self.cache_dir.is_dir():
+            return 0
+        now = time.time()
+        entries = []
+        removed = 0
+        for candidate in self.cache_dir.glob("*.json"):
+            try:
+                entries.append((candidate.stat().st_mtime, candidate))
+            except OSError:
+                continue
+        for stamp, candidate in entries:
+            if now - stamp > self.ttl_seconds:
+                candidate.unlink(missing_ok=True)
+                removed += 1
+        if len(entries) - removed > keep:
+            survivors = sorted((s, c) for s, c in entries if c.exists())
+            for _, candidate in survivors[:len(survivors) - keep]:
+                candidate.unlink(missing_ok=True)
+                removed += 1
+        return removed
 
     def count(self) -> int:
         return sum(1 for _ in self.cache_dir.glob("*.json"))
