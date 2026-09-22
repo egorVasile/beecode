@@ -18,6 +18,7 @@ from beeagent import __version__
 from beeagent.i18n import L
 
 from beeagent.core.parser import CommandParser
+from beeagent.utils.sanitize import strip_terminal
 
 # Some Windows consoles / redirected streams use a non-UTF8 code page (e.g.
 # cp1251) that cannot encode the block and emoji glyphs this UI draws. Replace
@@ -274,6 +275,7 @@ def print_welcome():
     console.print()
 
 def render_tool_start(tool_name: str, tool_args: dict):
+    tool_name = strip_terminal(tool_name or "")
     args_str = ", ".join(f"{k}={v!r}" for k, v in tool_args.items())
     if len(args_str) > 60:
         args_str = args_str[:57] + "..."
@@ -285,6 +287,9 @@ def render_tool_start(tool_name: str, tool_args: dict):
     console.print(text)
 
 def render_tool_end(tool_name: str, tool_args: dict, output: str, error: bool):
+    # Paths, queries and output are model- or file-authored: they are printed as
+    # Text, never interpolated into markup that a stray `[/]` could break.
+    output = strip_terminal(output or "")
     if error:
         icon = "❌"
         color = "red"
@@ -329,6 +334,7 @@ def render_tool_end(tool_name: str, tool_args: dict, output: str, error: bool):
         console.print(f"    [red]{output[:200]}[/]")
 
 def _render_code_preview(content: str):
+    content = strip_terminal(content or "")
     if not content:
         return
     lines = content.split("\n")
@@ -346,6 +352,7 @@ def _render_code_preview(content: str):
     console.print(panel)
 
 def _render_bash_output(output: str):
+    output = strip_terminal(output or "")
     lines = output.strip().split("\n")
     preview = lines[:8]
     if len(lines) > 8:
@@ -360,8 +367,11 @@ def _render_bash_output(output: str):
     console.print(panel)
 
 def render_response(text: str):
+    text = strip_terminal(text)
     console.print()
-    md = Markdown(text)
+    # hyperlinks=False: OSC 8 makes a target the model chose clickable,
+    # with the display text it also chose sitting on top of it.
+    md = Markdown(text, hyperlinks=False)
     panel = Panel(
         md,
         **skin.frame_kwargs(BORDER),
@@ -392,6 +402,7 @@ def render_economy_hit():
 
 
 def render_tool_denied(tool: str, args: dict):
+    tool = strip_terminal(tool or "")
     """A tool the user never granted: loud, but recoverable."""
     shown = " ".join(f"{k}={str(v)[:40]!r}" for k, v in list(args.items())[:3])
     text = Text()
@@ -704,6 +715,7 @@ class ResponseStream:
         return 0
 
     def _print(self, text):
+        text = strip_terminal(text)
         """Write only whole lines — never leave the cursor mid-line.
 
         While the prompt is active, prompt_toolkit owns the screen: a write that

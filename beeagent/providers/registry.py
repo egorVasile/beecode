@@ -7,9 +7,25 @@ from .base import BaseProvider
 class ProviderRegistry:
     def __init__(self):
         self._providers: dict[str, BaseProvider] = {}
-    
-    def register(self, provider: BaseProvider):
+
+    def register(self, provider: BaseProvider, replace: bool = False) -> bool:
+        """Add a provider. A name that is taken is refused unless `replace` is said.
+
+        Plain assignment let `/key <name>` quietly swap an endpoint's own
+        implementation for a generic one — which loses the special handling that
+        made it that class in the first place, and says nothing while doing it.
+        """
+        existing = self._providers.get(provider.name)
+        if existing is not None and existing is not provider and not replace:
+            return False
         self._providers[provider.name] = provider
+        return True
+
+    def kind_of(self, name: str) -> str:
+        """The class currently answering for `name`, for callers that must not
+        replace a specialised provider with a generic one."""
+        provider = self._providers.get(name)
+        return type(provider).__name__ if provider else ""
 
     def unregister(self, name: str) -> bool:
         """Drop a provider; True when one was actually removed."""

@@ -21,6 +21,7 @@ from beeagent.i18n import L
 from beeagent.core.permissions import AUTO, MODE_HELP, MODES as PERMISSION_MODES, READONLY
 from beeagent.plugins.catalog import TYPE_ICON
 from beeagent.ui.components import BORDER, HONEY, bee_title
+from beeagent.utils.sanitize import strip_terminal
 
 AVAILABLE_MODES = ["normal", "economy"]
 
@@ -50,8 +51,17 @@ def add_command(name: str, description: str, usage: str = "", category: str = "p
 
 
 def drop_command(name: str) -> None:
-    """Take a plugin's command back out: it lives in two places at once."""
-    COMMANDS[:] = [c for c in COMMANDS if c.name != name]
+    """Take an extension's command back out: it lives in two places at once.
+
+    Only a command that was contributed is removable. Without that filter, the
+    bookkeeping of one plugin could delete a command BeeCode ships — and a
+    refused registration is not a contribution, whatever the record says.
+    """
+    contributed = [c for c in COMMANDS if c.name == name and c.category == "plugins"]
+    if not contributed:
+        return
+    COMMANDS[:] = [c for c in COMMANDS
+                   if not (c.name == name and c.category == "plugins")]
     HANDLERS.pop(name, None)
 
 
@@ -389,11 +399,17 @@ def _run_tool(ctx: ReplContext, tool_name: str, title: str, **kwargs) -> Command
     tool = ctx.agent.tools.get(tool_name)
     if tool is None:
         return _err(f"Tool '{tool_name}' is not registered.")
+    # `/run` and `/read` reach the same tools the model does, so the mode the
+    # user chose has to hold here too — otherwise `/permissions readonly` is a
+    # promise the shell can walk straight past.
+    if not ctx.agent.permissions.allows(tool):
+        return _err(ctx.agent.permissions.refusal(tool))
     try:
         res = tool.execute(**kwargs)
     except Exception as e:
         return _err(f"{tool_name} failed: {e}")
-    return CommandResult(output=_tool_panel(title, res.output or "(no output)", res.error))
+    output = strip_terminal(res.output or "(no output)")
+    return CommandResult(output=_tool_panel(title, output, res.error))
 
 
 # --- handlers -------------------------------------------------------------
@@ -514,7 +530,6 @@ def _cmd_providers(ctx, args):
 def _cmd_key(ctx, args):
     """Store a key the user obtained themselves. The token is never echoed."""
     from beeagent.config.loader import save_config
-    from beeagent.providers.openai_compat import OpenAICompatProvider
     from beeagent.providers.presets import BY_NAME
 
     def persist():
@@ -566,10 +581,9 @@ def _cmd_key(ctx, args):
     token = args[1].strip()
     ctx.config.api_keys[name] = token
     if ctx.agent is not None:
-        ctx.agent.providers.register(OpenAICompatProvider(
-            base_url=endpoint.url, api_key=token,
-            model=endpoint.models[0] if endpoint.models else "gpt-4",
-            name=name, models=endpoint.models))
+        # Through the agent's factory, so an endpoint with its own provider class
+        # keeps the behaviour that class carries.
+        ctx.agent.attach_preset(name, token)
         ctx.agent.ready_presets = list(dict.fromkeys(list(ctx.agent.ready_presets) + [name]))
     persist()
     return _ok(L(f"🔑 saved a key for {endpoint.label} (…{token[-4:]}). Activate: /provider {name}",
@@ -843,7 +857,11 @@ def _cmd_tools(ctx, args):
 
 
 def _redact_secrets(data: dict) -> dict:
-    """`/config` output ends up in screenshots and chat logs — never print a token."""
+    """`/config` output ends up in screenshots and chat logs — never print a token.
+
+    Anything whose name says key, token or secret is reduced to its tail, so a
+    field added tomorrow is redacted by default rather than exposed by default.
+    """
     out = dict(data)
     keys = out.get("api_keys") or {}
     if keys:
@@ -853,6 +871,10 @@ def _redact_secrets(data: dict) -> dict:
         {**p, "key": f"…{str(p['key'])[-4:]}" if p.get("key") else ""}
         for p in providers
     ]
+    for name, value in list(out.items()):
+        if any(part in name.lower() for part in ("key", "token", "secret", "password")) \
+                and isinstance(value, str) and value:
+            out[name] = f"…{value[-4:]}"
     return out
 
 
@@ -1528,4 +1550,10 @@ def dispatch(ctx: ReplContext, line: str) -> CommandResult:
     handler = HANDLERS.get(name)
     if handler is None:
         return _err(f"Unknown command: /{name}. Type /help for the list.")
-    return handler(ctx, args)
+    try:
+        return handler(ctx, args)
+    except Exception as e:
+        # One command's bug must not take the conversation with it: the session
+        # is only saved when the REPL loop ends, and a traceback ends it.
+        return _err(L(f"/{name} failed: {e.__class__.__name__}: {e}",
+                      f"/{name} упал: {e.__class__.__name__}: {e}"))

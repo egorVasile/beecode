@@ -2,33 +2,51 @@ import locale
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 _FALLBACK_ENCODING = locale.getpreferredencoding(False) or "utf-8"
+
+# A command that prints half a gigabyte used to be held three times over — in the
+# pipe buffer, in the decoded string, and again in the saved session — and the
+# tokenizer then re-read all of it on every later turn. Nothing legitimate needs
+# more than this, and the model is told exactly what was dropped.
+MAX_CAPTURE = 2 * 1024 * 1024
 
 
 def shell_command(command: str) -> list[str]:
     """Wrap a command for a shell that understands &&, ~ and mkdir -p.
 
     Windows' shell=True picks cmd.exe, which chokes on POSIX syntax, so use
-    Git Bash when it is present.
+    Git Bash when it is present. `-c`, not `-lc`: a login shell runs whatever the
+    user put in ~/.bash_profile, which is code the model never asked for and
+    nobody would think to look at when a command behaved strangely.
     """
     bash = _find_bash()
     if bash:
-        return [bash, "-lc", command]
+        return [bash, "-c", command]
     return [os.environ.get("COMSPEC", "cmd.exe"), "/c", command]
 
 
 def _find_bash() -> str | None:
-    found = shutil.which("bash")
-    if found:
-        return found
-    for candidate in (
+    """A bash that shares the filesystem the file tools are using.
+
+    `shutil.which("bash")` answers first, and on a box with WSL installed that is
+    C:\\Windows\\System32\\bash.exe — a second Linux root, a second $HOME, where
+    `rm -rf ~/project` deletes something the read/write tools cannot even see.
+    """
+    system32 = os.environ.get("SystemRoot", "")
+    candidates = [
         Path(r"C:\Program Files\Git\bin\bash.exe"),
         Path(r"C:\Program Files (x86)\Git\bin\bash.exe"),
-    ):
+    ]
+    for candidate in candidates:
         if candidate.exists():
             return str(candidate)
+    found = shutil.which("bash")
+    if found and not (system32 and Path(found).parent.samefile(Path(system32))
+                      if Path(found).parent.exists() else False):
+        return found
     return None
 
 
@@ -67,32 +85,79 @@ def kill_process_tree(process) -> None:
             pass
 
 
-def run_shell(command: str, timeout: int = 60) -> subprocess.CompletedProcess:
-    argv = shell_command(command)
+def run_argv(argv: list, timeout: int = 60) -> subprocess.CompletedProcess:
+    """Run one argv with bounded output, and really stop it on timeout.
+
+    Output goes to temporary files rather than pipes: a pipe has to be drained
+    while the child writes or it deadlocks, and draining it means holding all of
+    the child's noise in memory. The files also make the size limit honest — we
+    read at most MAX_CAPTURE and say so.
+    """
     env = dict(os.environ)
     # Child processes (python, git, pip) must speak UTF-8 too, or Russian text
     # comes back as mangled cp866 bytes.
     env["PYTHONIOENCODING"] = "utf-8"
-    if not argv[0].lower().endswith("cmd.exe"):
+    if not str(argv[0]).lower().endswith("cmd.exe"):
         env["LC_ALL"] = env.get("LC_ALL") or "C.UTF-8"
-    popen_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "env": env,
+    popen_kwargs = {"env": env,
                     # A command that reads stdin must not eat the user's keystrokes.
                     "stdin": subprocess.DEVNULL}
     if os.name == "nt":
         popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         popen_kwargs["start_new_session"] = True
-    process = subprocess.Popen(argv, **popen_kwargs)
+
+    out_fd, out_path = tempfile.mkstemp(prefix="beecode-out-")
+    err_fd, err_path = tempfile.mkstemp(prefix="beecode-err-")
     try:
-        stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        kill_process_tree(process)
-        stdout, stderr = process.communicate()
-        raise subprocess.TimeoutExpired(argv, timeout, output=stdout, stderr=stderr)
-    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+        with os.fdopen(out_fd, "wb") as out_file, os.fdopen(err_fd, "wb") as err_file:
+            process = subprocess.Popen(argv, stdout=out_file, stderr=err_file,
+                                       **popen_kwargs)
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                kill_process_tree(process)
+                # Bounded, because a detached grandchild can keep the redirect
+                # open and wait() would sit there forever with the agent frozen.
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                raise
+        return subprocess.CompletedProcess(argv, process.returncode,
+                                           _read_capped(out_path), _read_capped(err_path))
+    finally:
+        for path in (out_path, err_path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def _read_capped(path: str) -> bytes:
+    with open(path, "rb") as handle:
+        return handle.read(MAX_CAPTURE + 1)[:MAX_CAPTURE + 1]
+
+
+def run_shell(command: str, timeout: int = 60) -> subprocess.CompletedProcess:
+    return run_argv(shell_command(command), timeout=timeout)
 
 
 def run_text(command: str, timeout: int = 60) -> tuple[str, str, int]:
     """Run a command and return (stdout, stderr, returncode) as decoded text."""
     result = run_shell(command, timeout=timeout)
     return decode(result.stdout), decode(result.stderr), result.returncode
+
+
+def run_argv_text(argv: list, timeout: int = 60) -> tuple[str, str, int]:
+    """The same, for a command that must never reach a shell."""
+    result = run_argv(argv, timeout=timeout)
+    return decode(result.stdout), decode(result.stderr), result.returncode
+
+
+def truncate_note(data: bytes) -> str:
+    """What to append when the child printed more than we keep."""
+    if len(data) <= MAX_CAPTURE:
+        return ""
+    return (f"\n… output cut at {MAX_CAPTURE // 1024} KB — redirect it to a file "
+            f"and read the part you need")

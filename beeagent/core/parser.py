@@ -71,6 +71,29 @@ def loads_lenient(payload: str):
         return json.loads(_STRAY_BACKSLASH.sub(r"\\\\", payload))
 
 
+# A backslash that begins something JSON would read as an escape — every Windows
+# path the model wrote with a single backslash, where \n, \b, \f, \r and \t are
+# real escapes and \u starts a broken one.
+_EVERY_BACKSLASH = re.compile(r'\\(?!["\\/])')
+_CONTROL_IN_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _doubled(payload: str) -> str:
+    r"""Every single backslash doubled, so it survives as a path separator."""
+    return _EVERY_BACKSLASH.sub(r"\\\\", payload)
+
+
+def _has_control_text(data) -> bool:
+    """Whether a parsed value contains a character no path or file body should."""
+    if isinstance(data, str):
+        return bool(_CONTROL_IN_TEXT.search(data))
+    if isinstance(data, dict):
+        return any(_has_control_text(value) for value in data.values())
+    if isinstance(data, list):
+        return any(_has_control_text(value) for value in data)
+    return False
+
+
 def _json_spans(text: str):
     """Every balanced {...} span, with string escapes honoured.
 
@@ -307,17 +330,39 @@ def _read_call_object(fragment: str):
         candidate = _TRAILING_COMMA.sub("", candidate.rstrip()) + closers
         notes.append(f"added the missing {closers}")
 
-    for attempt in (candidate, _STRAY_BACKSLASH.sub(r"\\\\", candidate)):
+    def _try(text: str):
         try:
-            return json.loads(attempt), notes
+            return json.loads(text)
         except (ValueError, TypeError):
-            continue
+            return None
+
+    # A Windows path written with single backslashes parses "successfully" and
+    # quietly eats the separator: C:\notes\batch.txt arrives as C:<LF>otes<BS>atch.txt,
+    # which writes the wrong file and reports the mangled name as if it were the
+    # user's. So a parse that yields a control character is not believed — the
+    # doubled-backslash reading of the same bytes is tried first.
+    strict = _try(candidate)
+    if strict is not None and not _has_control_text(strict):
+        return strict, notes
+    doubled = _try(_doubled(candidate))
+    if doubled is not None and not _has_control_text(doubled):
+        notes.append("unmangled a Windows path")
+        return doubled, notes
+    for fallback, note in ((strict, ""), (doubled, "unmangled a Windows path")):
+        if fallback is not None:
+            if note:
+                notes.append(note)
+            return fallback, notes
 
     normalized, more = _normalize_json(candidate)
-    try:
-        return json.loads(normalized), notes + [m for m in more if m not in notes]
-    except (ValueError, TypeError):
+    data = _try(normalized)
+    if data is None:
+        data = _try(_doubled(normalized))
+        if data is not None and not _has_control_text(data):
+            notes.append("unmangled a Windows path")
+    if data is None:
         return None, notes + more
+    return data, notes + [m for m in more if m not in notes]
 
 
 def _repair(fragment: str):

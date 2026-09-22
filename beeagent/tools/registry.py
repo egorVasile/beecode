@@ -23,9 +23,13 @@ class ToolRegistry:
         """
         existing = self._tools.get(tool.name)
         taken = existing is not None and existing is not tool and not replace
+        # An alias is as owned as a name: `read_directory` reaches list_directory
+        # through the alias table, so an extension registered under that name
+        # would answer every call while /tools still showed only the real tool.
+        alias_shadowed = self._aliases.get(tool.name) not in (None, tool.name)
         hijacked = [alias for alias in getattr(tool, "aliases", ())
                     if alias in self._tools and alias != tool.name]
-        if taken or hijacked:
+        if taken or hijacked or alias_shadowed:
             return False
         self._tools[tool.name] = tool
         for alias in getattr(tool, "aliases", ()):

@@ -119,23 +119,8 @@ class Agent:
         self.route_question = None
         for endpoint in ENDPOINTS:
             key = key_for(endpoint, self.config.api_keys)
-            if not key:
-                continue
-            if endpoint.name == "crax":
-                # crax-gpt answers 429 in two different meanings, and one of them
-                # needs a decision only the user can make.
-                from beeagent.providers.crax import CraxProvider
-                self.providers.register(CraxProvider(
-                    api_key=key, base_url=endpoint.url,
-                    idle_timeout=max(10, int(self.config.stream_idle_timeout or 90)),
-                    ask=lambda error: self._ask_route(error)))
-            else:
-                self.providers.register(OpenAICompatProvider(
-                    base_url=endpoint.url, api_key=key,
-                    model=endpoint.models[0] if endpoint.models else "gpt-4",
-                    name=endpoint.name, models=endpoint.models,
-                ))
-            self.ready_presets.append(endpoint.name)
+            if key:
+                self.attach_preset(endpoint.name, key)
 
         # A pool the operator runs. Registered as soon as its address is known —
         # with no seat yet the provider answers "run /pool enroll" instead of
@@ -355,6 +340,38 @@ class Agent:
         if callback:
             callback("model_switched", {"from": wanted, "to": model})
         return model
+
+    def preset_provider(self, name: str, key: str):
+        """Build the provider for a preset endpoint, with the class that fits it.
+
+        One factory, because `/key <name>` used to build a generic OpenAI client
+        for every name — which replaced crax's provider (two kinds of 429, key
+        rotation, the question it asks) with a plain one, and sent a comma-separated
+        list of keys as a single bearer token.
+        """
+        from beeagent.providers.presets import BY_NAME
+        endpoint = BY_NAME.get(name)
+        if endpoint is None:
+            return None
+        idle = max(10, int(self.config.stream_idle_timeout or 90))
+        if name == "crax":
+            from beeagent.providers.crax import CraxProvider
+            return CraxProvider(api_key=key, base_url=endpoint.url, idle_timeout=idle,
+                                ask=self._ask_route)
+        from beeagent.providers.openai_compat import OpenAICompatProvider
+        return OpenAICompatProvider(base_url=endpoint.url, api_key=key,
+                                    model=endpoint.models[0] if endpoint.models else "gpt-4",
+                                    name=name, models=endpoint.models)
+
+    def attach_preset(self, name: str, key: str) -> bool:
+        """Register (or re-register) a preset endpoint after a key change."""
+        provider = self.preset_provider(name, key)
+        if provider is None:
+            return False
+        self.providers.register(provider, replace=True)
+        if name not in self.ready_presets:
+            self.ready_presets.append(name)
+        return True
 
     async def _ask_route(self, error):
         """Hand a rate limit to whoever is showing the interface.

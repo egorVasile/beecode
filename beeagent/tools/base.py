@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass, field
 from inspect import signature
 
@@ -22,10 +23,28 @@ def read_text_preserving(path) -> str:
 
 
 def write_text_preserving(path, text: str) -> int:
-    """Write UTF-8 text verbatim; returns the byte count, not the character count."""
-    with open(path, "w", encoding="utf-8", newline="") as handle:
-        written = handle.write(text)
-    return len(text.encode("utf-8")) if written is None else written
+    """Write UTF-8 text verbatim through a temporary file; byte count, not char count.
+
+    `open(path, "w")` truncates the target before a single byte is verified, so a
+    Ctrl+C, a full disk or a killed worker thread turned "edit this file" into
+    "delete this file". Writing beside it and renaming is the only sequence where
+    the original is still there if we fail.
+    """
+    target = str(path)
+    tmp = target + ".beecode-tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as handle:
+            written = handle.write(text)
+            handle.flush()
+        size = len(text.encode("utf-8")) if written is None else written
+        os.replace(tmp, target)
+        return size
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 class BaseTool:
     name: str = ""
@@ -36,6 +55,10 @@ class BaseTool:
     # Set for anything a plugin or MCP server provided: its own `is_safe()` is a
     # claim we do not trust, and permissions treat it as unsafe until granted.
     from_extension: bool = False
+    # Whether running this tool leaves a byte changed on disk. `is_safe()` means
+    # "only reads"; this one means "even a tool that is safe to look with writes",
+    # which is what /permissions readonly has to refuse.
+    writes_files: bool = False
 
     def execute(self, **kwargs) -> ToolResult:
         raise NotImplementedError

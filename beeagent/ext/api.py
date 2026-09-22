@@ -80,8 +80,11 @@ class ExtensionAPI:
         clean = name.lstrip("/")
         existing = next((c for c in core.COMMANDS if c.name == clean), None)
         if existing is not None and existing.category != "plugins":
-            self.registry.add("command", clean, self.plugin, L("refused: name taken",
-                                                              "отказ: имя занято"))
+            # Recorded under its own kind: `clear()` removes the commands an
+            # extension added, and a refusal is not one of those — filed here as
+            # "command" it would delete the core command on the next reload.
+            self.registry.add("command-refused", clean, self.plugin, L("refused: name taken",
+                                                                       "отказ: имя занято"))
             return False
         # A command another extension registered earlier is replaced, not
         # refused: a second Agent in this process loads the same plugins again,
