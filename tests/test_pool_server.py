@@ -292,3 +292,54 @@ def test_a_client_without_a_seat_is_told_to_enroll(pool):
     with pytest.raises(Exception) as raised:
         asyncio.run(provider.chat([{"role": "user", "content": "х"}], "m"))
     assert "/pool enroll" in str(raised.value)
+
+
+def test_a_key_that_spent_todays_ceiling_is_not_offered_again(pool):
+    """One account walking into the provider's own daily wall is the failure that
+    costs the key, so the pool stops using it first — and when all of them are
+    spent it says so with the wait until midnight, not a retry every few seconds."""
+    def keys_of(report):
+        return sorted(k["used_today"] for k in report["keys"])
+
+    with httpx.Client() as client:
+        token = enroll(client, pool.base)
+        ceiling = client.post(pool.base + "/v1/admin/key_ceiling",
+                              json={"provider": "groq", "tokens": 1},
+                              headers={"X-Admin": "admin-secret"})
+        assert ceiling.status_code == 200, "the route is not swallowed by the seat /limit"
+
+        assert complete(client, pool.base, token).status_code == 200
+        report = client.get(pool.base + "/v1/pool", headers={"X-Admin": "admin-secret"}).json()
+        used = keys_of(report)
+        assert used[0] == 0 and used[1] > 0, "the second account was not touched"
+
+        assert complete(client, pool.base, token).status_code == 200
+        report = client.get(pool.base + "/v1/pool", headers={"X-Admin": "admin-secret"}).json()
+        assert min(keys_of(report)) >= 1, report["keys"]
+
+        spent = complete(client, pool.base, token)
+        assert spent.status_code == 429
+        assert "ceiling" in spent.json()["error"]
+        assert spent.json()["resets_in_seconds"] > 60, "the wait is until midnight"
+        assert len(pool.calls) == 2, "a spent pool must not knock on the provider again"
+
+
+def test_the_ceiling_rolls_over_with_the_day(pool, monkeypatch):
+    """A key is skipped on `day = today`, so a row written yesterday has spent
+    nothing — and the report has to agree, or the operator sees a spent pool."""
+    with httpx.Client() as client:
+        token = enroll(client, pool.base)
+        complete(client, pool.base, token)
+        client.post(pool.base + "/v1/admin/key_ceiling", json={"provider": "groq", "tokens": 1},
+                    headers={"X-Admin": "admin-secret"})
+        monkeypatch.setattr(pool_server, "today", lambda: "1999-01-01")
+        assert pool_server.at_today_ceiling("groq") is False
+        assert complete(client, pool.base, token).status_code == 200, "a new day, a usable key"
+
+
+def test_one_number_can_give_every_key_the_same_ceiling(pool, monkeypatch):
+    monkeypatch.setenv("BEECODE_POOL_KEY_CEILING", "50")
+    pool_server.sync_keys()
+    with httpx.Client() as client:
+        report = client.get(pool.base + "/v1/pool", headers={"X-Admin": "admin-secret"}).json()
+    assert [k["daily_limit"] for k in report["keys"]] == [50, 50]
