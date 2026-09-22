@@ -193,6 +193,12 @@ def _cached_models(name: str, fetch, allow_fetch: bool, fallback: list[str]) -> 
     return models
 
 
+async def _off_loop(fn):
+    """A blocking call, kept off the loop that draws the interface."""
+    import asyncio
+    return await asyncio.to_thread(fn)
+
+
 def available_models(ctx: ReplContext, fetch: bool = False) -> list[str]:
     """The models of the provider that is currently selected."""
     agent = ctx.agent
@@ -205,7 +211,16 @@ def available_models(ctx: ReplContext, fetch: bool = False) -> list[str]:
         return []
     discover = getattr(provider, "discover_models", None)
     if callable(discover):
-        return list(discover())
+        if name == "g4f":
+            # g4f assembles its catalogue from the installed package: no request,
+            # nothing to cache. Every other `discover_models` is an HTTP GET on an
+            # endpoint that counts it against a per-minute limit, so it goes
+            # through the same hour-old cache as the rest and only runs when the
+            # user asked for the list — chat is the only thing that leaves.
+            return list(discover())
+        declared = list(getattr(provider, "models", None) or [])
+        return _cached_models(name, lambda: _off_loop(discover),
+                              allow_fetch=fetch, fallback=declared)
     list_models = getattr(provider, "list_models", None)
     if callable(list_models):
         declared = list(getattr(provider, "models", None) or [])

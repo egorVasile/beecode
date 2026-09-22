@@ -145,3 +145,30 @@ def test_g4f_models_show_upstream_and_filter():
     assert "served by" in filtered
     empty = dispatch(ctx, "/models zzz-no-such-model")
     assert "nothing matches" in _text(empty).lower()
+
+
+def test_a_catalogue_behind_a_request_is_read_from_the_cache_like_every_other():
+    """crax lists its models over HTTP, on an endpoint with a per-minute limit per
+    address. Completion runs on every keystroke, so a keystroke must not spend one."""
+    from beeagent.core.agent import Agent
+
+    config = BeeConfig(provider="crax", api_keys={"crax": "crk_live_test"})
+    agent = Agent(config=config)
+    provider = agent.providers.get("crax")
+    ctx = _ctx(config=config, agent=agent)
+
+    def refusing():
+        raise AssertionError("completion must not hit the network")
+
+    def discover(fn):
+        # An instance attribute, so the class is untouched for the next test.
+        provider.__dict__["discover_models"] = fn
+
+    discover(refusing)
+    assert available_models(ctx) == list(provider.models), "the static list answers"
+
+    discover(lambda: ["qwen3.8-max", "gpt-5-6-luna"])
+    assert available_models(ctx, fetch=True) == ["qwen3.8-max", "gpt-5-6-luna"]
+
+    discover(refusing)
+    assert available_models(ctx) == ["qwen3.8-max", "gpt-5-6-luna"], "the cache answers now"
