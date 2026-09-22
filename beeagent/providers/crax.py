@@ -9,9 +9,9 @@ of this provider, because the fix is opposite for each:
   midnight. Another key, which is another account, does.
 
 So the rotation only spends spare keys on the second kind, and on the first it
-asks instead of pretending: wait, or take the route through the pool relay if the
-user configured one. Nothing is switched on by itself — a VPN command is shown in
-full and runs only after the user pressed "yes".
+asks instead of pretending: wait out the seconds the endpoint named, or raise the
+address with the user's own command. Nothing is switched on by itself — a command
+is shown in full and runs only after the user pressed "yes".
 """
 from __future__ import annotations
 
@@ -124,8 +124,6 @@ class CraxProvider(BaseProvider):
             if answer == "wait":
                 await _sleep(error.retry_after or 5)
                 return
-            if answer == "relay":
-                raise CraxError("relay", "route this request through the pool", retry_after=0)
             raise CraxError("ip", L(
                 f"crax-gpt is limiting this IP — wait {error.retry_after or 60}s",
                 f"crax-gpt ограничил этот IP — подожди {error.retry_after or 60} с"),
