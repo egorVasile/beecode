@@ -114,15 +114,27 @@ class Agent:
         # when a key exists, so /providers can show what is ready to use.
         from beeagent.providers.presets import ENDPOINTS, key_for
         self.ready_presets: list[str] = []
+        # The UI installs this to ask the user what to do about a rate limit;
+        # with no UI around, the answer is "wait it out".
+        self.route_question = None
         for endpoint in ENDPOINTS:
             key = key_for(endpoint, self.config.api_keys)
             if not key:
                 continue
-            self.providers.register(OpenAICompatProvider(
-                base_url=endpoint.url, api_key=key,
-                model=endpoint.models[0] if endpoint.models else "gpt-4",
-                name=endpoint.name, models=endpoint.models,
-            ))
+            if endpoint.name == "crax":
+                # crax-gpt answers 429 in two different meanings, and one of them
+                # needs a decision only the user can make.
+                from beeagent.providers.crax import CraxProvider
+                self.providers.register(CraxProvider(
+                    api_key=key, base_url=endpoint.url,
+                    idle_timeout=max(10, int(self.config.stream_idle_timeout or 90)),
+                    ask=lambda error: self._ask_route(error)))
+            else:
+                self.providers.register(OpenAICompatProvider(
+                    base_url=endpoint.url, api_key=key,
+                    model=endpoint.models[0] if endpoint.models else "gpt-4",
+                    name=endpoint.name, models=endpoint.models,
+                ))
             self.ready_presets.append(endpoint.name)
 
         # A pool the operator runs. Registered as soon as its address is known —
@@ -343,6 +355,20 @@ class Agent:
         if callback:
             callback("model_switched", {"from": wanted, "to": model})
         return model
+
+    async def _ask_route(self, error):
+        """Hand a rate limit to whoever is showing the interface.
+
+        With no UI around — one-shot mode, a plugin driving the agent — there is
+        nobody to ask, so the only safe answer is to wait out what the endpoint
+        said and try again.
+        """
+        if self.route_question is None:
+            return "wait" if getattr(error, "retry_after", 0) else None
+        try:
+            return await self.route_question(error)
+        except Exception:
+            return "wait"
 
     async def run(self, user_input: str, session: Session = None, callback=None) -> str:
         session = session or Session()

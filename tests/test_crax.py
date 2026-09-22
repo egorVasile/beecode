@@ -1,0 +1,165 @@
+"""crax-gpt answers 429 in two meanings; the provider must not mix them up.
+
+A fake endpoint on localhost speaks the documented shape — OpenAI error envelope,
+`Retry-After`, `daily_limit_exceeded` — so these tests fail if the provider ever
+starts treating "another key" as a cure for an IP limit.
+"""
+import asyncio
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import pytest
+
+from beeagent.providers.crax import CraxError, CraxProvider, keys_from
+
+
+class Fake:
+    """A stand-in for gpt.crax.lol that replays a script and remembers requests.
+
+    A script entry is (status, body, headers) for JSON, or
+    (status, [chunk, ...], headers, True) for a streamed answer.
+    """
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.requests = []
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length) or b"{}")
+                outer.requests.append({"body": body, "auth": self.headers.get("Authorization")})
+                status, payload, headers, streaming = (outer.script.pop(0) if outer.script
+                                                       else (200, {"choices": [{"message":
+                                                              {"content": "жужж"}}]}, {}, False))
+                if streaming:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.end_headers()
+                    for piece in payload:
+                        self.wfile.write(("data: " + json.dumps(piece) + "\n\n").encode())
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    return
+                data = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                for key, value in headers.items():
+                    self.send_header(key, value)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"
+
+    def close(self):
+        self.server.shutdown()
+
+
+@pytest.fixture()
+def make_endpoint(request):
+    def make(script):
+        endpoint = Fake(script)
+        request.addfinalizer(endpoint.close)
+        return endpoint
+
+    return make
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+def test_several_keys_are_written_as_one_config_value():
+    assert keys_from("a, b,,c") == ["a", "b", "c"]
+    assert keys_from("") == []
+
+
+def test_a_daily_allowance_moves_to_the_next_account(make_endpoint):
+    endpoint = make_endpoint([
+        (429, {"error": {"message": "daily_limit_exceeded", "type": "daily_limit_exceeded"}},
+         {"Retry-After": "3600"}, False),
+        (200, {"choices": [{"message": {"content": "со второго ключа"}}]}, {}, False),
+    ])
+    provider = CraxProvider(api_key="crk_live_one,crk_live_two", base_url=endpoint.url)
+
+    answer = run(provider.chat([{"role": "user", "content": "привет"}], "qwen3.8-max"))
+
+    assert answer == "со второго ключа"
+    assert [r["auth"] for r in endpoint.requests] == ["Bearer crk_live_one", "Bearer crk_live_two"]
+    assert provider._usable() == [(1, "crk_live_two")], "the spent account is put aside"
+
+
+def test_an_ip_limit_asks_the_user_and_another_key_is_not_tried(make_endpoint):
+    asked = []
+
+    async def ask(error):
+        asked.append(error)
+        return "wait"
+
+    endpoint = make_endpoint([
+        (429, {"error": {"message": "Too many requests", "type": "rate_limit_exceeded"}},
+         {"Retry-After": "1"}, False),
+        (200, {"choices": [{"message": {"content": "со того же ключа"}}]}, {}, False),
+    ])
+    provider = CraxProvider(api_key="crk_live_one,crk_live_two", base_url=endpoint.url, ask=ask)
+
+    answer = run(provider.chat([{"role": "user", "content": "привет"}], "m"))
+
+    assert answer == "со того же ключа"
+    assert asked and asked[0].kind == "ip" and asked[0].retry_after == 1
+    assert [r["auth"] for r in endpoint.requests] == ["Bearer crk_live_one"] * 2, \
+        "a per-IP limit is not cured by another account"
+
+
+def test_declining_the_wait_ends_the_attempt(make_endpoint):
+    async def ask(error):
+        return None
+
+    endpoint = make_endpoint([
+        (429, {"error": {"type": "rate_limit_exceeded"}}, {"Retry-After": "5"}, False)])
+    provider = CraxProvider(api_key="crk_live_one", base_url=endpoint.url, ask=ask)
+
+    with pytest.raises(CraxError) as raised:
+        run(provider.chat([{"role": "user", "content": "х"}], "m"))
+    assert raised.value.kind == "ip"
+
+
+def test_a_rejected_key_says_where_to_put_the_key(make_endpoint):
+    endpoint = make_endpoint([
+        (401, {"error": {"message": "Authentication required", "type": "auth_required"}},
+         {}, False)])
+    provider = CraxProvider(api_key="crk_live_wrong", base_url=endpoint.url)
+
+    with pytest.raises(CraxError) as raised:
+        run(provider.chat([{"role": "user", "content": "х"}], "m"))
+    assert raised.value.kind == "auth"
+    assert "/key crax" in str(raised.value)
+
+
+def test_no_key_at_all_is_not_reported_as_a_network_problem():
+    provider = CraxProvider(api_key="", base_url="http://127.0.0.1:1/v1")
+    with pytest.raises(CraxError) as raised:
+        run(provider.chat([{"role": "user", "content": "х"}], "m"))
+    assert raised.value.kind == "auth"
+
+
+def test_streaming_keeps_answer_and_reasoning_apart(make_endpoint):
+    thinking = {"choices": [{"delta": {"reasoning_content": "думаю"}}]}
+    saying = {"choices": [{"delta": {"content": "раз"}}]}
+    endpoint = make_endpoint([(200, [thinking, saying], {}, True)])
+    provider = CraxProvider(api_key="crk_live_one", base_url=endpoint.url)
+
+    async def collect():
+        return [pair async for pair in provider.chat_stream([{"role": "user", "content": "х"}], "m")]
+
+    assert run(collect()) == [("reasoning", "думаю"), ("content", "раз")]
+    assert endpoint.requests[0]["body"]["include_reasoning"] is True
+    assert endpoint.requests[0]["body"]["stream"] is True

@@ -99,6 +99,16 @@ ENDPOINTS = (
         free="trial credits on signup; the serverless catalog is pay-per-token",
         models=("deepseek-ai/DeepSeek-R1", "meta-llama/Llama-3.3-70B-Instruct"),
     ),
+    Endpoint(
+        # Two different 429s: a per-IP rate limit and a daily per-account
+        # allowance. `crax` is served by its own provider for that reason —
+        # see beeagent/providers/crax.py.
+        name="crax", label="crax-gpt",
+        url="https://gpt.crax.lol/v1", env="CRAX_API_KEY",
+        signup="https://gpt.crax.lol — Settings → API keys",
+        free="40 req/min per IP and a daily token allowance per account",
+        models=("qwen3.8-max",),
+    ),
 )
 
 

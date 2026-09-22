@@ -42,6 +42,9 @@ class BeeConfig(BaseModel):
     # gave this install. No API key lives here — that is the point of the pool.
     pool_url: str = ""
     pool_token: str = ""
+    # A command that changes this machine's exit address (a VPN client's CLI).
+    # BeeCode only runs it after the user pressed "yes", and shows it verbatim.
+    vpn_command: str = ""
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     economy: EconomyConfig = Field(default_factory=EconomyConfig)
     # Interface slots: frame / banner / spinner / stream. "none" is a valid

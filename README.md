@@ -265,6 +265,14 @@ model and wins over any name-based guess.
 | `nvidia` | build.nvidia.com | free credits without a card, wide open-model catalog |
 | `deepinfra` | deepinfra.com | trial credits on signup, pay-per-token after |
 | `together` | api.together.xyz/settings/api-keys | one-time credit, some open models free |
+| `crax` | gpt.crax.lol → Settings → API keys | OpenAI-compatible catalog; 40 req/min per IP, daily allowance per account |
+
+`crax` is the one endpoint that answers `429` with two different problems, and
+BeeCode separates them: a spent **daily allowance** moves to the next key (another
+account), because waiting until midnight does not; a **per-IP** limit does not
+care how many keys you have, so it stops and asks — wait it out, or raise your own
+`vpn_command`, which is printed in full and runs only after you press the button.
+Several keys go in one line: `/key crax crk_live_a,crk_live_b`.
 
 Keys are read from `beeagent.json` (`api_keys`) or the matching environment
 variable, and `beeagent.json` is gitignored — the repository ships

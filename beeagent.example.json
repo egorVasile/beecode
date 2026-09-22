@@ -9,6 +9,7 @@
   "api_keys": {},
   "pool_url": "",
   "pool_token": "",
+  "vpn_command": "",
   "permissions": {
     "mode": "ask",
     "allowed": []

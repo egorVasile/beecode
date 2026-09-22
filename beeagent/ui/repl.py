@@ -396,6 +396,59 @@ async def _run_update() -> None:
               "обновление не дошло — /doctor скажет, что не так")
 
 
+async def _ask_route(agent, error):
+    """Ask what to do about a per-IP limit. Only the user knows their options.
+
+    A daily allowance is not asked about: waiting does not fix it, and the
+    provider already moved to the next key. An IP limit is different — it lifts
+    by itself in seconds, or by leaving through another address — so the question
+    is worth putting on screen, with the command shown before anything runs it.
+    """
+    import subprocess
+
+    from beeagent.i18n import L
+
+    config = getattr(agent, "config", None)
+    wait = int(getattr(error, "retry_after", 0) or 0) or 60
+    command = (getattr(config, "vpn_command", "") if config else "").strip()
+
+    if command:
+        answer = await yes_no_dialog(
+            title=brand_ramp(" 🐝 лимит по IP "),
+            text=L(f"crax-gpt stopped answering this IP address. Waiting {wait}s works, "
+                   f"but you can change the address with your own command:\n\n    {command}\n\n"
+                   "BeeCode runs it and repeats the request. Agree?",
+                   f"crax-gpt перестал отвечать на этот IP. Подождать {wait} с — рабочий вариант, "
+                   f"но можно сменить адрес своей командой:\n\n    {command}\n\n"
+                   "BeeCode её запустит и повторит запрос. Согласен?"),
+            yes_text=L("Run it", "Запустить"), no_text=L("Just wait", "Просто подождать"),
+            style=BEE_DIALOG_STYLE).run_async()
+        if not answer:
+            return "wait"
+        _note("🔌", f"running: {command}", f"выполняю: {command}")
+        try:
+            done = await asyncio.to_thread(subprocess.run, command, shell=True,
+                                           capture_output=True, text=True, timeout=90)
+            if done.returncode != 0:
+                _note("⚠️", f"the command exited with {done.returncode}: "
+                            f"{(done.stderr or done.stdout or '').strip()[:120]}",
+                      f"команда завершилась кодом {done.returncode}: "
+                      f"{(done.stderr or done.stdout or '').strip()[:120]}")
+        except Exception as e:
+            _note("⚠️", f"the command did not run: {e}", f"команда не запустилась: {e}")
+        return "wait" if wait else None
+
+    answer = await yes_no_dialog(
+        title=brand_ramp(" 🐝 лимит по IP "),
+        text=L(f"crax-gpt is limiting this IP address. Nothing is wrong with BeeCode — "
+               f"the endpoint asks for {wait}s of quiet.\n\nWait and repeat the request?",
+               f"crax-gpt ограничил этот IP. С BeeCode всё в порядке — эндпоинт просит "
+               f"тишины {wait} с.\n\nПодождать и повторить запрос?"),
+        yes_text=L("Wait", "Подождать"), no_text=L("Stop", "Отменить"),
+        style=BEE_DIALOG_STYLE).run_async()
+    return "wait" if answer else None
+
+
 async def run_repl(agent, config, session=None):
     from beeagent.core import updater
     from beeagent.core.session import Session
@@ -403,6 +456,8 @@ async def run_repl(agent, config, session=None):
     ctx = ReplContext(agent=agent, config=config, session=session or Session())
     updater.start(getattr(agent, "workdir", ".") or ".")
     asked_about_update = False
+    # The provider asks the user about a rate limit only through this hook.
+    agent.route_question = lambda error: _ask_route(agent, error)
 
     prompt_session: PromptSession = PromptSession(
         completer=BeeCompleter(ctx),
