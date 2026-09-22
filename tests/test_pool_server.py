@@ -184,6 +184,31 @@ def test_a_prompt_bigger_than_the_pool_accepts_is_refused_before_parsing(pool):
         assert response.status_code == 413
 
 
+def test_the_pool_forwards_chat_completions_and_nothing_else(pool):
+    """Image, video, audio and embedding calls are what gets an account reported,
+    so they are refused by name — before a key is leased and before the provider
+    is picked, which is why a valid `pool_provider` does not open the door."""
+    with httpx.Client() as client:
+        token = enroll(client, pool.base)
+        for model in ("seedream-5", "qwen-image-2.0-pro", "qwen-video",
+                      "text-embedding-3-small", "whisper-1", "tts-1"):
+            before = len(pool.calls)
+            answer = complete(client, pool.base, token, model=model)
+            assert answer.status_code == 400, model
+            assert "chat completions only" in answer.json()["error"], model
+            assert len(pool.calls) == before, f"{model} reached the upstream"
+
+
+def test_a_chat_model_is_not_collateral_of_the_refusal(pool):
+    """The refusal matches shapes, not letters: the same name that carries a real
+    chat model must still be served, or the filter would starve the pool."""
+    with httpx.Client() as client:
+        token = enroll(client, pool.base)
+        answer = complete(client, pool.base, token, model="deepseek-v4")
+        assert answer.status_code == 200
+        assert pool.calls[-1]["body"]["model"] == "deepseek-v4"
+
+
 def test_admin_endpoints_need_the_admin_token(pool):
     with httpx.Client() as client:
         assert client.get(pool.base + "/v1/pool").status_code == 403

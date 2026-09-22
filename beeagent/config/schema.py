@@ -27,6 +27,10 @@ class BeeConfig(BaseModel):
     model: str = "command-a-03-2025"
     provider: str = "g4f"
     mode: str = "normal"  # "normal" | "economy"
+    # Endpoints that accept tool calls as data (OpenAI-shaped `tools`) are
+    # asked that way: no JSON in prose, no catalog in the prompt, nothing for
+    # the text parser to repair. Turn it off to force the old protocol.
+    native_tools: bool = True
     language: str = "en"  # "en" | "ru"
     max_turns: int = 50
     # 0 = take the window from the model; otherwise a ceiling in tokens.

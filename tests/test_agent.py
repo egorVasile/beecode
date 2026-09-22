@@ -577,3 +577,86 @@ def test_a_cached_answer_is_recorded_in_the_session(tmp_path):
     assert second == "первый раз", "the cached reply should be served"
     assert [m.role for m in second_session.messages] == ["user", "assistant"], \
         "a cached answer still has to land in the transcript"
+
+
+def test_a_native_answer_still_reaches_the_interface_that_prints_from_the_stream():
+    """An endpoint that takes the calls as data answers once, without a stream.
+
+    Both interfaces flush the text they buffered when "done" arrives — so a turn
+    that never buffered anything prints nothing, and the user watches a silent
+    agent that did all the work. The answer has to travel as a stream delta.
+    """
+    import asyncio
+    import json
+
+    class Native:
+        name = "native"
+        supports_tools = True
+
+        def __init__(self):
+            self.seen = []
+
+        async def complete(self, messages, model="", tools=None):
+            self.seen.append({"messages": messages, "tools": tools})
+            return {"text": "сорок два", "tool_calls": []}
+
+        async def chat(self, messages, model=""):
+            raise AssertionError("a native endpoint is not asked for a stream")
+
+        async def chat_stream(self, messages, model=""):
+            raise AssertionError("a native endpoint is not asked for a stream")
+            yield ""
+
+    agent = Agent(config=BeeConfig(model="some-model"))
+    endpoint = Native()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    events = []
+
+    answer = asyncio.run(agent.run("сколько будет?", session=Session(),
+                                   callback=lambda e, d: events.append((e, d))))
+
+    assert answer == "сорок два"
+    streamed = "".join(d["text"] for e, d in events if e == "stream_delta")
+    assert streamed == "сорок два", "the UI prints what it buffered, not the return value"
+    assert ("done", {"text": "сорок два"}) in events
+
+    prompt = json.dumps(endpoint.seen[0]["messages"], ensure_ascii=False)
+    assert "format_tool_prompt" not in prompt
+    assert '"tool":' not in prompt, "the catalog must not ride along as prose"
+    assert endpoint.seen[0]["tools"], "the schemas travel in the tools field instead"
+
+
+def test_a_native_call_runs_the_tool_without_the_parser(tmp_path, monkeypatch):
+    """The point of native calling: a call is data, so there is nothing to repair."""
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)      # tools resolve relative paths from the cwd
+    (tmp_path / "note.txt").write_text("сорок два", encoding="utf-8")
+
+    class CallsOnce:
+        name = "calls-once"
+        supports_tools = True
+
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, messages, model="", tools=None):
+            self.calls += 1
+            if self.calls == 1:
+                return {"text": "", "tool_calls": [{"tool": "read", "args": {"path": "note.txt"}}]}
+            return {"text": "в файле 42", "tool_calls": []}
+
+    agent = Agent(config=BeeConfig(model="m"))
+    endpoint = CallsOnce()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    events = []
+
+    answer = asyncio.run(agent.run("прочитай note.txt", session=Session(),
+                                   callback=lambda e, d: events.append((e, d))))
+
+    assert answer == "в файле 42"
+    started = [d for e, d in events if e == "tool_start"]
+    assert started and started[0]["tool"] == "read", "the call reached the tool"
+    assert "tool_repaired" not in [e for e, _ in events], "data needs no repair"

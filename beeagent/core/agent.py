@@ -36,7 +36,7 @@ from beeagent.core.session import Session
 from beeagent.core.context import ContextManager
 from beeagent.core.economy import EconomyManager
 from beeagent.core.permissions import Permissions
-from beeagent.core.parser import CommandParser
+from beeagent.core.parser import CommandParser, ParsedCommand, ParsedResponse
 
 
 # How often to reassure the user that a slow endpoint is still being waited on.
@@ -423,7 +423,13 @@ class Agent:
                 tool_schemas = self.tools.to_schemas()
                 self.context.skills_section = self.plugins.skills_prompt_section()
                 self.context.permissions_section = self.permissions.prompt_section(self.tools)
-                messages = self.context.build_messages(session.to_dicts(), tool_schemas)
+                # A provider that takes the calls natively gets the schemas in the
+                # request's `tools` field; repeating them as prose in the system
+                # prompt is the single biggest thing we spend tokens on.
+                native = (bool(getattr(provider, "supports_tools", False))
+                          and self.config.native_tools)
+                messages = self.context.build_messages(session.to_dicts(), tool_schemas,
+                                                        native=native)
                 if nudge_pending:
                     # The reminder rides on this request only: history stays the
                     # conversation the user actually had.
@@ -451,7 +457,25 @@ class Agent:
                 # nothing.
 
                 try:
-                    response = await self._stream_response(provider, messages, callback, model)
+                    if native:
+                        answer = await provider.complete(messages, model, tool_schemas)
+                        response = answer.get("text") or ""
+                        calls = answer.get("tool_calls") or []
+                        # The answer arrives as one object, but both interfaces
+                        # render from the stream: they flush what they buffered when
+                        # "done" comes, and they buffer nothing here. So the text is
+                        # handed over the same way a streamed answer arrives, or the
+                        # user watches a silent turn.
+                        if callback and response:
+                            callback("stream_delta", {"text": response})
+                        parsed = ParsedResponse(
+                            text=response,
+                            commands=[ParsedCommand(str(c.get("tool", "")),
+                                                    c.get("args") or {}) for c in calls],
+                            has_commands=bool(calls))
+                    else:
+                        response = await self._stream_response(provider, messages, callback, model)
+                        parsed = self.parser.parse(response)
                 except Exception as e:
                     error_msg = f"Error calling provider: {e}"
                     if callback:
@@ -459,8 +483,6 @@ class Agent:
                     return error_msg
 
                 self.economy.request_count += 1
-
-                parsed = self.parser.parse(response)
 
                 if parsed.repaired:
                     # Say it out loud: a call fixed in silence teaches the model

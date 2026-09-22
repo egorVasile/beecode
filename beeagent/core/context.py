@@ -17,6 +17,27 @@ import re
 from beeagent.i18n import L
 from beeagent.utils.tokens import count_tokens
 
+# The short sibling of SYSTEM_PROMPT, for a provider that takes tool calls as
+# data. The long one spends 6.3 KB telling the model how to write a JSON block
+# and what the tools are — both of which the `tools` field already carries. It is
+# not only a token question: this endpoint's front end rejects a request over
+# roughly 6 KB once a `tools` array is in it (measured: 5.9 KB passes, 6.9 KB is
+# answered with a Cloudflare page), so the long prompt makes native calling fail.
+SYSTEM_PROMPT_NATIVE = """You are BeeCode, an autonomous AI coding agent on the user's machine.
+You are not a chatbot: you have a real terminal and real files, and you use them.
+
+- Call the tools you were given, one per turn, and wait for the result. Never write a
+  tool call as JSON in your answer.
+- NEVER say you cannot read or write files, and never ask the user to paste file
+  contents. You can. Refusing to try is the one wrong answer.
+- Read a file before you edit it, and copy the text you are replacing exactly.
+- After a tool runs, act on what came back: call another tool, or answer in plain
+  text when the task is done.
+- Do the whole task, not the first step of it. Do not narrate what you are going to
+  do instead of doing it.
+- Be short in prose. The user is reading a terminal, not an essay.
+"""
+
 SYSTEM_PROMPT = """You are BeeCode, an autonomous AI coding agent running on the user's machine.
 You are not a chatbot: you have a real terminal and real files, and you use them.
 
@@ -242,14 +263,21 @@ class ContextManager:
     def max_tokens(self, value: int):
         self._window_cap = value
 
-    def build_messages(self, session_messages: list[dict], tool_schemas: list[dict]) -> list[dict]:
+    def build_messages(self, session_messages: list[dict], tool_schemas: list[dict],
+                       native: bool = False) -> list[dict]:
         from beeagent.core.parser import CommandParser
 
         parser = CommandParser()
 
-        # Tool catalog as a compact, explicit contract.
-        tool_prompt = parser.format_tool_prompt(tool_schemas)
-        base = SYSTEM_PROMPT + "\n" + tool_prompt
+        # With a provider that takes the calls natively, the schemas travel in the
+        # request's `tools` field: repeating them as prose costs ~1.4k tokens a turn
+        # and, on this endpoint, pushes the body over the size its front end accepts
+        # once a tools array is in it. So the native prompt is the short one.
+        if native:
+            base = SYSTEM_PROMPT_NATIVE
+        else:
+            catalog = parser.format_tool_prompt(tool_schemas)
+            base = SYSTEM_PROMPT + "\n" + catalog
         if self.skills_section:
             base += "\n\n" + self.skills_section
         if self.permissions_section:
@@ -261,7 +289,7 @@ class ContextManager:
             # On a small window it is the catalog that does not fit, not the
             # conversation. A negative budget used to clip the user's own
             # message down to a couple of tokens and report nothing as trimmed.
-            base = SYSTEM_PROMPT + "\n" + tool_prompt
+            base = SYSTEM_PROMPT_NATIVE if native else SYSTEM_PROMPT + "\n" + catalog
             budget = self.max_tokens - self._cost(base) - self._cost(REMINDER_SUFFIX)
         budget = max(budget, MIN_HISTORY_BUDGET)
 

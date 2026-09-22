@@ -15,6 +15,7 @@ is shown in full and runs only after the user pressed "yes".
 """
 from __future__ import annotations
 
+import json
 import time
 from typing import AsyncIterator, Callable, Optional
 
@@ -25,6 +26,19 @@ from .base import BaseProvider
 BASE_URL = "https://gpt.crax.lol/v1"
 CONNECT_TIMEOUT = 10.0
 KEY_COOLDOWN = 90.0           # a spent-for-the-day account is not retried this hour
+
+# The same list the pool server keeps. An endpoint that also sells image, video
+# and audio generation will answer for those models, and a coding agent has no
+# use for the answer — but the request is still spent, and it is the kind of
+# request an account owner gets reported for. So they are never even offered:
+# the picker shows chat models, and the pool refuses anything else that arrives.
+NON_CHAT = ("image", "video", "seedream", "dall-e", "whisper", "tts", "embedding",
+            "moderation", "realtime")
+
+
+def is_chat_model(model: str) -> bool:
+    name = (model or "").lower()
+    return not any(shape in name for shape in NON_CHAT)
 
 
 class CraxError(RuntimeError):
@@ -41,11 +55,15 @@ def keys_from(value: str) -> list[str]:
     return [part.strip() for part in (value or "").split(",") if part.strip()]
 
 
-def classify(status: int, body: dict, retry_after: int) -> CraxError:
+def classify(status: int, body: dict, retry_after: int, raw: str = "") -> CraxError:
     """The provider's error, in our words, with the wait it told us about."""
     error = body.get("error") if isinstance(body.get("error"), dict) else {}
     code = str(error.get("type") or error.get("code") or "").lower()
     detail = str(error.get("message") or "").strip()
+    if not detail and raw:
+        # A gateway that answers 502 with a plain body used to leave the user
+        # with "crax-gpt answered 502" and nothing to show support.
+        detail = " ".join(raw.split())[:180]
     if status == 401 or "auth" in code:
         # The endpoint's own words are "log in at the site" — useless to someone
         # holding a key. Say where the key goes.
@@ -64,8 +82,15 @@ def classify(status: int, body: dict, retry_after: int) -> CraxError:
 
 class CraxProvider(BaseProvider):
     name = "crax"
-    models = ("qwen3.8-max",)
+    # The catalogue is read from the endpoint on demand (`/pool models`, /models);
+    # asking for it on every start would be a request that is not a chat, and the
+    # whole point of these keys is that only chat goes out.
+    models = ("qwen3.8-max", "gpt-5-6-luna", "grok-code-fast-1", "deepseek-v4-flash")
     label = "crax-gpt"
+    # Verified against the endpoint: it answers `finish_reason: "tool_calls"` and
+    # accepts the OpenAI history shape back. So the tool call never has to be
+    # written as JSON inside a sentence — which is where every parser bug came from.
+    supports_tools = True
 
     def __init__(self, api_key: str = "", base_url: str = BASE_URL,
                  idle_timeout: float = 90.0, ask: Optional[Callable] = None):
@@ -75,6 +100,129 @@ class CraxProvider(BaseProvider):
         self.spent: dict[int, float] = {}      # key index -> retry not before
         # The REPL installs this: it is the only place allowed to ask a question.
         self.ask = ask
+
+    # --- the native protocol ------------------------------------------------
+
+    @staticmethod
+    def to_openai_tools(schemas: list[dict], max_description: int = 240) -> list[dict]:
+        """Our tool descriptions as OpenAI's, so the endpoint can call them.
+
+        The descriptions are trimmed to their first clause on purpose. The full
+        text is written for the old protocol, where the model had to be talked out
+        of inventing `read_directory` and of putting a whole file in prose; the
+        endpoint's front end rejects a tools request over roughly 6 KB, and all ten
+        tools verbatim come to 5.1 KB before the user has typed anything.
+        """
+        out = []
+        for schema in schemas or []:
+            text = str(schema.get("description", ""))
+            for stop in (". ", "; ", " — "):
+                cut = text.find(stop)
+                if 0 < cut < max_description:
+                    text = text[:cut + 1]
+                    break
+            out.append({"type": "function", "function": {
+                "name": schema.get("name", ""),
+                "description": text[:max_description],
+                "parameters": schema.get("parameters") or {"type": "object", "properties": {}},
+            }})
+        return out
+
+    @staticmethod
+    def to_openai_history(messages: list[dict]) -> list[dict]:
+        """Session rows as the wire expects them, with matching call ids.
+
+        BeeCode stores a call as `{"tool": …, "args": {…}}` and the result as a
+        plain tool message. OpenAI wants ids that tie the two together, so they
+        are assigned while walking — deterministically, because the order in the
+        transcript is the order they happened in.
+        """
+        out: list[dict] = []
+        pending: list[str] = []
+        counter = 0
+        for message in messages:
+            role = message.get("role", "user")
+            content = message.get("content") or ""
+            calls = message.get("tool_calls") or []
+            if role == "tool":
+                if pending:
+                    call_id = pending.pop(0)
+                else:
+                    # A result with no call in front of it: say so in the text
+                    # rather than inventing an id the endpoint will reject.
+                    out.append({"role": "user", "content": f"[tool result] {content}"})
+                    continue
+                out.append({"role": "tool", "tool_call_id": call_id, "content": str(content)})
+                continue
+            if role == "assistant" and calls:
+                counter += 1
+                call_id = f"call_{counter:04d}"
+                pending.append(call_id)
+                out.append({
+                    "role": "assistant",
+                    "content": content or None,
+                    "tool_calls": [{
+                        "id": call_id, "type": "function",
+                        "function": {
+                            "name": str(calls[0].get("tool", "")),
+                            "arguments": json.dumps(calls[0].get("args") or {}, ensure_ascii=False),
+                        },
+                    }],
+                })
+                continue
+            out.append({"role": role, "content": str(content)})
+        return out
+
+    async def complete(self, messages: list[dict], model: str = "", tools: list[dict] = None) -> dict:
+        """One request, the whole answer: text and/or the calls the model made.
+
+        Non-streaming on purpose. A tool call streamed in fragments has to be
+        reassembled before it means anything, and the turn is not shown to the
+        user until then anyway — so streaming would only add a second place where
+        the arguments can come apart.
+        """
+        self._require_key()
+        self._only_chat(model)
+        body: dict = {"model": model or (self.models[0] if self.models else ""),
+                      "messages": self.to_openai_history(messages),
+                      # Without this the endpoint answers with SSE even when we
+                      # asked for one object — measured, not assumed.
+                      "stream": False}
+        if tools:
+            body["tools"] = self.to_openai_tools(tools)
+            body["tool_choice"] = "auto"
+        attempts = 0
+        while attempts < max(1, len(self.keys)):
+            usable = self._usable()
+            if not usable:
+                raise CraxError("daily", "every configured key is cooling down")
+            index, key = usable[0]
+            attempts += 1
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout()) as client:
+                    response = await client.post(self.base_url + "/chat/completions",
+                                                 json=body, headers=self._headers(key))
+            except httpx.HTTPError as e:
+                raise CraxError("network", f"crax-gpt is not reachable: {e}")
+            if response.status_code != 200:
+                error = classify(response.status_code, _json_or_empty(response.text),
+                                 _retry_after(response), response.text)
+                await self._handle_limit(index, error)
+                continue
+            payload = _json_or_empty(response.text)
+            choices = payload.get("choices") or []
+            message = (choices[0] if choices else {}).get("message") or {}
+            calls = []
+            for call in message.get("tool_calls") or []:
+                function = call.get("function") or {}
+                try:
+                    args = json.loads(function.get("arguments") or "{}")
+                except ValueError:
+                    args = {}
+                calls.append({"tool": function.get("name", ""), "args": args if isinstance(args, dict) else {}})
+            return {"text": str(message.get("content") or ""), "tool_calls": calls,
+                    "usage": payload.get("usage") or {}, "key": index}
+        raise CraxError("other", "crax-gpt refused every configured key")
 
     # --- key bookkeeping ----------------------------------------------------
 
@@ -137,7 +285,22 @@ class CraxProvider(BaseProvider):
 
     # --- the wire -----------------------------------------------------------
 
+    def _only_chat(self, model: str) -> None:
+        """Refuse a generation model before the request, not after it.
+
+        The endpoint sells image, video and audio models on the same keys, and an
+        account used for them is the kind of activity that gets reported. A
+        refused request costs nothing; a sent one costs the account.
+        """
+        if not is_chat_model(model):
+            from beeagent.i18n import L
+            raise CraxError("other", L(f"“{model}” is not a chat model — BeeCode only "
+                                       f"asks crax-gpt for text answers. Pick one with /model",
+                                       f"«{model}» — не чат-модель. BeeCode просит у crax-gpt "
+                                       "только текстовые ответы, выбери модель через /model"))
+
     def _payload(self, messages: list[dict], model: str, stream: bool) -> dict:
+        self._only_chat(model)
         return {"model": model or (self.models[0] if self.models else ""),
                 "messages": messages, "stream": stream, "include_reasoning": True}
 
@@ -162,7 +325,7 @@ class CraxProvider(BaseProvider):
                 choices = body.get("choices") or []
                 return str((choices[0].get("message") or {}).get("content") or "") if choices else ""
             error = classify(response.status_code, _json_or_empty(response.text),
-                             _retry_after(response))
+                             _retry_after(response), response.text)
             await self._handle_limit(index, error)
         raise CraxError("other", "crax-gpt refused every configured key")
 
@@ -216,7 +379,11 @@ class CraxProvider(BaseProvider):
         return httpx.Timeout(self.idle_timeout, connect=CONNECT_TIMEOUT)
 
     def discover_models(self) -> list[str]:       # type: ignore[override]
-        """The live catalogue; each entry carries its context length too."""
+        """The live catalogue; each entry carries its context length too.
+
+        Filtered to chat: the endpoint lists its image and video models here, and
+        an agent that offers them spends requests on answers it cannot use.
+        """
         if not self.keys:
             return list(self.models)
         try:
@@ -227,7 +394,7 @@ class CraxProvider(BaseProvider):
             return list(self.models)
         found = []
         for item in body.get("data") or body.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
+            if isinstance(item, dict) and item.get("id") and is_chat_model(str(item["id"])):
                 found.append(str(item["id"]))
         return found or list(self.models)
 

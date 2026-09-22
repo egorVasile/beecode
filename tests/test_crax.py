@@ -21,14 +21,27 @@ class Fake:
     (status, [chunk, ...], headers, True) for a streamed answer.
     """
 
-    def __init__(self, script):
+    def __init__(self, script, catalogue=None):
         self.script = list(script)
+        self.catalogue = catalogue or {}
         self.requests = []
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *args):
                 pass
+
+            def _reply(self, payload):
+                data = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                outer.requests.append({"path": self.path})
+                self._reply(outer.catalogue)
 
             def do_POST(self):
                 length = int(self.headers.get("Content-Length") or 0)
@@ -65,8 +78,8 @@ class Fake:
 
 @pytest.fixture()
 def make_endpoint(request):
-    def make(script):
-        endpoint = Fake(script)
+    def make(script, catalogue=None):
+        endpoint = Fake(script, catalogue)
         request.addfinalizer(endpoint.close)
         return endpoint
 
@@ -163,3 +176,28 @@ def test_streaming_keeps_answer_and_reasoning_apart(make_endpoint):
     assert run(collect()) == [("reasoning", "думаю"), ("content", "раз")]
     assert endpoint.requests[0]["body"]["include_reasoning"] is True
     assert endpoint.requests[0]["body"]["stream"] is True
+
+
+def test_a_generation_model_is_refused_before_the_request_leaves(make_endpoint):
+    """The keys also buy image, video and audio. Those are the requests that get
+    an account reported, so nothing goes out at all — not even a cheap 400."""
+    endpoint = make_endpoint([])
+    provider = CraxProvider(api_key="crk_live_one", base_url=endpoint.url)
+
+    for model in ("seedream-5", "qwen-image-2.0-pro", "whisper-1"):
+        with pytest.raises(CraxError) as raised:
+            run(provider.chat([{"role": "user", "content": "х"}], model))
+        assert "chat" in str(raised.value).lower() or "чат" in str(raised.value)
+        with pytest.raises(CraxError):
+            run(provider.complete([{"role": "user", "content": "х"}], model))
+    assert endpoint.requests == [], "a refused model must not cost a request"
+
+
+def test_the_catalogue_shows_what_this_interface_can_answer(make_endpoint):
+    """Filtering the list is what keeps the refusal out of the user's way: a model
+    never offered is a model never picked."""
+    endpoint = make_endpoint([], {"data": [{"id": "qwen3.8-max"}, {"id": "seedream-5"},
+                                           {"id": "gpt-5-6-luna"}, {"id": "text-embedding-3-small"}]})
+    provider = CraxProvider(api_key="crk_live_one", base_url=endpoint.url)
+
+    assert provider.discover_models() == ["qwen3.8-max", "gpt-5-6-luna"]
