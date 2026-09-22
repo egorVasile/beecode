@@ -8,6 +8,7 @@ this file touches the network — a self-check that can hang is worse than none.
 import importlib
 import json
 import os
+import platform
 import shutil
 import sys
 from pathlib import Path
@@ -53,6 +54,25 @@ def _checks(api) -> list[tuple[str, str, str, str]]:
                  f"{py.major}.{py.minor}.{py.micro} · {sys.executable}",
                  "" if py >= (3, 10) else "BeeCode needs 3.10 or newer"))
 
+    rows.append((OK, "system", f"{platform.system()} {platform.release()} · {platform.machine()}",
+                 ""))
+
+    prefix = os.environ.get("PREFIX", "")
+    # Android is not a Linux distribution: there is no apt, no /usr, and pip
+    # cannot compile what is written in Rust or C. Everything BeeCode cannot get
+    # there has a `pkg install` line, so say which one.
+    on_termux = "com.termux" in prefix or "com.termux" in os.environ.get("HOME", "")
+    if on_termux:
+        rows.append((OK, "termux prefix", prefix or os.environ.get("HOME", ""), ""))
+        bash = shutil.which("bash")
+        rows.append((OK if bash else WARN, "bash for the shell tool", bash or "not found",
+                     "" if bash else "pkg install bash"))
+        storage = Path.home() / "storage"
+        rows.append((OK if storage.is_dir() else WARN, "shared storage",
+                     "mounted" if storage.is_dir() else "not mounted",
+                     "" if storage.is_dir()
+                     else "termux-setup-storage — without it BeeCode sees only its own home"))
+
     which = shutil.which("beecode")
     rows.append((OK if which else WARN, "`beecode` on PATH", which or "not found",
                  "" if which else "npm install -g beecode, or run python -m beeagent.cli"))
@@ -69,6 +89,12 @@ def _checks(api) -> list[tuple[str, str, str, str]]:
     for package, hint in (("g4f", "pip install -U g4f"), ("tiktoken", "pip install tiktoken"),
                           ("rich", "pip install -U rich"), ("prompt_toolkit", "pip install -U prompt_toolkit")):
         value, error = _version(package)
+        if error and on_termux and package in ("g4f", "tiktoken"):
+            # Both are Rust or C extensions, which is what a phone cannot build.
+            rows.append((WARN, package, "not installed",
+                         "normal on Android: pip has no compiler there. Answers still work "
+                         "through /pool url … + /pool enroll, or /key crax for your own key"))
+            continue
         rows.append((OK if not error else BAD, package, value or error, "" if not error else hint))
 
     config_path = workdir / "beeagent.json"

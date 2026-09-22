@@ -1,26 +1,39 @@
-from pydantic import BaseModel, Field
+"""What `beeagent.json` holds. The rules of typing live in `model.py`.
+
+Nothing in here imports pydantic: on Android pip has no wheel for its Rust core
+and the phone has no compiler, and this file is the reason the program starts.
+"""
 from typing import Optional
 
-class EconomyConfig(BaseModel):
+from .model import Model, default
+
+
+class EconomyConfig(Model):
     cache_enabled: bool = True
     cache_dir: str = ".beeagent/cache"
     # A cached answer is only valid for as long as the files behind it are
     # assumed unchanged; after that it is re-asked.
     cache_ttl_minutes: int = 30
 
-class PermissionsConfig(BaseModel):
+
+class PermissionsConfig(Model):
     # ask: unsafe tools need /allow first · auto: run anything · readonly: read-only
     mode: str = "ask"
-    allowed: list[str] = Field(default_factory=list)
+    allowed: list[str] = default(list)
 
-class CustomProvider(BaseModel):
+
+class CustomProvider(Model):
+    # All four are required: an entry that names a provider without saying what
+    # it is or where it lives is a typo, and a typo here means the config file
+    # is refused and set aside, which is the honest answer.
     name: str
-    type: str  # "openai_compat" | "ollama"
+    type: str        # "openai_compat" | "ollama"
     url: str
     model: str
     key: Optional[str] = None
 
-class BeeConfig(BaseModel):
+
+class BeeConfig(Model):
     # Command A is the one g4f route measured (2026-09-21) to read a 32k
     # prompt keyless and answer in seconds; "gpt-4" landed on a route that
     # refuses anything past ~4k, which is what made the agent seem amnesic.
@@ -39,9 +52,9 @@ class BeeConfig(BaseModel):
     # attempt and retry. Free providers stall regularly; without this the agent
     # waits forever and looks hung.
     stream_idle_timeout: int = 90
-    custom_providers: list[CustomProvider] = Field(default_factory=list)
+    custom_providers: list[CustomProvider] = default(list)
     # Keys the user obtained themselves, by provider name (see /providers).
-    api_keys: dict[str, str] = Field(default_factory=dict)
+    api_keys: dict[str, str] = default(dict)
     # A pool the operator runs: the address of the proxy and the seat token it
     # gave this install. No API key lives here — that is the point of the pool.
     pool_url: str = ""
@@ -49,10 +62,10 @@ class BeeConfig(BaseModel):
     # A command that changes this machine's exit address (a VPN client's CLI).
     # BeeCode only runs it after the user pressed "yes", and shows it verbatim.
     vpn_command: str = ""
-    permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
-    economy: EconomyConfig = Field(default_factory=EconomyConfig)
+    permissions: PermissionsConfig = default(PermissionsConfig)
+    economy: EconomyConfig = default(EconomyConfig)
     # Interface slots: frame / banner / spinner / stream. "none" is a valid
     # choice for any of them — see /skin.
-    ui: dict[str, str] = Field(default_factory=dict)
+    ui: dict[str, str] = default(dict)
     # Settings owned by plugins, by plugin name: {"word-count": {"limit": 20}}.
-    extensions: dict[str, dict] = Field(default_factory=dict)
+    extensions: dict[str, dict] = default(dict)

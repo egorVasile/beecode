@@ -31,8 +31,8 @@ def count_tokens(text: str, model: str = "gpt-4") -> int:
     try:
         return len(_encoding(model).encode(text))
     except Exception:
-        # tiktoken is a hard dependency, so this is the "import failed" path:
-        # over-count rather than send an oversized request.
+        # tiktoken is optional — Android has no wheel for it and no compiler to
+        # build one. Without it, over-count rather than send an oversized request.
         return max(1, int(len(text) * 0.6))
 
 

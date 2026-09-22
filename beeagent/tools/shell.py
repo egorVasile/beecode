@@ -25,6 +25,10 @@ def shell_command(command: str) -> list[str]:
     bash = _find_bash()
     if bash:
         return [bash, "-c", command]
+    if os.name == "posix":
+        # Termux installs bash as a package and Android ships /bin/sh, so a box
+        # with no bash is normal there — and cmd.exe does not exist anywhere.
+        return [shutil.which("sh") or "/bin/sh", "-c", command]
     return [os.environ.get("COMSPEC", "cmd.exe"), "/c", command]
 
 
@@ -35,19 +39,22 @@ def _find_bash() -> str | None:
     C:\\Windows\\System32\\bash.exe — a second Linux root, a second $HOME, where
     `rm -rf ~/project` deletes something the read/write tools cannot even see.
     """
-    system32 = os.environ.get("SystemRoot", "")
-    candidates = [
+    for candidate in (
         Path(r"C:\Program Files\Git\bin\bash.exe"),
         Path(r"C:\Program Files (x86)\Git\bin\bash.exe"),
-    ]
-    for candidate in candidates:
+    ):
         if candidate.exists():
             return str(candidate)
     found = shutil.which("bash")
-    if found and not (system32 and Path(found).parent.samefile(Path(system32))
-                      if Path(found).parent.exists() else False):
-        return found
-    return None
+    if not found:
+        return None
+    system32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
+    try:
+        if system32.exists() and Path(found).parent.samefile(system32):
+            return None
+    except OSError:
+        pass                      # no shared filesystem to compare against
+    return found
 
 
 def decode(data: bytes) -> str:

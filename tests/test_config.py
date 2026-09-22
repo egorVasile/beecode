@@ -1,9 +1,9 @@
 import json
 import tempfile
 from pathlib import Path
-from pydantic import ValidationError
 import pytest
 
+from beeagent.config.model import ValidationError
 from beeagent.config.schema import BeeConfig, EconomyConfig, CustomProvider
 from beeagent.config.loader import load_config, save_config
 

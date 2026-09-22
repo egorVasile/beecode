@@ -4,9 +4,8 @@ import tempfile
 import stat
 from pathlib import Path
 
-from pydantic import ValidationError
-
 from beeagent.i18n import L
+from .model import ValidationError
 from .schema import BeeConfig
 
 CONFIG_FILE = "beeagent.json"
@@ -71,7 +70,8 @@ def load_config(workdir: str = ".") -> BeeConfig:
 
     unknown = [key for key in data if key not in BeeConfig.model_fields]
     if unknown:
-        # pydantic ignores extra keys, and the next save drops them from disk.
+        # An unknown name is ignored by the config model, and the next save drops
+        # it from disk — so it is announced before that happens, not after.
         _warn(L(f"⚠ {config_path} holds keys BeeCode does not know: {', '.join(sorted(unknown))} "
                 f"— they will be dropped on the next save",
                 f"⚠ в {config_path} есть незнакомые ключи: {', '.join(sorted(unknown))} "

@@ -25,6 +25,11 @@ const BEECODE = process.platform === "win32"
   ? path.join(VENV, "Scripts", "beecode.exe")
   : path.join(VENV, "bin", "beecode");
 
+// Node on Termux reports "android"; PREFIX is what Termux itself sets. Either
+// way the box has no compiler and no apt, so the advice has to be `pkg install`.
+const TERMUX = process.platform === "android"
+  || (process.env.PREFIX || "").includes("com.termux");
+
 function run(command, args, { quiet = false } = {}) {
   const result = spawnSync(command, args, { stdio: quiet ? "ignore" : "inherit" });
   if (result.error) {
@@ -40,6 +45,11 @@ function findPython() {
     if (!candidate) continue;
     const result = spawnSync(candidate, ["-c", probe], { stdio: "ignore" });
     if (!result.error && result.status === 0) return candidate;
+  }
+  if (TERMUX) {
+    console.error("on Termux nothing is on PATH until you put it there:");
+    console.error("  pkg install python python-pip git");
+    process.exit(1);
   }
   console.error("BeeCode needs Python 3.10 or newer on PATH — get it from https://python.org");
   console.error('(on Windows, tick "Add python.exe to PATH" during the install)');
@@ -66,6 +76,7 @@ function install(python) {
   if (run(VENV_PYTHON, ["-m", "pip", "install", "--upgrade", "--force-reinstall",
                         "--no-deps", SOURCE]) !== 0) {
     console.error("the install failed — a network hiccup is usually worth retrying");
+    if (TERMUX) console.error("on Termux the usual cause is a missing git: pkg install git");
     process.exit(1);
   }
   if (run(VENV_PYTHON, ["-m", "pip", "install", "--upgrade", SOURCE], { quiet: true }) !== 0) {

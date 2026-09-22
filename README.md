@@ -98,6 +98,30 @@ python -m beeagent.cli
 
 </details>
 
+### On a phone — Termux
+
+Android ships no C compiler and no Rust, and PyPI has no Android wheel for `g4f`
+or `tiktoken`, so on that platform the install leaves both out and the rest goes
+through. The file tools, the shell tool, grep, git and the loop itself are pure
+Python — that is what `tests/test_termux.py` runs: the whole agent with those two
+modules missing, writing files and executing commands.
+
+```sh
+pkg install python python-pip git
+pip install git+https://github.com/egorVasile/beecode.git
+termux-setup-storage          # only to reach the SD card; ~/storage
+cd ~/my-project && beecode
+```
+
+What a phone gives up is the keyless provider, so answers come from a pool
+(`/pool url …`, `/pool enroll`) or from your own key (`/key crax crk_live_…`),
+and the exact token count, which falls back to an over-estimate — the safe
+direction, because it trims the history early instead of sending a request the
+model drops. Both are gettable back if you want them: `pkg install tur-repo
+python-tiktoken`, and `pkg install clang make` before `pip install g4f`.
+
+`/doctor` on a phone prints the `pkg install` line for whatever is missing.
+
 ## Run
 
 | Command | What it does |
