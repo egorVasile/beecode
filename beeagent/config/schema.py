@@ -38,6 +38,10 @@ class BeeConfig(BaseModel):
     custom_providers: list[CustomProvider] = Field(default_factory=list)
     # Keys the user obtained themselves, by provider name (see /providers).
     api_keys: dict[str, str] = Field(default_factory=dict)
+    # A pool the operator runs: the address of the proxy and the seat token it
+    # gave this install. No API key lives here — that is the point of the pool.
+    pool_url: str = ""
+    pool_token: str = ""
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     economy: EconomyConfig = Field(default_factory=EconomyConfig)
     # Interface slots: frame / banner / spinner / stream. "none" is a valid

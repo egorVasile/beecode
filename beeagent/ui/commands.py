@@ -66,6 +66,7 @@ COMMANDS: list[Command] = [
     Command("thinking", "Show the last model reasoning (scrollable)", category="info"),
     Command("window", "Show or measure the model context window", usage="/window [measure] [model]", category="info"),
     Command("update", "Check for a newer BeeCode and install it", category="info"),
+    Command("pool", "Address, seat and budget of a key pool", usage="/pool [url <адрес> | enroll | status]", category="info"),
     # model / provider / mode
     Command("model", "Switch the active model", arg="model", usage="/model <name>", category="engine"),
     Command("models", "List models with the widest context first, --all for every one",
@@ -1366,6 +1367,82 @@ def _cmd_clear(ctx, args):
     return CommandResult(action="clear")
 
 
+def _cmd_pool(ctx, args):
+    """Address of the key pool, the seat this install holds, and its budget."""
+    from beeagent.providers import pool as pool_mod
+
+    sub = (args[0].lower() if args else "")
+    rest = args[1:]
+    config = ctx.config
+
+    if sub == "url":
+        url = (rest[0].strip() if rest else "")
+        if not url.startswith(("http://", "https://")):
+            return _err(L("give a full address: /pool url https://pool.example.com",
+                          "нужен полный адрес: /pool url https://pool.example.com"))
+        config.pool_url = url.rstrip("/")
+        _persist_config(ctx)
+        note = "" if url.startswith("https://") else L(
+            "\n  ⚠️ plain http — your seat token travels in the clear",
+            "\n  ⚠️ простой http — токен места едет открытым текстом")
+        return CommandResult(output=Text(
+            L(f"pool address saved: {config.pool_url}. Now /pool enroll for a seat.{note}",
+              f"адрес пула сохранён: {config.pool_url}. Теперь /pool enroll за местом.{note}"),
+            style="#ffcc00"))
+
+    if sub == "enroll":
+        if not config.pool_url:
+            return _err(L("no address yet: /pool url https://…", "сначала адрес: /pool url https://…"))
+        try:
+            body = pool_mod.enroll(config.pool_url)
+        except Exception as e:
+            return _err(L(f"the pool did not answer: {e}", f"пул не ответил: {e}"))
+        token = str(body.get("token") or "")
+        if not token:
+            return _err(L("the pool gave no seat token", "пул не дал токен места"))
+        config.pool_token = token
+        _persist_config(ctx)
+        text = Text()
+        text.append(L("🐝 seat taken. ", "🐝 место получено. ", ), style="bold #ffcc00")
+        text.append(L(f"token …{token[-4:]} saved in beeagent.json — "
+                      f"{body.get('requests_per_day', '?')} requests and "
+                      f"{body.get('tokens_per_day', '?')} tokens a day.",
+                      f"токен …{token[-4:]} сохранён в beeagent.json — "
+                      f"{body.get('requests_per_day', '?')} запросов и "
+                      f"{body.get('tokens_per_day', '?')} токенов в сутки."), style="dim")
+        if not body.get("approved", True):
+            text.append("\n" + L("the pool owner has to approve this seat before it answers.",
+                                 "владелец пула должен подтвердить это место, иначе оно не работает."),
+                        style="bold yellow")
+        else:
+            text.append("\n" + L("switch to it with: /provider pool",
+                                 "переключись на него: /provider pool"), style="dim")
+        return CommandResult(output=text)
+
+    if sub in ("", "status"):
+        text = Text()
+        text.append(L("pool: ", "пул: ", ), style="dim")
+        text.append(config.pool_url or L("not set — /pool url https://…",
+                                         "не задан — /pool url https://…"), style="bold #ffcc00")
+        text.append("\n" + L("seat: ", "место: ", ), style="dim")
+        seat = config.pool_token or ""
+        text.append(f"…{seat[-4:]}" if seat else L("none — /pool enroll", "нет — /pool enroll"),
+                    style="bold #ffcc00")
+        if config.pool_url:
+            try:
+                health = pool_mod.pool_status(config.pool_url, seat)
+                text.append("\n" + L("server: ", "сервер: ", ), style="dim")
+                text.append(json.dumps(health, ensure_ascii=False)[:160], style="bold #7cb342")
+            except Exception as e:
+                text.append("\n" + L("server: unreachable — ", "сервер не отвечает — ", ),
+                            style="dim")
+                text.append(str(e)[:120], style="bold yellow")
+        return CommandResult(output=text)
+
+    return _err(L("usage: /pool [url <address> | enroll | status]",
+                  "использование: /pool [url <адрес> | enroll | status]"))
+
+
 def _cmd_update(ctx, args):
     """Look at the published version now, and install it if it is newer."""
     from beeagent import __version__
@@ -1409,6 +1486,7 @@ HANDLERS: dict[str, Callable] = {
     "thinking": _cmd_thinking,
     "window": _cmd_window,
     "update": _cmd_update,
+    "pool": _cmd_pool,
     "tools": _cmd_tools,
     "plugins": _cmd_plugins,
     "plugin": _cmd_plugin,

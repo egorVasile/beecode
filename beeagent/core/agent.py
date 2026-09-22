@@ -125,6 +125,14 @@ class Agent:
             ))
             self.ready_presets.append(endpoint.name)
 
+        # A pool the operator runs. Registered as soon as its address is known —
+        # with no seat yet the provider answers "run /pool enroll" instead of
+        # "unknown provider", and neither the address nor the seat is a key.
+        from beeagent.providers.pool import PoolProvider
+        self.providers.register(PoolProvider(
+            url=self.config.pool_url, token=self.config.pool_token,
+            idle_timeout=max(10, int(self.config.stream_idle_timeout or 90))))
+
         self.tools = ToolRegistry()
         for tool_cls in [ReadTool, WriteTool, EditTool, BashTool,
                          GrepTool, GlobTool, ListDirectoryTool, WebSearchTool,

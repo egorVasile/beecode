@@ -41,3 +41,13 @@ space_shooter.py
 
 # local working notes, not part of the release
 docs/superpowers/
+
+# the pool server is the operator's own box: it holds the keys, so it stays out
+# of the public repository entirely
+/server/
+
+# the key pool keeps its credentials and its ledger here; neither belongs in git
+keys.json
+pool.db
+pool.db-shm
+pool.db-wal

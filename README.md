@@ -374,6 +374,7 @@ mouse-clickable picker.
 | `/about` | About BeeCode | `/about` |
 | `/config` | Show current configuration | `/config` |
 | `/help` | Show all available commands | `/help` |
+| `/pool` | Address, seat and budget of a key pool | `/pool [url <адрес> | enroll | status]` |
 | `/stats` | Show economy/request stats | `/stats` |
 | `/thinking` | Show the last model reasoning (scrollable) | `/thinking` |
 | `/token` | Show current context token usage | `/token` |
@@ -498,6 +499,25 @@ puts the built-in renderer back.
 
 Also in the catalog: `word-count` — tool + command + setting + event listener in
 one file.
+
+## A key pool
+
+If you (or someone you trust) runs a BeeCode pool — a small proxy that holds API
+keys and answers instead of handing them out — BeeCode talks to it as a provider:
+
+```
+/pool url https://your-host:8077
+/pool enroll
+/provider pool
+/pool status
+```
+
+`/pool enroll` asks the pool for a seat and stores its token in `beeagent.json`;
+the address and the seat are the only things this client ever learns, and neither
+is a key. The pool decides which account serves a model, so `/provider pool` works
+with the model names you already use. Errors come back as what they are — no seat
+yet, seat awaiting approval, today's budget spent, every key rate-limited — with
+the retry wait attached.
 
 ## Configuration
 
