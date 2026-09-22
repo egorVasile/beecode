@@ -10,6 +10,7 @@ budget spent, every key rate-limited.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import AsyncIterator
 
@@ -18,6 +19,10 @@ import httpx
 from .base import BaseProvider
 
 TIMEOUT_CONNECT = 10.0
+# A free Render instance sleeps after fifteen idle minutes, and the request that
+# wakes it is not a failure — it only arrives before the box is up. Without this
+# wait a working pool looks broken once a day, every day.
+COLD_START_WAIT = 25.0
 
 
 class PoolError(RuntimeError):
@@ -50,6 +55,17 @@ def _reason(status: int, body: object) -> str:
         text = L(known[0], known[1])
         return f"{text}{f' — {detail}' if detail and detail not in text else ''}"
     return f"the pool answered {status}{f' — {detail}' if detail else ''}"
+
+
+def _asleep(url: str, error) -> str:
+    """What to say when the pool never picked up — a sleeping box or a wrong address."""
+    from beeagent.i18n import L
+    return L(f"the pool at {url} did not answer even after waiting for it to wake up — "
+             f"a free instance sleeps when nobody uses it, and a wrong address sleeps "
+             f"forever ({error.__class__.__name__})",
+             f"пул по адресу {url} не ответил, даже подождав его пробуждения — "
+             f"бесплатный инстанс засыпает без обращений, а неверный адрес спит вечно "
+             f"({error.__class__.__name__})")
 
 
 def _headers(token: str) -> dict:
@@ -114,6 +130,16 @@ class PoolProvider(BaseProvider):
 
     async def chat(self, messages: list[dict], model: str = "", stream: bool = False) -> str:
         token = self._require()
+        for attempt in (1, 2):
+            try:
+                return await self._chat(messages, model, token)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                if attempt == 2:
+                    raise PoolError(_asleep(self.url, e)) from e
+                await asyncio.sleep(COLD_START_WAIT)
+        return ""                       # unreachable: every path returns or raises
+
+    async def _chat(self, messages: list[dict], model: str, token: str) -> str:
         async with httpx.AsyncClient(timeout=httpx.Timeout(self.idle_timeout,
                                                            connect=TIMEOUT_CONNECT)) as client:
             response = await client.post(self.url + "/v1/chat/completions",
@@ -129,6 +155,22 @@ class PoolProvider(BaseProvider):
 
     async def chat_stream(self, messages: list[dict], model: str = "") -> AsyncIterator:
         token = self._require()
+        for attempt in (1, 2):
+            started = False
+            try:
+                async for pair in self._stream(messages, model, token):
+                    started = True
+                    yield pair
+                return
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                # Only a connection that never opened is retried: once the first
+                # fragment is on screen, repeating the request would print the
+                # answer twice and pay for it twice.
+                if started or attempt == 2:
+                    raise PoolError(_asleep(self.url, e)) from e
+                await asyncio.sleep(COLD_START_WAIT)
+
+    async def _stream(self, messages: list[dict], model: str, token: str) -> AsyncIterator:
         timeout = httpx.Timeout(self.idle_timeout, connect=TIMEOUT_CONNECT)
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("POST", self.url + "/v1/chat/completions",

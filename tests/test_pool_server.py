@@ -247,10 +247,16 @@ def test_the_budget_rolls_over_when_the_day_changes(pool):
 
 
 # --- the client side of the same wire ---------------------------------------
+#
+# This file exists twice, with the same content: here, where the operator keeps
+# `server/`, and in the private repository that actually runs the pool. These three
+# need the BeeCode client as well, so where it is not installed they skip instead
+# of turning the whole file into an import error.
 
 def test_the_provider_talks_to_the_pool_and_gets_the_answer(pool):
     import asyncio
 
+    pytest.importorskip("beeagent", reason="the BeeCode client lives in another repository")
     from beeagent.providers.pool import PoolProvider, enroll
 
     token = enroll(pool.base)["token"]
@@ -263,6 +269,7 @@ def test_the_provider_talks_to_the_pool_and_gets_the_answer(pool):
 def test_the_provider_keeps_thinking_apart_from_the_answer(pool, monkeypatch):
     import asyncio
 
+    pytest.importorskip("beeagent", reason="the BeeCode client lives in another repository")
     from beeagent.providers.pool import PoolProvider, enroll
 
     def streaming(provider_name, api_key, body, begin=None, on_chunk=None):
@@ -286,6 +293,7 @@ def test_the_provider_keeps_thinking_apart_from_the_answer(pool, monkeypatch):
 def test_a_client_without_a_seat_is_told_to_enroll(pool):
     import asyncio
 
+    pytest.importorskip("beeagent", reason="the BeeCode client lives in another repository")
     from beeagent.providers.pool import PoolProvider
 
     provider = PoolProvider(url=pool.base, token="")
@@ -343,3 +351,21 @@ def test_one_number_can_give_every_key_the_same_ceiling(pool, monkeypatch):
     with httpx.Client() as client:
         report = client.get(pool.base + "/v1/pool", headers={"X-Admin": "admin-secret"}).json()
     assert [k["daily_limit"] for k in report["keys"]] == [50, 50]
+
+
+def test_the_keys_can_arrive_as_an_environment_value(monkeypatch):
+    """A PaaS hands out secrets as environment values, and Render's disk is wiped
+    on every deploy — so requiring a file first would mean committing one."""
+    monkeypatch.setenv("BEECODE_POOL_KEYS", '{"groq": ["gsk_env_secret", "  "]}')
+    assert pool_server.keys_from_everywhere("nowhere.json") == {"groq": ["gsk_env_secret"]}
+
+
+def test_an_unreadable_or_unknown_key_blob_is_a_startup_refusal(monkeypatch):
+    """Half a JSON or a provider this code has no upstream for must stop the
+    start, not leave a pool that quietly answers nothing."""
+    monkeypatch.setenv("BEECODE_POOL_KEYS", '{"groq": ["k"}')
+    with pytest.raises(SystemExit):
+        pool_server.keys_from_everywhere("nowhere.json")
+    monkeypatch.setenv("BEECODE_POOL_KEYS", '{"somewhere-else": ["k"]}')
+    with pytest.raises(SystemExit):
+        pool_server.keys_from_everywhere("nowhere.json")
