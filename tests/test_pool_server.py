@@ -16,11 +16,14 @@ import pytest
 
 SERVER = Path(__file__).resolve().parent.parent / "server"
 # The server is the operator's own box — it holds the keys — so it is not part of
-# the published repository. These tests run wherever that file exists.
-pytestmark = pytest.mark.skipif(not (SERVER / "pool_server.py").exists(),
-                                reason="pool server is not in this checkout")
+# the published repository. A skip mark is not enough here: the module is still
+# imported while pytest collects, and that alone broke `pytest` for everyone who
+# cloned without it. The import itself is the condition.
 sys.path.insert(0, str(SERVER))
-import pool_server  # noqa: E402
+try:
+    import pool_server  # noqa: E402
+except ImportError:
+    pytest.skip("the pool server is not in this checkout", allow_module_level=True)
 
 KEYS = {"groq": ["gsk_first_secret", "gsk_second_secret"]}
 
