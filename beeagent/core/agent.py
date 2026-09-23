@@ -341,6 +341,36 @@ class Agent:
             callback("model_switched", {"from": wanted, "to": model})
         return model
 
+    @staticmethod
+    def _g4f_installed() -> bool:
+        """Is g4f importable here at all — without importing it."""
+        import importlib.util
+        try:
+            return importlib.util.find_spec("g4f") is not None
+        except (ImportError, ValueError):
+            return False
+
+    def _provider_or_pool(self, callback):
+        """The configured provider, unless it cannot exist on this machine.
+
+        g4f is a set of compiled dependencies and Android ships no compiler, so on
+        a phone the default provider is a dead end: the first question would come
+        back "Error calling provider" and the person would conclude BeeCode is
+        broken. The pool is the other half of the same promise — an answer without
+        owning a key — so it takes over, out loud.
+        """
+        name = self.config.provider or "g4f"
+        if name != "g4f" or self._g4f_installed():
+            return self.providers.select(name)
+        pool = self.providers.get("pool")
+        if pool is None or not getattr(pool, "url", ""):
+            return self.providers.select(name)
+        self.config.provider = "pool"
+        if callback:
+            callback("provider_fallback", {"from": "g4f", "to": "pool",
+                                           "seat": bool(pool.token)})
+        return pool
+
     def preset_provider(self, name: str, key: str):
         """Build the provider for a preset endpoint, with the class that fits it.
 
@@ -398,7 +428,7 @@ class Agent:
         self.permissions.denied_this_run.clear()
 
         try:
-            provider = self.providers.select(self.config.provider)
+            provider = self._provider_or_pool(callback)
             model = self._model_for(provider, callback)
             trim_reported = False
             nudged = False

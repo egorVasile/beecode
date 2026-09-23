@@ -49,7 +49,9 @@ class Scripted:
 
 
 def _agent(phone, steps, provider="scripted"):
-    config = BeeConfig(model="m")
+    # provider names the scripted endpoint: with g4f missing, the agent would
+    # otherwise hand the turn to the pool, which is a different test.
+    config = BeeConfig(model="m", provider=provider)
     agent = Agent(config=config, workdir=str(phone))
     endpoint = Scripted(steps)
     agent.providers.register(endpoint)
@@ -104,3 +106,35 @@ def test_token_budgeting_survives_without_tiktoken(phone):
     trims the history early instead of sending a request the model will drop."""
     assert count_tokens("привет, пчела") > 0
     assert count_tokens("") == 0
+
+
+def test_a_phone_without_g4f_is_answered_by_the_pool(tmp_path, monkeypatch):
+    """The default provider is a compiled package Android cannot install. Left
+    alone, a phone's first question would read as a broken agent; the pool is the
+    other half of the same promise, so the turn goes there — and says so."""
+    from beeagent.providers.pool import PoolProvider
+
+    agent = Agent(config=BeeConfig(provider="g4f"), workdir=str(tmp_path))
+    pool = agent.providers.get("pool")
+    pool.url, pool.token = "https://pool.invalid", "a-seat"
+    monkeypatch.setattr(Agent, "_g4f_installed", staticmethod(lambda: False))
+    events = []
+
+    provider = agent._provider_or_pool(lambda e, d: events.append((e, d)))
+
+    assert provider.name == "pool"
+    assert agent.config.provider == "pool", "the switch is real, not cosmetic"
+    assert ("provider_fallback", {"from": "g4f", "to": "pool", "seat": True}) in events
+
+
+def test_a_desktop_with_g4f_installed_is_never_moved_off_it(monkeypatch):
+    """The fallback is for the machine that cannot have g4f, not for a provider
+    the user chose away from."""
+    agent = Agent(config=BeeConfig(provider="g4f"), workdir=".")
+    monkeypatch.setattr(Agent, "_g4f_installed", staticmethod(lambda: True))
+    events = []
+
+    provider = agent._provider_or_pool(lambda e, d: events.append(e))
+
+    assert provider.name == "g4f"
+    assert events == []

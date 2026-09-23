@@ -114,7 +114,8 @@ cd ~/my-project && beecode
 ```
 
 What a phone gives up is the keyless provider, so answers come from a pool
-(`/pool url …`, `/pool enroll`) or from your own key (`/key crax crk_live_…`),
+(the address ships with BeeCode, so `/pool enroll` is the only command), or from
+your own key (`/key crax crk_live_…`),
 and the exact token count, which falls back to an over-estimate — the safe
 direction, because it trims the history early instead of sending a request the
 model drops. Both are gettable back if you want them: `pkg install tur-repo
@@ -538,13 +539,14 @@ If you (or someone you trust) runs a BeeCode pool — a small proxy that holds A
 keys and answers instead of handing them out — BeeCode talks to it as a provider:
 
 ```
-/pool url https://your-host:8077
-/pool enroll
+/pool enroll          # the address is already set; change it with /pool url …
 /provider pool
 /pool status
 ```
 
 `/pool enroll` asks the pool for a seat and stores its token in `beeagent.json`;
+the address it writes to is the one BeeCode ships with, and running your own pool
+means pointing at it with `/pool url https://your-host:8077`.
 the address and the seat are the only things this client ever learns, and neither
 is a key. The pool decides which account serves a model, so `/provider pool` works
 with the model names you already use. Errors come back as what they are — no seat

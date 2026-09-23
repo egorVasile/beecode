@@ -57,7 +57,13 @@ class BeeConfig(Model):
     api_keys: dict[str, str] = default(dict)
     # A pool the operator runs: the address of the proxy and the seat token it
     # gave this install. No API key lives here — that is the point of the pool.
-    pool_url: str = ""
+    #
+    # The address ships, because an install that has to be told where the pool is
+    # is an install where nothing works until someone types two commands. An
+    # address is not a secret and not a credential: it is the door, and the three
+    # seats per address a day, the 25 a day overall and the per-install signature
+    # are the lock.
+    pool_url: str = "https://beecode-pool.onrender.com"
     pool_token: str = ""
     # A command that changes this machine's exit address (a VPN client's CLI).
     # BeeCode only runs it after the user pressed "yes", and shows it verbatim.
