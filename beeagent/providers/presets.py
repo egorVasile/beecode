@@ -107,7 +107,7 @@ ENDPOINTS = (
         url="https://gpt.crax.lol/v1", env="CRAX_API_KEY",
         signup="https://gpt.crax.lol — Settings → API keys",
         free="40 req/min per IP and a daily token allowance per account",
-        models=("qwen3.8-max",),
+        models=("qwen3-coder-480b", "grok-code-fast-1", "deepseek-v4-flash"),
     ),
 )
 

@@ -85,7 +85,15 @@ class CraxProvider(BaseProvider):
     # The catalogue is read from the endpoint on demand (`/pool models`, /models);
     # asking for it on every start would be a request that is not a chat, and the
     # whole point of these keys is that only chat goes out.
-    models = ("qwen3.8-max", "gpt-5-6-luna", "grok-code-fast-1", "deepseek-v4-flash")
+    # Measured through the pool on 2026-09-23, one short question per model: these
+    # 13 answered. The qwen3.5/3.6/3.7/3.8 max-and-plus family did not — every one
+    # of them hung ~15 s and came back 502 from crax's own gateway, which is why
+    # the default below is a code model that answered in 8 s and not the one this
+    # list used to lead with. `kimi-k2-7-code` answered but took 62 s, so it is
+    # last rather than hidden.
+    models = ("qwen3-coder-480b", "grok-code-fast-1", "deepseek-v4-flash", "gemma-3-12b",
+              "llama-4-maverick", "glm-5.3", "glm-5.3-flash", "grok-4-3", "grok-4-6",
+              "gpt-5-6-luna", "kimi-k2-6", "glm-5.2", "kimi-k2-7-code")
     label = "crax-gpt"
     # Verified against the endpoint: it answers `finish_reason: "tool_calls"` and
     # accepts the OpenAI history shape back. So the tool call never has to be

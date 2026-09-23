@@ -556,3 +556,43 @@ def test_one_install_one_seat_and_a_keyless_enrolment_refused(pool):
         bare = client.post(pool.base + "/v1/enroll", content=b"{}",
                            headers={"Content-Type": "application/json"})
         assert bare.status_code == 400, "no install key, no seat"
+
+
+def test_the_model_list_is_a_seat_privilege_and_lists_only_chat(pool, monkeypatch):
+    """A stranger should not get to read which accounts the pool holds, and
+    neither should a seat see the image models it is not allowed to ask."""
+    monkeypatch.setattr(pool_server, "list_upstream_models",
+                        lambda provider, key: ["qwen3.8-max", "seedream-5", "gpt-5-6-luna"])
+    with httpx.Client() as client:
+        assert client.get(pool.base + "/v1/models").status_code == 401
+        token = enroll(client, pool.base)
+        body = client.get(pool.base + "/v1/models",
+                          headers={"Authorization": f"Bearer {token}"}).json()
+    assert body["data"] == [{"id": "qwen3.8-max"}, {"id": "gpt-5-6-luna"}]
+
+
+def test_a_provider_that_does_not_answer_the_list_is_said_so(pool, monkeypatch):
+    """An empty list would look like "this pool has no models", which is a
+    different fact and a different fix."""
+    monkeypatch.setattr(pool_server, "list_upstream_models", lambda provider, key: [])
+    pool_server._models_cache["at"] = 0.0
+    with httpx.Client() as client:
+        token = enroll(client, pool.base)
+        answer = client.get(pool.base + "/v1/models",
+                            headers={"Authorization": f"Bearer {token}"})
+        assert answer.status_code == 502
+        assert "did not answer" in answer.json()["error"]
+
+
+def test_a_refusal_names_the_model_that_refused(pool):
+    """The difference between "the pool is broken" and "this one model is broken"
+    is a name. Without it the user has nothing to act on but a 502."""
+    pool.answers[:] = [(502, '{"error":"bad gateway"}')]
+    with httpx.Client() as client:
+        token = enroll(client, pool.base)
+        answer = complete(client, pool.base, token, model="qwen3.8-max")
+        assert answer.status_code == 502
+        body = answer.json()
+    assert "qwen3.8-max" in body["error"], body
+    assert "/model" in body["error"], "say what to do about it"
+    assert body["model"] == "qwen3.8-max"

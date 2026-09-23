@@ -277,6 +277,24 @@ class PoolProvider(BaseProvider):
                     raise PoolError("the pool streamed nothing")
 
 
+    def discover_models(self) -> list[str]:
+        """What the pool's accounts can answer for.
+
+        The client often cannot ask the provider itself: crax's Cloudflare blocks
+        some networks outright (error 1010, on the model list as much as on a
+        chat), while the pool's own egress gets through. So the seat asks the
+        pool, and gets only the chat models — the same rule the pool enforces on
+        every request it forwards.
+        """
+        token = self._require()
+        with httpx.Client(timeout=TIMEOUT_CONNECT + 10) as client:
+            response = client.get(self.url + "/v1/models", headers=_headers(token))
+        if response.status_code != 200:
+            raise PoolError(_reason(response.status_code, _safe_json(response)))
+        body = _safe_json(response) or {}
+        return [str(item.get("id")) for item in body.get("data") or [] if item.get("id")]
+
+
 def _chunk(line: str):
     """One SSE line of an OpenAI-shaped stream, or None.
 
