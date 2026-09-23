@@ -353,9 +353,12 @@ class Agent:
     def _provider_or_pool(self, callback):
         """The configured provider, unless it cannot exist on this machine.
 
-        g4f is a set of compiled dependencies and Android ships no compiler, so on
-        a phone the default provider is a dead end: the first question would come
-        back "Error calling provider" and the person would conclude BeeCode is
+        g4f is pure Python, but it declares pycryptodome and brotli, which have no
+        Android wheel and no pure-Python fallback, so `pip install beecode` leaves
+        g4f out on a phone (see the Termux section of the README for the recipe
+        that installs it anyway). Without it the default provider is a dead end:
+        the first question would come back "Error calling provider" and the person
+        would conclude BeeCode is
         broken. The pool is the other half of the same promise — an answer without
         owning a key — so it takes over, out loud.
         """

@@ -8,6 +8,10 @@
  * private virtualenv under ~/.beecode, installs the published package into it,
  * and hands over. Nothing touches the system Python, and because the install
  * comes from the repository, `--update` is also how you get a fresh g4f.
+ *
+ * On Termux the manifest cannot say what a phone needs — a dependency list has
+ * no `--no-deps` — so `--keyless` (and every install there) adds g4f by hand, in
+ * the one order that needs no compiler.
  */
 
 const { spawnSync } = require("node:child_process");
@@ -30,8 +34,26 @@ const BEECODE = process.platform === "win32"
 const TERMUX = process.platform === "android"
   || (process.env.PREFIX || "").includes("com.termux");
 
-function run(command, args, { quiet = false } = {}) {
-  const result = spawnSync(command, args, { stdio: quiet ? "ignore" : "inherit" });
+// The keyless provider on a phone. g4f is pure Python — a `py3-none-any` wheel —
+// and it is two of the five packages it declares that a phone cannot install:
+// pycryptodome and brotli, which ship no Android wheel and have no pure-Python
+// fallback, and neither of which BeeCode imports. `--no-deps` is what keeps them
+// out; everything BeeCode's own path touches then arrives as a wheel that needs
+// no compiler. aiohttp is the exception: instead of a pure-Python wheel it
+// publishes prebuilt Android wheels carrying its C parser, and Termux's Python
+// 3.14 has a reported crash in it — so it comes from the sdist, which is the
+// only place AIOHTTP_NO_EXTENSIONS is read. The two belong together.
+const KEYLESS_ENV = { AIOHTTP_NO_EXTENSIONS: "1" };
+const KEYLESS_PIP = [
+  ["install", "--no-deps", "g4f"],
+  ["install", "requests", "nest-asyncio2"],
+  ["install", "--no-binary=aiohttp", "aiohttp"],
+];
+
+function run(command, args, { quiet = false, env = null } = {}) {
+  const options = { stdio: quiet ? "ignore" : "inherit" };
+  if (env) options.env = Object.assign({}, process.env, env);
+  const result = spawnSync(command, args, options);
   if (result.error) {
     console.error(`could not run ${command}: ${result.error.message}`);
     process.exit(1);
@@ -65,9 +87,57 @@ function runningBeeCode() {
   return !probe.error && /"(beecode|beeagent)\.exe"/i.test(probe.stdout || "");
 }
 
+function ensureVenv(python) {
+  if (!fs.existsSync(VENV_PYTHON) && run(python, ["-m", "venv", VENV]) !== 0) process.exit(1);
+}
+
+function keylessInstalled(python) {
+  // find_spec, not import: this asks whether g4f is in the venv at all, and
+  // making it answer on a phone costs seconds every run. The agent itself uses
+  // the same question to decide whether to fall back to the pool.
+  const probe = "import importlib.util, sys; sys.exit(importlib.util.find_spec('g4f') is None)";
+  const result = spawnSync(python, ["-c", probe], { stdio: "ignore" });
+  return !result.error && result.status === 0;
+}
+
+function addKeylessProvider(python) {
+  console.log("adding the keyless provider — g4f without the two parts a phone "
+              + "cannot install, which BeeCode never imports");
+  for (const step of KEYLESS_PIP) {
+    // The aiohttp step builds from an sdist and sits doing nothing visible for a
+    // minute; there pip's own progress is the reassurance.
+    const quiet = !step.includes("--no-binary=aiohttp");
+    if (run(python, ["-m", "pip", ...step], { quiet, env: KEYLESS_ENV }) !== 0) {
+      console.error("the keyless provider did not go in. BeeCode still works — the pool "
+                    + "or your own key answer, and `--update` retries this — but here is "
+                    + "the whole recipe, for typing it by hand:");
+      console.error("  export AIOHTTP_NO_EXTENSIONS=1");
+      for (const step2 of KEYLESS_PIP) {
+        console.error(`  ${python} -m pip ${step2.join(" ")}`);
+      }
+      console.error("  (no clang in it: none of this compiles)");
+      return;
+    }
+  }
+  if (!keylessInstalled(python)) {
+    console.error("pip was happy but g4f is not in the venv — /doctor says what it sees");
+    return;
+  }
+  console.log("keyless provider in place: beecode --provider g4f");
+  console.log("optional: pkg install python-brotli brings back the brotli codec, "
+              + "pkg install tur-repo python-tiktoken the exact token count");
+}
+
+function offerKeylessProvider(python) {
+  // A desktop gets g4f from the manifest; only here does the name have to be
+  // coaxed in past two declarations that cannot build.
+  if (!TERMUX || keylessInstalled(python)) return;
+  addKeylessProvider(python);
+}
+
 function install(python) {
   console.log(`installing BeeCode into ${VENV} — once, then every start is instant`);
-  if (!fs.existsSync(VENV_PYTHON) && run(python, ["-m", "venv", VENV]) !== 0) process.exit(1);
+  ensureVenv(python);
   if (run(VENV_PYTHON, ["-m", "pip", "install", "--upgrade", "pip"], { quiet: true }) !== 0) process.exit(1);
   // The published version does not move between commits, so `--upgrade` alone
   // reports the installed 0.1.0 as already satisfied: pip refreshes g4f around
@@ -83,14 +153,29 @@ function install(python) {
     console.error("BeeCode updated, but its dependencies did not — run `beecode --update` again");
     process.exit(1);
   }
+  // Termux gets the name from the recipe above; a desktop takes it with the
+  // manifest, and this returns without a word.
+  offerKeylessProvider(VENV_PYTHON);
 }
 
 function main() {
   const args = process.argv.slice(2);
   const update = args.includes("--update");
-  const rest = args.filter((arg) => arg !== "--update");
+  const keyless = args.includes("--keyless");
+  const rest = args.filter((arg) => arg !== "--update" && arg !== "--keyless");
 
   const python = findPython();
+  if (keyless) {
+    // The one thing the manifest leaves out on a phone, on its own, without
+    // touching the BeeCode that is already installed.
+    if (!TERMUX) {
+      console.log("this machine gets g4f with the install itself — nothing to add");
+      process.exit(0);
+    }
+    ensureVenv(python);
+    offerKeylessProvider(VENV_PYTHON);
+    process.exit(0);
+  }
   if (update) {
     if (runningBeeCode()) {
       console.error("BeeCode is running in another window, and pip cannot replace the "

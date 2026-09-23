@@ -188,8 +188,8 @@ def handle_callback(event: str, data: dict):
         render_model_switched(data.get("from", ""), data.get("to", ""))
 
     elif event == "provider_fallback":
-        # g4f cannot be installed where there is no compiler, so the pool takes
-        # the question. Say it happened, and say the one command left to do.
+        # g4f is optional and a fresh Termux install leaves it out, so the pool
+        # takes the question. Say it happened, and say the one command left to do.
         if data.get("seat"):
             _note("🐝", "no g4f on this machine — answering through the pool instead",
                   "g4f на этой машине не ставится — отвечаем через пул")

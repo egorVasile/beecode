@@ -17,7 +17,8 @@
   "os": [
     "win32",
     "linux",
-    "darwin"
+    "darwin",
+    "android"
   ],
   "homepage": "https://github.com/egorVasile/beecode",
   "repository": {
