@@ -68,8 +68,12 @@ def ctx():
 
 
 def test_available_models_falls_back_to_g4f(ctx):
+    """With no agent built, the list shown is the g4f catalogue."""
+    from beeagent.providers.g4f_provider import G4fProvider
+
     models = available_models(ctx)
-    assert "gpt-4" in models
+    assert models == G4fProvider.discover_models()
+    assert "command-a-03-2025" in models, "the measured keyless default is offered"
 
 
 def test_available_providers_includes_builtins(ctx):
@@ -86,8 +90,8 @@ def test_build_sources_keys(ctx):
 
 
 def test_dispatch_model_switch(ctx):
-    dispatch(ctx, "/model gpt-4o")
-    assert ctx.config.model == "gpt-4o"
+    dispatch(ctx, "/model command-a-03-2025")
+    assert ctx.config.model == "command-a-03-2025"
 
 
 def test_dispatch_model_unknown_does_not_switch(ctx):
@@ -97,11 +101,19 @@ def test_dispatch_model_unknown_does_not_switch(ctx):
 
 
 def test_a_model_name_with_a_space_is_reachable_and_remembered(tmp_path, monkeypatch):
-    """The picker sends the whole id; args[0] used to cut "Think Deeper" in half."""
+    """The picker sends the whole id; args[0] used to cut "Think Deeper" in half.
+
+    The shipped catalogue has no spaced id in it today, so one is injected: this
+    is about the command rejoining its arguments, not about what upstream lists.
+    """
     monkeypatch.chdir(tmp_path)
+    from beeagent.providers.g4f_provider import G4fProvider
+
+    spaced = "Think Deeper 3.5"
+    monkeypatch.setattr(G4fProvider, "discover_models",
+                        classmethod(lambda cls: [spaced, "command-a-03-2025"]))
     ctx = ReplContext(agent=None, config=BeeConfig(), session=Session())
-    spaced = next((m for m in available_models(ctx) if " " in m), None)
-    assert spaced, "the catalog does contain a two-word model id"
+    assert spaced in available_models(ctx)
 
     dispatch(ctx, f"/model {spaced}")
     assert ctx.config.model == spaced

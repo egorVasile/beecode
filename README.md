@@ -167,7 +167,7 @@ desktop Python by blocking compiled modules at import, which establishes what
 | `beecode --continue` | Resume the last saved session |
 | `beecode --tui` | Full-screen Textual interface instead of the REPL |
 | `beecode -p "explain this repo"` | One-shot: ask, print the answer, exit |
-| `beecode models` | List every model the installed g4f can reach |
+| `beecode models` | List every model the pinned keyless providers serve |
 | `beecode providers` | List configured providers |
 | `beecode plugins list` | Browse the installable skill / plugin / MCP catalog |
 | `beecode mcp list` | Show configured MCP servers |
@@ -274,8 +274,8 @@ free-tier endpoint that speaks the OpenAI API once **you** add your own key.
 /key groq <token>     store a key you obtained yourself (saved to beeagent.json, never echoed)
 /provider groq        switch; the model list and the default model follow the provider
 /models               recommended first: widest context, then the rest of the catalog
-/models --all         every model g4f knows about (600+), still biggest window first
-/models gemini        filter by name or by g4f upstream
+/models --all         every model the pinned providers serve (5, measured 2026-09-23)
+/models command-r     filter by name, or by an upstream: CohereForAI_C4AI_Command
 /model command-a-03-2025  pick one
 ```
 
@@ -286,24 +286,31 @@ says, because the claim describes a name and the measurement describes your rout
 
 ### What answers without a key
 
-"Free" upstreams move constantly, so this is measured rather than believed — and
-the numbers below were taken on g4f 8.5.7 on 2026-09-21 by sending prompts whose
-first line holds a random code the model has to repeat back:
+"Free" upstreams move constantly, so this is measured rather than believed. Two
+measurements sit in the table: the window numbers were taken on g4f 8.5.7 on
+2026-09-21 by sending prompts whose first line holds a random code the model has
+to repeat back, and the "does it still answer" column on g4f 8.5.1 on 2026-09-23
+— one request per model id to each of the two pinned providers on its own,
+retried once, with the surviving ids asked again through the shipped listing:
 
 | Route | Keyless | Result of the measurement |
 | --- | --- | --- |
-| `command-a-03-2025` (Cohere ForAI) | no | read the code back from **65536 tokens, twice**, ~2 s a step |
-| `LLM7` (model id `default`) | no | read 65536 once, then answered round two with `429 rate_limit_exceeded` |
+| `command-a-03-2025` (Cohere ForAI) | no | read the code back from **65536 tokens, twice**, ~2 s a step; answered again on 2026-09-23, in 26–56 s for one word |
+| `command-r-plus-08-2024`, `command-r-08-2024`, `command-r7b-12-2024` | no | answered the one-word prompt on the same space in 13–55 s each; none of them has a measured window, so the table prints `~ 8k` — the conservative default, not a claim about the model |
+| `default` (LLM7) | no | read 65536 once, then answered round two with `429 rate_limit_exceeded`; answered again in 0.4–10 s. LLM7's `models` list holds this one id, and llm7.io refused every other name BeeCode asked it for |
+| `command-r`, `command-r-plus`, `command-r7b-arabic-02-2025` | no | advertised by the pinned provider, but the space sent an empty completion twice for the first two and stayed silent for 95 s twice for the third — so they are not listed anywhere |
+| `gpt-4o`, `gemini-2.5-pro`, `glm-*`, `deepseek-*`, `kimi-k2`, `qwen-*`, `llama-4-*`, `grok-3`, `claude-*` | no | **dead on this provider.** Auto-routing served them; asked of the pinned providers they die as `Model gpt-4o not found` (Cohere ForAI) or `400 model_unavailable` (llm7.io). BeeCode ships no route to them without a key |
 | `gpt-4` (Yqcloud) | no | **measured 2048** — refused 4k with 文字过长, "text too long"; dropped, it reaches its upstream through an undocumented relay with spoofed browser headers |
-| `search` (GoogleSearch) | no | took 32768 without complaining, recall not verified |
+| `search` (GoogleSearch) | no | took 32768 without complaining, recall not verified; not pinned, g4f reaches it through a browser |
 | Cloudflare | no | went silent on a 2048-token prompt for 90 s; dropped, g4f reaches it with a headless browser that clears a Turnstile check |
-| `glm-4.7-flash`, `deepseek-chat`, `gemini-2.5-flash` | no | fine at 2048; at 4096 the free path returns 401, a key request, or goes quiet for minutes |
+| `glm-4.7-flash`, `deepseek-chat`, `gemini-2.5-flash` | no | fine at 2048 **while auto-routing was in use**; at 4096 the free path returns 401, a key request, or goes quiet for minutes |
 | OpenRouterFree, Nvidia, Pollinations, GeminiPro, G4FSpace, RelayRouter, OrcaRouter | no | hidden behind g4f's own broker, which demands proof-of-work "cake credits" (402) |
 | DeepInfra, Copilot, Cerebras, HuggingChat, Airforce, KiloCode, OpenCode, MetaAI, OperaAria, DeepSeek | no | Turnstile token, a live Chrome over CDP, your browser cookies, an account, or a plain 401 |
 
 That is why `command-a-03-2025` is the default model: it is the one keyless route
 measured to hold a real working session, and the same file-reading turn through it
-took 5.0 s against 35.1 s on the `gpt-4` route. Run `/window measure <model>` in
+took 5.0 s against 35.1 s on the `gpt-4` route — which the pin dropped, so it no
+longer answers here at all. Run `/window measure <model>` in
 your own session to see what *your* route carries today — the answer is cached per
 model and wins over any name-based guess.
 
@@ -311,7 +318,7 @@ model and wins over any name-based guess.
 
 | Provider | Where the free key comes from | What the free tier gives |
 | --- | --- | --- |
-| `g4f` | no key at all | public endpoints routed by g4f, ~630 models |
+| `g4f` | no key at all | two pinned keyless providers, 5 model ids — see the table above |
 | `openrouter` | openrouter.ai/settings/keys | a shelf of `:free` models, no card |
 | `groq` | console.groq.com/keys | very fast llama/qwen, generous free quota |
 | `gemini` | aistudio.google.com/apikey | flash/mini models free per minute |
@@ -342,16 +349,22 @@ the account and often the user's IP banned.
 Free endpoints come and go, so ask the code instead of a README:
 
 ```bat
-python scripts\probe_models.py            :: the curated picks
-python scripts\probe_models.py --all      :: every model g4f advertises
+python scripts\probe_models.py            :: every model BeeCode lists (5)
+python scripts\probe_models.py --all      :: the same set, read offline from the pin
 ```
+
+`--all` is the same five today: the listing and the pin are one set, because a
+request goes to LLM7 or Cohere ForAI and nowhere else.
 
 Each model gets one tiny request; the script prints `✅`/`❌`, latency and the
 reply, and `--json` writes the raw results.
 
-Last full run: **620 of 645** g4f models obeyed a one-word instruction
-(median 12.7 s) — [docs/MODELS.md](docs/MODELS.md) has the breakdown, including
-which single upstream carries half the catalog.
+Last full run: **5 of 5** listed models answered a one-word instruction
+(2026-09-23, 10–56 s each). The run that reported **620 of 645** measured g4f's
+whole catalogue, and most of those names reached their endpoint through
+auto-routing — including the browser-cleared ones — so the number no longer
+describes a BeeCode request. [docs/MODELS.md](docs/MODELS.md) keeps both, and
+says which is which.
 
 ### How big is the context window, really?
 

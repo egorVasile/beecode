@@ -141,8 +141,9 @@ def test_g4f_models_show_upstream_and_filter():
     ctx = _ctx(config=config, agent=Agent(config=config))
     out = _text(dispatch(ctx, "/models"))
     assert "served by" in out                    # which g4f provider answers
-    filtered = _text(dispatch(ctx, "/models Cloudflare"))
+    filtered = _text(dispatch(ctx, "/models LLM7"))
     assert "served by" in filtered
+    assert "default" in filtered                 # the id LLM7 actually answers
     empty = dispatch(ctx, "/models zzz-no-such-model")
     assert "nothing matches" in _text(empty).lower()
 

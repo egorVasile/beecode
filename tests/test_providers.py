@@ -61,7 +61,9 @@ def test_g4f_provider_init():
 
 def test_g4f_provider_has_models():
     p = G4fProvider()
-    assert "gpt-4" in p.models or "gpt-3.5-turbo" in p.models
+    # the two ids the pinned providers answer with their own names
+    assert "command-a-03-2025" in p.models
+    assert "default" in p.models
 
 def test_g4f_provider_is_base():
     from beeagent.providers.base import BaseProvider
@@ -69,11 +71,23 @@ def test_g4f_provider_is_base():
     assert isinstance(p, BaseProvider)
 
 
-def test_g4f_curated_models_include_glm():
+def test_g4f_curated_models_are_only_what_the_pin_serves():
+    """Every quick pick has to be reachable, or the picker offers a dead choice.
+
+    The list used to name glm, gemini, claude, gpt-4.x, kimi, qwen, llama,
+    deepseek and grok, all of which auto-routing served and nothing else can
+    reach now that the fallback is gone.
+    """
+    from beeagent.providers.g4f_provider import _pinned_models
+
     p = G4fProvider()
-    assert "glm-4.7-flash" in p.models
-    assert "glm-5.2" in p.models
-    # the route measured to carry a 64k prompt keyless leads the list
+    assert p.models, "a provider with no reachable model is not a provider"
+    advertised = set(_pinned_models())
+    unreachable = [m for m in p.models if m not in advertised]
+    assert not unreachable, f"no pinned provider advertises {unreachable}"
+    for dead in ("gpt-4o", "gemini-2.5-pro", "glm-4.7-flash", "deepseek-chat"):
+        assert dead not in p.models, f"{dead} answers only through auto-routing"
+    # the route measured to carry a 32k prompt keyless leads the list
     assert p.models[0] == "command-a-03-2025"
 
 
@@ -124,24 +138,73 @@ def test_a_stream_g4f_returns_unwrapped_survives_the_provider():
     asyncio.run(main())
 
 
-def test_discover_models_is_full_catalog():
+def test_discover_models_lists_only_what_a_pinned_provider_serves():
+    """The old contract was "every model of every working provider" — 600+ names.
+
+    A request now leaves the machine to LLM7 or CohereForAI and nowhere else, so
+    a name those two do not advertise is a dead choice in the picker, and a big
+    catalogue number is the bug rather than the guarantee. g4f's own lists still
+    overstate the space behind them, so the ids measured silent stay out too.
+    """
+    from beeagent.providers.g4f_provider import MEASURED_SILENT, _pinned_models
+
+    G4fProvider._discovered = None
     catalog = G4fProvider.discover_models()
-    # curated list first, then every model advertised by working providers
-    assert catalog[:len(G4fProvider.models)] == G4fProvider.models
-    assert "glm-4.7-flash" in catalog
-    assert len(catalog) > 100   # installed g4f advertises hundreds
-    assert len(catalog) == len(set(catalog))  # no duplicates
+    advertised = set(_pinned_models())
+
+    assert catalog[:len(G4fProvider.models)] == G4fProvider.models, "curated picks lead"
+    assert len(catalog) == len(set(catalog)), "no duplicates"
+    extra = set(catalog) - advertised
+    assert not extra, f"no pinned provider advertises {sorted(extra)}"
+    assert not set(catalog) & set(MEASURED_SILENT), "an id that never answered is listed"
+    assert len(catalog) == len(advertised - set(MEASURED_SILENT))
+    for dead in ("gpt-4o", "llama-3.1-70b", "glm-4.7-flash"):
+        assert dead not in catalog, f"{dead} was reachable only through auto-routing"
 
 
-def test_available_models_uses_full_catalog():
+def test_discover_models_never_asks_the_network(monkeypatch):
+    """`/models` opens a picker while you type; the scan stays a package read."""
+    import socket
+
+    def no_way(*args, **kwargs):
+        raise AssertionError("discover_models reached the network")
+
+    monkeypatch.setattr(socket, "socket", no_way)
+    monkeypatch.setattr(socket, "create_connection", no_way)
+    G4fProvider._discovered = None
+    try:
+        assert G4fProvider.discover_models()
+    finally:
+        G4fProvider._discovered = None
+
+
+def test_available_models_is_the_pinned_catalog():
     from beeagent.ui.commands import ReplContext, available_models
     from beeagent.config.schema import BeeConfig
     from beeagent.core.session import Session
 
     ctx = ReplContext(agent=None, config=BeeConfig(), session=Session())
     models = available_models(ctx)
-    assert "glm-4.7-flash" in models
-    assert "gpt-4" in models
+    assert models == G4fProvider.discover_models()
+    assert "command-a-03-2025" in models
+    assert "gpt-4" not in models, "nothing on the pin answers that name"
+
+
+def test_served_by_credits_only_the_pinned_providers():
+    """The `/models` table prints `upstream_map()` under "served by".
+
+    Scanning all of g4f for it credited BlackboxPro and Cloudflare with models
+    this provider can no longer ask them for — a second listing that disagreed
+    with the first.
+    """
+    from beeagent.providers.g4f_provider import KEYLESS_PROVIDERS
+
+    G4fProvider._upstream_map = None
+    mapping = G4fProvider.upstream_map()
+    named = {name for providers in mapping.values() for name in providers}
+    assert named <= set(KEYLESS_PROVIDERS), f"the table names providers we never call: {named}"
+    for model in G4fProvider.discover_models():
+        assert mapping.get(model), f"{model} is listed as if nothing served it"
 
 
 def test_by_window_leads_with_the_biggest_context():

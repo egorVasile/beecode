@@ -623,8 +623,10 @@ def _persist_config(ctx) -> None:
 def _cmd_model(ctx, args):
     if not args:
         return CommandResult(output=Text(f"current model: {ctx.config.model}  (see /models)", style="dim"))
-    # Two ids in the catalog contain a space ("Think Deeper"); taking args[0]
-    # made them unreachable from the picker, which sends the whole name.
+    # A picker sends the whole name, and model ids may contain a space, so the
+    # arguments are rejoined rather than taken one at a time. The current g4f
+    # catalogue happens to have none, but cutting at the first space would make
+    # any such id unreachable the day one appears.
     name = " ".join(args).strip()
     if name not in available_models(ctx):
         return _err(f"Unknown model '{name}'. Run /models to see the list.")

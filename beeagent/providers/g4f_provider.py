@@ -52,6 +52,31 @@ def _keyless_providers() -> list:
     return providers
 
 
+def _pinned_models() -> list[str]:
+    """The model ids the pinned providers advertise, read off the installed package.
+
+    Offline and instant — provider classes carry their lists as attributes — and
+    the only catalogue BeeCode may claim, since a request now goes nowhere else.
+    A name outside it is refused before it leaves the machine ("Model x not
+    found" from CohereForAI) or answered 400 by LLM7 ("model_unavailable"):
+    measured 2026-09-23, LLM7 rejected all 31 curated ids but its own `default`.
+    """
+    found: list[str] = []
+    for cls in _keyless_providers():
+        for model in getattr(cls, "models", None) or []:
+            if isinstance(model, str) and model not in found:
+                found.append(model)
+    return found
+
+
+# g4f's lists overstate what the endpoint behind them answers. Measured
+# 2026-09-23 against CohereForAI's Hugging Face space, twice each: `command-r`
+# and `command-r-plus` came back with an empty completion and
+# `command-r7b-arabic-02-2025` stayed silent for 95 s. They are advertised, so
+# they are excluded by name rather than left to be rediscovered as failures.
+MEASURED_SILENT = ("command-r", "command-r-plus", "command-r7b-arabic-02-2025")
+
+
 def _reasoning_text(delta) -> str:
     """Extract thinking tokens from a chunk delta, whatever the provider calls them."""
     for attr in ("reasoning", "reasoning_content", "reasoning_content_text", "thinking"):
@@ -75,50 +100,49 @@ async def _await_or_keep(response):
 
 class G4fProvider(BaseProvider):
     name = "g4f"
-    # Quick picks, ordered by how much context they can carry: first the one
-    # route measured here to read a 32k prompt keyless, then the wide-window
-    # names, then the popular small ones. `/models` sorts the whole catalog the
-    # same way and marks what was measured rather than guessed.
+    # Every id here answered through the pinned path in one measured request
+    # (2026-09-23, g4f 8.5.1, "Reply with exactly: BEE-OK", retried once). What
+    # the old list carried — gemini, claude, gpt-4.x, kimi, qwen, llama,
+    # deepseek, glm, grok, sonar — was served by g4f's auto-routing, and that
+    # fallback is gone: asked today each of those names dies in g4f's model
+    # lookup ("Model gemini-2.5-pro not found") or comes back
+    # `400 model_unavailable` from llm7.io, which refuses every id but its own.
+    #
+    # Widest measured context first: `command-a-03-2025` is the route measured
+    # holding a 32k prompt and the config default, the next three answer on the
+    # same keyless Cohere space, and `default` is LLM7's only id — it will not
+    # say which model is behind it, which is why it comes last.
     models = [
         "command-a-03-2025",
-        "gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.8-pro",
-        "claude-3.5-sonnet", "claude-3-haiku",
-        "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.5", "gpt-oss-120b",
-        "o4-mini", "kimi-k2", "qwen-3-235b", "qwen-3-32b", "qwen-72b",
-        "llama-4-scout", "llama-4-maverick", "mistral-small-3.1-24b", "sonar",
-        "deepseek-v3", "deepseek-r1", "deepseek-chat", "glm-5.2",
-        "grok-3", "gemini-pro",
-        # Measured here at 2048 tokens: answers fast, refuses anything longer.
-        "gpt-4", "glm-4.7-flash", "gpt-3.5-turbo",
+        "command-r-plus-08-2024",
+        "command-r-08-2024",
+        "command-r7b-12-2024",
+        "default",
     ]
 
-    # Cache for the discovered cross-provider catalog.
+    # Cache for the catalog of the pinned providers.
     _discovered: list[str] | None = None
 
     @classmethod
     def discover_models(cls) -> list[str]:
-        """Every model advertised by any working g4f provider.
+        """Every model a pinned provider advertises and actually answers.
 
-        Pure offline scan of the installed g4f package (provider classes carry
-        their model lists as attributes), so it is instant and cached. The
-        curated `models` list comes first, discovered extras follow.
+        There is nothing else to discover: a request goes to LLM7 or
+        CohereForAI or nowhere, so scanning all of `g4f.Provider.__providers__`
+        listed hundreds of names this provider cannot serve. Still offline and
+        instant — the two classes carry their lists as attributes — and still
+        excludes `MEASURED_SILENT`, the ids they advertise but answer with an
+        empty completion or with silence.
         """
         if cls._discovered is not None:
             return list(cls._discovered)
         found: list[str] = []
         seen = set(cls.models)
         found.extend(cls.models)
-        try:
-            import g4f.Provider as P
-            for pr in P.__providers__:
-                if not getattr(pr, "working", False):
-                    continue
-                for m in getattr(pr, "models", None) or []:
-                    if isinstance(m, str) and m not in seen:
-                        seen.add(m)
-                        found.append(m)
-        except Exception:
-            pass
+        for model in _pinned_models():
+            if model not in seen and model not in MEASURED_SILENT:
+                seen.add(model)
+                found.append(model)
         cls._discovered = found
         return list(found)
 
@@ -167,20 +191,20 @@ class G4fProvider(BaseProvider):
 
     @classmethod
     def upstream_map(cls) -> dict[str, list[str]]:
-        """model -> the g4f providers that advertise it (offline, cached)."""
+        """model -> the pinned provider that advertises it (offline, cached).
+
+        The `/models` table prints this under "served by", so scanning all of
+        g4f here credited BlackboxPro, Cloudflare and the rest with serving
+        models this provider can never ask them for. Only the two pinned
+        classes answer, so only they are named.
+        """
         if cls._upstream_map is not None:
             return cls._upstream_map
         mapping: dict[str, list[str]] = {}
-        try:
-            import g4f.Provider as P
-            for pr in P.__providers__:
-                if not getattr(pr, "working", False):
-                    continue
-                for model in getattr(pr, "models", None) or []:
-                    if isinstance(model, str):
-                        mapping.setdefault(model, []).append(pr.__name__)
-        except Exception:
-            pass
+        for pr in _keyless_providers():
+            for model in getattr(pr, "models", None) or []:
+                if isinstance(model, str):
+                    mapping.setdefault(model, []).append(pr.__name__)
         cls._upstream_map = mapping
         return mapping
 
