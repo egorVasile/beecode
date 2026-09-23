@@ -369,3 +369,54 @@ def test_an_unreadable_or_unknown_key_blob_is_a_startup_refusal(monkeypatch):
     monkeypatch.setenv("BEECODE_POOL_KEYS", '{"somewhere-else": ["k"]}')
     with pytest.raises(SystemExit):
         pool_server.keys_from_everywhere("nowhere.json")
+
+
+def test_a_seat_is_told_which_address_it_was_recorded_under(pool):
+    """Without this, a proxy chain read wrongly looks like a broken pool: the
+    number is the caller's own address, and it is the first thing to check."""
+    with httpx.Client() as client:
+        seat = client.post(pool.base + "/v1/enroll", json={}).json()
+        assert seat["seen_from"] == "127.0.0.1"
+        assert "debug" not in seat, "the internals stay off unless asked for"
+
+
+def test_the_debug_block_shows_the_chain_the_proxy_actually_wrote(pool, monkeypatch):
+    monkeypatch.setenv("BEECODE_POOL_DEBUG", "1")
+    monkeypatch.setenv("BEECODE_POOL_TRUSTED_PROXY", "127.0.0.0/8")
+    with httpx.Client() as client:
+        seat = client.post(pool.base + "/v1/enroll", json={},
+                           headers={"X-Forwarded-For": "203.0.113.9, 10.192.0.7"}).json()
+    assert seat["debug"]["forwarded_for"] == "203.0.113.9, 10.192.0.7"
+    assert seat["seen_from"] == "10.192.0.7", "the rightmost hop is the one we were told to trust"
+
+
+def test_behind_cloudflare_the_address_that_counts_is_the_one_it_verified(pool, monkeypatch):
+    """Measured on Render: the forwarded chain ends in shared edge hops, so the
+    rightmost-public-hop rule records a Cloudflare address instead of a person —
+    and three seats per address stops meaning three seats per install."""
+    monkeypatch.setenv("BEECODE_POOL_TRUSTED_PROXY", "127.0.0.0/8, 10.0.0.0/8")
+    forged = {"X-Forwarded-For": "146.120.36.40, 172.71.150.29, 10.192.163.192",
+              "CF-Connecting-IP": "146.120.36.40"}
+    with httpx.Client() as client:
+        seat = client.post(pool.base + "/v1/enroll", json={}, headers=forged).json()
+        assert seat["seen_from"] == "146.120.36.40"
+
+
+def test_a_forwarded_address_is_not_believed_from_a_stranger(pool, monkeypatch):
+    """CF-Connecting-IP is only the truth when it arrives from the proxy we were
+    told to trust. From anywhere else it is a header anyone can write."""
+    monkeypatch.setenv("BEECODE_POOL_TRUSTED_PROXY", "10.0.0.0/8")   # not loopback
+    with httpx.Client() as client:
+        seat = client.post(pool.base + "/v1/enroll", json={},
+                           headers={"CF-Connecting-IP": "146.120.36.40"}).json()
+        assert seat["seen_from"] == "127.0.0.1", "the socket peer is what we saw"
+
+
+def test_the_pool_can_cap_seats_per_day_whatever_the_addresses_say(pool, monkeypatch):
+    monkeypatch.setenv("BEECODE_POOL_ENROLLS_PER_DAY", "2")
+    with httpx.Client() as client:
+        assert client.post(pool.base + "/v1/enroll", json={}).status_code == 200
+        assert client.post(pool.base + "/v1/enroll", json={}).status_code == 200
+        third = client.post(pool.base + "/v1/enroll", json={})
+        assert third.status_code == 429
+        assert "seats" in third.json()["error"] or "today" in third.json()["error"]

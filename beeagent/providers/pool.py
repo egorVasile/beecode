@@ -19,10 +19,12 @@ import httpx
 from .base import BaseProvider
 
 TIMEOUT_CONNECT = 10.0
-# A free Render instance sleeps after fifteen idle minutes, and the request that
-# wakes it is not a failure — it only arrives before the box is up. Without this
-# wait a working pool looks broken once a day, every day.
-COLD_START_WAIT = 25.0
+# A free Render instance sleeps after fifteen idle minutes, and the platform's own
+# dashboard says a request that wakes it can wait "50 seconds or more" — measured
+# against this pool on 2026-09-23, so the wait is set to cover what they promise
+# rather than what sounds reasonable. Without it the first ask of the day reports
+# a working pool as broken.
+COLD_START_WAIT = 55.0
 
 
 class PoolError(RuntimeError):
