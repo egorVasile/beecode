@@ -1415,6 +1415,25 @@ def _cmd_clear(ctx, args):
     return CommandResult(action="clear")
 
 
+def _pool_provider_refresh(ctx) -> None:
+    """Hand a freshly stored seat to the provider object that is already running.
+
+    The Agent builds its providers once, from the config as it stood at startup.
+    `/pool enroll` wrote the token into the config and the file, but the live
+    PoolProvider kept the empty token it was constructed with -- so a person who
+    had just taken a seat was told "no seat token yet, run /pool enroll" on every
+    single message, and only a restart fixed it.
+    """
+    agent = getattr(ctx, "agent", None)
+    if agent is None:
+        return
+    provider = agent.providers.get("pool")
+    if provider is None:
+        return
+    provider.url = (ctx.config.pool_url or "").rstrip("/")
+    provider.token = ctx.config.pool_token or ""
+
+
 def _cmd_pool(ctx, args):
     """Address of the key pool, the seat this install holds, and its budget."""
     from beeagent.providers import pool as pool_mod
@@ -1430,6 +1449,7 @@ def _cmd_pool(ctx, args):
                           "нужен полный адрес: /pool url https://pool.example.com"))
         config.pool_url = url.rstrip("/")
         _persist_config(ctx)
+        _pool_provider_refresh(ctx)
         note = "" if url.startswith("https://") else L(
             "\n  ⚠️ plain http — your seat token travels in the clear",
             "\n  ⚠️ простой http — токен места едет открытым текстом")
@@ -1450,6 +1470,7 @@ def _cmd_pool(ctx, args):
             return _err(L("the pool gave no seat token", "пул не дал токен места"))
         config.pool_token = token
         _persist_config(ctx)
+        _pool_provider_refresh(ctx)
         text = Text()
         text.append(L("🐝 seat taken. ", "🐝 место получено. ", ), style="bold #ffcc00")
         text.append(L(f"token …{token[-4:]} saved in beeagent.json — "

@@ -213,3 +213,24 @@ def test_a_refused_provider_switch_says_which_provider_is_still_active():
     assert ctx.config.provider == "g4f", "the switch must not happen"
     assert "g4f" in text.split("still on")[-1] or "ты всё ещё" in text, \
         f"the message must name what is still active: {text!r}"
+
+
+def test_a_freshly_enrolled_seat_reaches_the_running_provider():
+    """The Agent builds its providers once, so a token written afterwards landed
+    nowhere: every message said "no seat token yet — /pool enroll" until restart.
+    """
+    from beeagent.core.agent import Agent
+    from beeagent.providers.pool import PoolProvider
+
+    config = BeeConfig(provider="pool", pool_url="https://pool.example")
+    agent = Agent(config=config)
+    live = PoolProvider(url="", token="")          # built before the seat existed
+    agent.providers.register(live, replace=True)
+    ctx = ReplContext(agent=agent, config=config, session=Session())
+
+    config.pool_token = "seat-token-just-minted"
+    from beeagent.ui.commands import _pool_provider_refresh
+    _pool_provider_refresh(ctx)
+
+    assert live.token == "seat-token-just-minted", "the running provider must see the seat"
+    assert live.url == "https://pool.example"
