@@ -596,3 +596,152 @@ def test_a_refusal_names_the_model_that_refused(pool):
     assert "qwen3.8-max" in body["error"], body
     assert "/model" in body["error"], "say what to do about it"
     assert body["model"] == "qwen3.8-max"
+
+
+class InterfaceError(Exception):
+    """Named like pg8000's, which is how store.py recognises a dead socket."""
+
+
+def _detached_store(replacement, initial=None):
+    """A PostgresConnection with its socket swapped, so no database is involved."""
+    import store
+
+    obj = object.__new__(store.PostgresConnection)
+    obj.url = "postgresql://someone@else/neondb"
+    obj._gate = threading.RLock()
+    obj._db = initial if initial is not None else Dead()
+    obj._commit = obj._db.commit
+    obj._rollback = obj._db.rollback
+    obj._reopened = 0
+
+    def _reconnect():
+        obj._reopened += 1
+        obj._db = replacement
+        obj._commit = replacement.commit
+        obj._rollback = replacement.rollback
+
+    obj._connect = _reconnect
+    return obj
+
+
+class Dead:
+    """Every statement over it fails the way a closed socket fails."""
+
+    def cursor(self):
+        raise InterfaceError("network error")
+
+    def commit(self):
+        raise InterfaceError("network error")
+
+    def rollback(self):
+        raise InterfaceError("network error")
+
+
+class Alive:
+    def __init__(self):
+        self.statements = []
+
+    def cursor(self):
+        outer = self
+
+        class _C:
+            description = [("n",)]
+
+            def execute(self, sql, params=()):
+                outer.statements.append(sql)
+
+            def fetchall(self):
+                return [(1,)]
+
+        return _C()
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+def test_a_dropped_database_socket_is_reopened_rather_than_failing_forever():
+    """Neon closes an idle connection and a free instance sleeps.
+
+    Both leave the socket opened at boot dead, and the pool would answer every
+    later request with a network error forever -- which is exactly how it looked
+    from outside: 502 with no body, and `/models` reporting no models.
+    """
+    alive = Alive()
+    conn = _detached_store(alive)
+
+    result = conn.execute("SELECT count(*) FROM tokens").fetchone()
+
+    assert conn._reopened == 1, "the dead socket should have been replaced once"
+    assert alive.statements == ["SELECT count(*) FROM tokens"]
+    assert result["n"] == 1
+
+
+def test_a_statement_the_database_rejected_is_not_retried():
+    """A bad query fails the same way forever, so reconnecting only hides it."""
+
+    class Wrong:
+        def cursor(self):
+            class _C:
+                description = None
+
+                def execute(self, sql, params=()):
+                    raise ValueError("operator does not exist: text = date")
+
+                def fetchall(self):
+                    return []
+
+            return _C()
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+    conn = _detached_store(Wrong(), initial=Wrong())
+    with pytest.raises(ValueError):
+        conn.execute("SELECT nonsense")
+    assert conn._reopened == 0
+
+
+def test_a_crashing_handler_still_answers_json(pool, monkeypatch):
+    """An exception that escapes the handler becomes an empty 502 at Cloudflare.
+
+    That is what made this outage unreadable: the client saw no models and no
+    reason, because nothing ever explained itself.
+    """
+
+    def boom(token):
+        raise RuntimeError("database link dropped")
+
+    monkeypatch.setattr(pool_server, "seat_for", boom)
+    with httpx.Client() as client:
+        answer = client.get(pool.base + "/v1/models",
+                            headers={"Authorization": "Bearer whatever"})
+    assert answer.status_code == 502
+    assert "error" in answer.json(), "the body must say something"
+    assert "RuntimeError" in answer.json()["error"]
+
+
+def test_the_measured_list_survives_a_provider_that_will_not_answer(pool, monkeypatch):
+    """A seat should not lose the catalogue because the listing call failed.
+
+    crax blocks some networks outright, so `list_upstream_models` returning []
+    means "could not ask", not "has nothing" -- and the measured ids are the
+    answer either way.
+    """
+    monkeypatch.setattr(pool_server, "list_upstream_models", lambda p, k: [])
+    monkeypatch.setitem(pool_server._state, "keys", {"crax": ["crk_live_test"]})
+    monkeypatch.setitem(pool_server._models_cache, "at", 0.0)
+    monkeypatch.setitem(pool_server._models_cache, "ids", [])
+
+    ids, note = pool_server.cached_models()
+
+    assert note == ""
+    assert ids, "the measured list must come through"
+    assert "qwen3-coder-480b" in ids
+    assert "seedream-5" not in ids, "an image model never belongs in a chat list"
+    assert "grok-code-fast-1" not in ids, "measured at 23.7s, too slow to offer"
