@@ -15,6 +15,12 @@ from beeagent.providers import pool as pool_mod
 from beeagent.providers.pool import PoolError
 
 
+@pytest.fixture(autouse=True)
+def install_key_in_tmp(tmp_path, monkeypatch):
+    """Signing must not create a key in the home directory of whoever runs this."""
+    monkeypatch.setenv("BEECODE_POOL_KEY_FILE", str(tmp_path / "pool-key.json"))
+
+
 class FakeResponse:
     def __init__(self, status=200, body=None):
         self.status_code = status
@@ -47,12 +53,15 @@ class Flaky:
         if self.calls <= self.failures:
             raise httpx.ConnectError("connection refused")
 
-    async def post(self, url, json=None, headers=None):
+    async def post(self, url, content=None, headers=None):
         self._connect()
+        assert content, "the body is sent as bytes so the signature covers it"
+        json.loads(content)
         return FakeResponse()
 
     @asynccontextmanager
-    async def stream(self, method, url, json=None, headers=None):
+    async def stream(self, method, url, content=None, headers=None):
+        assert json.loads(content)["stream"] is True
         self._connect()
         outer = self
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import AsyncIterator
 
 import httpx
@@ -76,11 +77,74 @@ def _headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}", "User-Agent": f"beecode/{__version__}"}
 
 
+def install_key():
+    """This machine's signing key: made once, kept in `~/.beecode`, never sent.
+
+    Per machine rather than per project on purpose — BeeCode keeps its settings in
+    the folder it runs from, and an install key per folder would mean a new seat
+    for every project the same person opens, which is exactly what the daily seat
+    cap exists to limit.
+    """
+    import os
+    import secrets
+
+    from beeagent.utils import ed25519
+
+    override = os.environ.get("BEECODE_POOL_KEY_FILE") or ""
+    path = Path(override) if override else Path.home() / ".beecode" / "pool-key.json"
+    seed = None
+    if path.exists():
+        try:
+            stored = json.loads(path.read_text(encoding="utf-8"))
+            raw = bytes.fromhex(str(stored.get("seed") or ""))
+            seed = raw if len(raw) == 32 else None
+        except (OSError, ValueError):
+            seed = None
+    if seed is None:
+        seed = secrets.token_bytes(32)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"seed": seed.hex()}), encoding="utf-8")
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass                      # Windows has no file bits to set
+    public = ed25519.public_key(seed)
+    return seed, public.hex(), public[:8].hex()
+
+
+def signed_headers(seed: bytes, public_hex: str, body: bytes) -> dict:
+    """Prove the request came from this install, without proving anything twice.
+
+    The signature covers the timestamp, a fresh nonce and the bytes of the body:
+    a captured request therefore dies in two minutes, and one captured inside that
+    window cannot be sent a second time.
+    """
+    import hashlib
+    import secrets
+    import time
+
+    from beeagent.utils import ed25519
+
+    stamp = str(time.time())
+    nonce = secrets.token_hex(16)
+    digest = hashlib.sha256(body).hexdigest()
+    signature = ed25519.sign(seed, f"{stamp}\n{nonce}\n{digest}".encode())
+    return {"X-Seat-Timestamp": stamp, "X-Seat-Nonce": nonce,
+            "X-Seat-Signature": signature.hex()}
+
+
 def enroll(url: str, timeout: float = 15.0) -> dict:
-    """Ask the pool for a seat. Returns its answer: token, budgets, approval."""
+    """Ask the pool for a seat, naming this install as the one that owns it.
+
+    Only the public half goes out, and only this once; the pool keeps it and
+    refuses every later request that cannot sign with the key beside it.
+    """
+    seed, public, device = install_key()
     endpoint = url.rstrip("/") + "/v1/enroll"
+    body = json.dumps({"device": device, "public_key": public}).encode()
     with httpx.Client(timeout=timeout) as client:
-        response = client.post(endpoint, json={})
+        response = client.post(endpoint, content=body,
+                               headers={"Content-Type": "application/json"})
     if response.status_code != 200:
         raise PoolError(_reason(response.status_code, _safe_json(response)))
     return _safe_json(response) or {}
@@ -141,12 +205,25 @@ class PoolProvider(BaseProvider):
                 await asyncio.sleep(COLD_START_WAIT)
         return ""                       # unreachable: every path returns or raises
 
+    def _signed(self, body: dict) -> tuple[bytes, dict]:
+        """The bytes to send and the headers that vouch for them.
+
+        Sent as bytes rather than as `json=`: httpx would serialise the payload
+        itself, and a signature over a different spelling of the same object is
+        not a signature.
+        """
+        seed, public, _device = install_key()
+        raw = json.dumps(body).encode()
+        headers = _headers(self._require()) | signed_headers(seed, public, raw)
+        headers["Content-Type"] = "application/json"
+        return raw, headers
+
     async def _chat(self, messages: list[dict], model: str, token: str) -> str:
+        raw, headers = self._signed(self._body(messages, model, False))
         async with httpx.AsyncClient(timeout=httpx.Timeout(self.idle_timeout,
                                                            connect=TIMEOUT_CONNECT)) as client:
-            response = await client.post(self.url + "/v1/chat/completions",
-                                         json=self._body(messages, model, False),
-                                         headers=_headers(token))
+            response = await client.post(self.url + "/v1/chat/completions", content=raw,
+                                         headers=headers)
         if response.status_code != 200:
             raise PoolError(_reason(response.status_code, _safe_json(response)))
         body = _safe_json(response) or {}
@@ -173,11 +250,11 @@ class PoolProvider(BaseProvider):
                 await asyncio.sleep(COLD_START_WAIT)
 
     async def _stream(self, messages: list[dict], model: str, token: str) -> AsyncIterator:
+        raw, headers = self._signed(self._body(messages, model, True))
         timeout = httpx.Timeout(self.idle_timeout, connect=TIMEOUT_CONNECT)
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("POST", self.url + "/v1/chat/completions",
-                                     json=self._body(messages, model, True),
-                                     headers=_headers(token)) as response:
+                                     content=raw, headers=headers) as response:
                 if response.status_code != 200:
                     await response.aread()
                     raise PoolError(_reason(response.status_code, _safe_json(response)))
