@@ -5,7 +5,7 @@ from beeagent.core.session import Session
 from beeagent.ui.commands import (
     COMMANDS, HANDLERS, ReplContext,
     get_suggestions, build_sources, dispatch,
-    available_models, available_providers,
+    available_models, available_providers, model_choices,
 )
 
 SOURCES = {
@@ -173,3 +173,43 @@ def test_readme_command_table_matches_the_registry():
     assert BEGIN in text and END in text
     documented = text.split(BEGIN, 1)[1].split(END, 1)[0].strip()
     assert documented == build_table().strip(), "run: python scripts/sync_readme.py"
+
+
+def _pool_ctx(url="https://pool.that.will.not.answer"):
+    """A context on the pool provider, with a seat token that cannot reach it."""
+    from beeagent.core.agent import Agent
+
+    config = BeeConfig(provider="pool", pool_url=url, pool_token="seattoken")
+    return ReplContext(agent=Agent(config=config), config=config, session=Session())
+
+
+def test_the_pool_still_offers_its_models_when_the_box_cannot_be_reached():
+    """A free instance sleeps; an empty picker reads as "the pool has no models".
+
+    That sent a person to change provider while the box was merely waking up. The
+    measured list ships with the client for exactly this case.
+    """
+    from beeagent.providers.pool import PoolProvider
+
+    rows = model_choices(_pool_ctx())
+    assert rows, "the picker must not be empty because one request failed"
+    assert [r[0] for r in rows] == PoolProvider.models
+    assert "qwen3-coder-480b" in rows[0][1]
+
+
+def test_a_non_g4f_picker_labels_the_window_like_every_other():
+    """The rows used to be bare names, so another provider looked like a dumber screen."""
+    rows = model_choices(_pool_ctx())
+    label = rows[0][1]
+    assert "k" in label or "M" in label, f"no window on the row: {label!r}"
+
+
+def test_a_refused_provider_switch_says_which_provider_is_still_active():
+    """`/provider crax` with no key leaves you on g4f -- and the model list is
+    then g4f's, which one real user read as crax listing the wrong models."""
+    ctx = ReplContext(agent=None, config=BeeConfig(), session=Session())
+    answer = dispatch(ctx, "/provider crax")
+    text = str(getattr(answer, "output", "")) + str(getattr(answer, "error", "") or "")
+    assert ctx.config.provider == "g4f", "the switch must not happen"
+    assert "g4f" in text.split("still on")[-1] or "ты всё ещё" in text, \
+        f"the message must name what is still active: {text!r}"

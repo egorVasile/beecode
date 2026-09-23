@@ -246,7 +246,14 @@ def model_choices(ctx: ReplContext) -> list:
 
     models = available_models(ctx, fetch=True)
     if (getattr(ctx.config, "provider", "") or "g4f") != "g4f":
-        return list(models)
+        # The star is a judgement about the g4f catalogue -- "measured to hold a
+        # wide session" -- and no other provider earns it by existing here. The
+        # window still belongs on the row: it is keyed by model id, and a bare
+        # name made every non-g4f list look like a different, dumber screen.
+        return [(model, f"   {model}  ·  "
+                        + ("✔ " if windows.measured(model) else "~ ")
+                        + format_window(advertised_window(model)))
+                for model in models]
 
     ordered = G4fProvider.by_window(models)
     wide = set(G4fProvider.recommended_models(models=ordered))
@@ -646,10 +653,12 @@ def _cmd_provider(ctx, args):
               f"текущий провайдер: {ctx.config.provider}  — остальные в /providers"), style="dim"))
     name = args[0].lower()
     if name in BY_NAME and not key_for(BY_NAME[name], ctx.config.api_keys):
+        # Say out loud that nothing changed. The refusal alone let a person open
+        # /model, see another provider's names, and conclude the list was broken.
         return _err(L(f"{BY_NAME[name].label} needs a key of your own: /key {name} <token> "
-                      f"(free at {BY_NAME[name].signup})",
+                      f"(free at {BY_NAME[name].signup}) — still on {ctx.config.provider}",
                       f"{BY_NAME[name].label} нужен твой ключ: /key {name} <токен> "
-                      f"(бесплатно на {BY_NAME[name].signup})"))
+                      f"(бесплатно на {BY_NAME[name].signup}) — ты всё ещё на {ctx.config.provider}"))
     if ctx.agent is not None and ctx.agent.providers.get(name) is None:
         return _err(L(f"provider '{name}' is not registered — /providers shows what works",
                       f"провайдер '{name}' не зарегистрирован — список в /providers"))

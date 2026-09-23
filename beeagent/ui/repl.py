@@ -237,13 +237,20 @@ class BeeCompleter(Completer):
 # argument. Each maps to (dialog title, values callable, command that applies
 # the chosen value, callable returning the currently active value).
 def _picker_specs(ctx: ReplContext):
+    # The provider belongs in the title. A person who ran `/provider crax` and was
+    # refused -- no key -- stays on g4f, and an unlabelled list of g4f model names
+    # reads as "these are crax's models", which is how one real session ended with
+    # the conclusion that the model list ignores the provider.
+    provider = getattr(ctx.config, "provider", "") or "g4f"
+    model_title = L(f"🐝 Select model — provider: {provider}"
+                    " — ★ recommended, widest context first",
+                    f"🐝 Выбор модели — провайдер: {provider}"
+                    " — ★ рекомендуемые, сначала с большим контекстом")
     return {
-        "models":    (L("🐝 Select model — ★ recommended, widest context first",
-                        "🐝 Выбор модели — ★ рекомендуемые, сначала с большим контекстом"),
+        "models":    (model_title,
                      lambda: model_choices(ctx), "/model",
                      lambda: ctx.config.model),
-        "model":     (L("🐝 Select model — ★ recommended, widest context first",
-                        "🐝 Выбор модели — ★ рекомендуемые, сначала с большим контекстом"),
+        "model":     (model_title,
                      lambda: model_choices(ctx), "/model",
                      lambda: ctx.config.model),
         "providers": (L("🐝 Select provider", "🐝 Выбрать провайдер"), lambda: available_providers(ctx), "/provider",
