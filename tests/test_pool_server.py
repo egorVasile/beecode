@@ -745,3 +745,35 @@ def test_the_measured_list_survives_a_provider_that_will_not_answer(pool, monkey
     assert "qwen3-coder-480b" in ids
     assert "seedream-5" not in ids, "an image model never belongs in a chat list"
     assert "grok-code-fast-1" not in ids, "measured at 23.7s, too slow to offer"
+
+
+def test_an_offered_model_stays_on_the_account_that_was_measured_on_it():
+    """Routing used to be decided by the order MODEL_HINTS was written in.
+
+    `qwen` (openrouter) is written before `qwen3-coder`, and both fit
+    `qwen3-coder-480b`, so the shorter hint won. With only one provider loaded the
+    one-provider fallback covered it up, and the models kept answering -- which is
+    why this went unseen. Add a second provider's keys and every measured crax
+    model silently moves to an account that was never measured for it: same code,
+    same models, different answers.
+    """
+    saved = dict(pool_server._state["keys"])
+    try:
+        pool_server._state["keys"] = {"crax": ["c"], "groq": ["g"], "together": ["t"],
+                                      "openrouter": ["o"], "cerebras": ["e"]}
+        for provider, measured in pool_server.MEASURED_CHAT.items():
+            for model in measured:
+                assert pool_server.provider_for(model) == provider, \
+                    f"{model} left {provider} for {pool_server.provider_for(model)}"
+    finally:
+        pool_server._state["keys"] = saved
+
+
+def test_a_model_nobody_measured_is_still_routed_by_its_hint():
+    """The measured list must not swallow the generic routing."""
+    saved = dict(pool_server._state["keys"])
+    try:
+        pool_server._state["keys"] = {"crax": ["c"], "groq": ["g"]}
+        assert pool_server.provider_for("llama-3-8b-instant") == "groq"
+    finally:
+        pool_server._state["keys"] = saved
