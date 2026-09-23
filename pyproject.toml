@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "beeagent"
-version = "0.3.0"
+version = "4.0.0"
 description = "BeeCode — a free AI coding agent for your terminal, powered by g4f (no API key)"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -28,15 +28,16 @@ dependencies = [
     "httpx>=0.25",
     "prompt_toolkit>=3.0",
     "textual>=0.60",
-    # The two BeeCode asks for that are not pure Python: g4f drags in aiohttp,
-    # brotli and pycryptodome, and tiktoken is Rust plus `regex`. PyPI publishes
-    # no Android wheel for them and Termux ships no compiler, so on a phone they
-    # are left out and the install goes through. What a phone gives up is the
-    # keyless provider and the exact token count — /pool or /key <provider>
-    # answers instead, and counting falls back to an over-estimate in
-    # beeagent/utils/tokens.py, which is the safe direction. Both packages do
-    # exist in TurboTermux (`pkg install tur-repo python-tiktoken`) for anyone
-    # who wants them back.
+    # g4f is pure Python itself, but declares pycryptodome and brotli, which have
+    # no Android wheel and no pure-Python fallback, so `pip install beecode` on a
+    # phone dies building them for code BeeCode never imports. tiktoken is Rust.
+    # Neither can be skipped from inside a dependency spec -- a manifest has no
+    # "--no-deps" -- so both are marked off on Android and the README gives the
+    # recipe that installs g4f without them. BeeCode runs either way: the pool or
+    # /key answers instead of g4f, and counting falls back to a conservative
+    # over-estimate in beeagent/utils/tokens.py, which is the safe direction. Both
+    # exist in TurboTermux (`pkg install tur-repo python-tiktoken`) for anyone who
+    # wants them back.
     'g4f>=0.3.0; sys_platform != "android" and platform_system != "Android"',
     'tiktoken; sys_platform != "android" and platform_system != "Android"',
 ]

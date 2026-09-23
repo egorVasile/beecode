@@ -89,11 +89,18 @@ def _checks(api) -> list[tuple[str, str, str, str]]:
     for package, hint in (("g4f", "pip install -U g4f"), ("tiktoken", "pip install tiktoken"),
                           ("rich", "pip install -U rich"), ("prompt_toolkit", "pip install -U prompt_toolkit")):
         value, error = _version(package)
-        if error and on_termux and package in ("g4f", "tiktoken"):
-            # Both are Rust or C extensions, which is what a phone cannot build.
+        if error and on_termux and package == "g4f":
+            # g4f is pure Python; what a phone cannot build are two packages it
+            # declares that BeeCode never imports. --no-deps skips them.
             rows.append((WARN, package, "not installed",
-                         "normal on Android: pip has no compiler there. Answers still work "
-                         "through /pool url … + /pool enroll, or /key crax for your own key"))
+                         "g4f itself needs no compiler — its declared pycryptodome/brotli do. "
+                         "See the Termux section of the README: --no-deps, plus "
+                         "--no-binary=aiohttp with AIOHTTP_NO_EXTENSIONS=1"))
+            continue
+        if error and on_termux and package == "tiktoken":
+            rows.append((WARN, package, "not installed",
+                         "normal on Android: it is a Rust extension. Counts fall back to an "
+                         "over-estimate, which trims early instead of overrunning the window"))
             continue
         rows.append((OK if not error else BAD, package, value or error, "" if not error else hint))
 

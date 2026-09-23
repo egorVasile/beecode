@@ -1,8 +1,10 @@
-"""g4f provider with explicit keyless-provider fallback.
+"""g4f provider restricted to vetted keyless providers.
 
-g4f's auto-routing can pick providers that require API keys (e.g. Puter.js).
-We pin a list of known working keyless providers and try them in order,
-falling back to the default auto-routing only as a last resort.
+g4f's auto-routing is deliberately not used: it chooses from the whole installed
+catalogue, and parts of that catalogue reach their endpoint by driving a headless
+browser through a bot check. BeeCode must not ship that as a fallback, so when
+the pinned providers below are exhausted this raises and the agent moves on to
+the pool or a `/key` endpoint.
 
 Streaming yields (kind, text) tuples:
   ("content",   str)  -- the answer itself
@@ -16,14 +18,21 @@ from .base import BaseProvider
 
 # Keyless providers, fastest and largest-prompt first. Measured 2026-09-21
 # against g4f 8.5.7: LLM7 and CohereForAI answered a 4k-token prompt with the
-# needle intact in under 2 seconds, Yqcloud answered in 7 and refused 4k as
-# "too long", Cloudflare was reachable but slow on its own models.
+# needle intact in under 2 seconds.
 #
-# The previous list named Free2GPT, Blackbox and DDG — none of which exist in
-# this g4f any more — so the "keyless fallback" had quietly shrunk to two
+# Two names were dropped from the old list. "Cloudflare" is not an API client:
+# g4f/Provider/Cloudflare.py:34 drives a headless Chrome at
+# playground.ai.cloudflare.com through g4f/requests/cdp.py, which defines
+# click_turnstile_checkbox() (:833) and bypass_turnstile() (:1080) — BeeCode
+# must not ship a route that solves a bot check for its users. "Yqcloud" posts
+# to api.binjie.fun with spoofed browser origin/referer/UA headers, an
+# undocumented relay whose upstream model provenance nobody states.
+#
+# The previous list also named Free2GPT, Blackbox and DDG — none of which exist
+# in this g4f any more — so the "keyless fallback" had quietly shrunk to two
 # providers before auto-routing took over and picked upstreams that demand a
 # key. tests/test_providers.py fails if a name here stops resolving.
-KEYLESS_PROVIDERS = ("LLM7", "CohereForAI_C4AI_Command", "Yqcloud", "Cloudflare")
+KEYLESS_PROVIDERS = ("LLM7", "CohereForAI_C4AI_Command")
 
 
 def _keyless_providers() -> list:
@@ -232,11 +241,11 @@ class G4fProvider(BaseProvider):
         from g4f.client import AsyncClient
 
         messages = self._sanitize_messages(messages)
-        provider_classes = _keyless_providers() + [None]  # None = default auto-routing
+        provider_classes = _keyless_providers()
         last_error = None
 
         for cls in provider_classes:
-            client = AsyncClient(provider=cls) if cls else AsyncClient()
+            client = AsyncClient(provider=cls)
             try:
                 response = await _await_or_keep(client.chat.completions.create(
                     model=model,
@@ -271,11 +280,11 @@ class G4fProvider(BaseProvider):
         from g4f.client import AsyncClient
 
         messages = self._sanitize_messages(messages)
-        provider_classes = _keyless_providers() + [None]
+        provider_classes = _keyless_providers()
         last_error = None
 
         for cls in provider_classes:
-            client = AsyncClient(provider=cls) if cls else AsyncClient()
+            client = AsyncClient(provider=cls)
             try:
                 stream = await _await_or_keep(client.chat.completions.create(
                     model=model,

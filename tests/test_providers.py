@@ -1,4 +1,7 @@
 import asyncio
+
+import pytest
+
 from beeagent.providers.base import BaseProvider
 from beeagent.providers.registry import ProviderRegistry
 
@@ -216,3 +219,63 @@ def test_a_stream_that_dies_mid_answer_is_not_glued_to_the_next_one(monkeypatch)
         assert "connection reset" in str(e), "the real cause must reach the caller"
     else:
         raise AssertionError(f"the broken stream was stitched into: {answer!r}")
+
+
+def test_g4f_never_hands_the_choice_to_auto_routing(monkeypatch):
+    """Every g4f call must name its provider.
+
+    Auto-routing used to be the last entry in the list, and it selects from the
+    whole installed catalogue -- which includes endpoints g4f reaches by driving
+    a headless browser through a bot check. BeeCode pins providers instead, so
+    `AsyncClient` has to be built with a provider every single time.
+    """
+    import sys
+    import types
+
+    pytest.importorskip("g4f", reason="the pinned list is only meaningful with g4f present")
+    from beeagent.providers import g4f_provider
+    from beeagent.providers.g4f_provider import KEYLESS_PROVIDERS
+
+    seen = []
+
+    class Completions:
+        async def create(self, model, messages, stream=False):
+            raise RuntimeError("forced failure so the loop is exercised")
+
+    class FakeClient:
+        def __init__(self, provider=None):
+            seen.append(provider)
+            self.chat = types.SimpleNamespace(completions=Completions())
+
+    monkeypatch.setitem(sys.modules, "g4f.client", types.SimpleNamespace(AsyncClient=FakeClient))
+    provider = g4f_provider.G4fProvider()
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(provider.chat([{"role": "user", "content": "x"}], model="m"))
+
+    assert seen, "the pinned providers should each have been tried"
+    assert all(p is not None for p in seen), \
+        f"auto-routing was used ({seen.count(None)} bare clients); it may pick a bot-walled endpoint"
+    assert len(seen) == len(KEYLESS_PROVIDERS)
+
+
+def test_no_pinned_keyless_provider_drives_a_browser():
+    """The pin list is the whole safety story, so it must stay API-only.
+
+    Introspection cannot express this: g4f builds some providers dynamically
+    (LLM7 reports `__module__ == "abc"`), so there is no source to read. The
+    names below are the ones whose modules import g4f's browser session, found
+    by grepping `Provider/` for CDPSession -- Cloudflare among them, plus a
+    captcha solver. Adding one to KEYLESS_PROVIDERS has to fail here.
+    """
+    from beeagent.providers.g4f_provider import KEYLESS_PROVIDERS
+
+    browser_driven = {
+        "Cloudflare", "Copilot", "CopilotSession", "DeepInfra", "Qwen",
+        "Gemini", "Grok", "LMArena", "OpenaiChat", "GoogleSearch",
+        "GoogleAiMode",
+    }
+    assert not (set(KEYLESS_PROVIDERS) & browser_driven), \
+        "pinned provider needs a headless browser: %s" % sorted(
+            set(KEYLESS_PROVIDERS) & browser_driven)
+

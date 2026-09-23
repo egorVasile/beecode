@@ -100,11 +100,19 @@ python -m beeagent.cli
 
 ### On a phone — Termux
 
-Android ships no C compiler and no Rust, and PyPI has no Android wheel for `g4f`
-or `tiktoken`, so on that platform the install leaves both out and the rest goes
-through. The file tools, the shell tool, grep, git and the loop itself are pure
-Python — that is what `tests/test_termux.py` runs: the whole agent with those two
-modules missing, writing files and executing commands.
+Android ships no C compiler and no Rust. What that rules out is narrower than it
+looks: `g4f` itself is pure Python, and so are the tools that matter here — the
+file tools, the shell tool, grep, git and the loop. That is what
+`tests/test_termux.py` runs: the whole agent with the optional modules missing,
+writing files and executing commands.
+
+What actually breaks a plain `pip install g4f` on Android is two of its five
+declared dependencies: `pycryptodome` (no Android wheel, no pure-Python
+fallback) and `brotli` (no Android wheel; Termux packages it separately). Neither
+is on the path BeeCode uses — measured on g4f 8.5.1 by refusing every compiled
+third-party module at its C leaf, where all 85 providers still enumerated,
+`g4f.client` still imported, and three keyless providers each answered a real
+prompt correctly. `tiktoken` is the same story: optional, with a fallback.
 
 ```sh
 pkg install python python-pip git
@@ -113,13 +121,37 @@ termux-setup-storage          # only to reach the SD card; ~/storage
 cd ~/my-project && beecode
 ```
 
-What a phone gives up is the keyless provider, so answers come from a pool
-(the address ships with BeeCode, so `/pool enroll` is the only command), or from
-your own key (`/key crax crk_live_…`),
-and the exact token count, which falls back to an over-estimate — the safe
-direction, because it trims the history early instead of sending a request the
-model drops. Both are gettable back if you want them: `pkg install tur-repo
-python-tiktoken`, and `pkg install clang make` before `pip install g4f`.
+That gives a working agent backed by the pool (the address ships with BeeCode, so
+`/pool enroll` is the only command) or by your own key (`/key crax crk_live_…`),
+with token counts over-estimated — the safe direction, because it trims the
+history early instead of sending a request the model drops.
+
+To add the keyless provider on top, install `g4f` without the two declarations
+that cannot build:
+
+```sh
+export AIOHTTP_NO_EXTENSIONS=1      # only read when building from the sdist...
+pip install --no-deps g4f           # ...so g4f's own pycryptodome/brotli are skipped
+pip install requests nest-asyncio2
+pip install --no-binary=aiohttp aiohttp   # ...and force the sdist here
+```
+
+`--no-deps` is what keeps `pycryptodome` and `brotli` out; neither is on the path
+BeeCode uses. Everything else arrives as a pure-Python `py3-none-any` wheel —
+`multidict`, `yarl`, `frozenlist` and `propcache` all publish one — so no
+compiler is involved. `aiohttp` is the exception: it ships prebuilt Android
+wheels for Python 3.13/3.14 instead, and those carry its C parser, which Termux's
+Python 3.14 has a reported crash in. `--no-binary=aiohttp` with the variable set
+builds it from source without compiling anything, which is why both flags are
+needed together.
+
+`pkg install python-brotli` adds the brotli codec back and
+`pkg install tur-repo python-tiktoken` the exact token count. No route here needs
+`clang`.
+
+None of this has been run on a real phone: the measurement above was made on
+desktop Python by blocking compiled modules at import, which establishes what
+`g4f` needs, not how Termux's pip behaves.
 
 `/doctor` on a phone prints the `pkg install` line for whatever is missing.
 
@@ -243,7 +275,7 @@ free-tier endpoint that speaks the OpenAI API once **you** add your own key.
 /provider groq        switch; the model list and the default model follow the provider
 /models               recommended first: widest context, then the rest of the catalog
 /models --all         every model g4f knows about (600+), still biggest window first
-/models Cloudflare    filter by name or by g4f upstream
+/models gemini        filter by name or by g4f upstream
 /model command-a-03-2025  pick one
 ```
 
@@ -262,9 +294,9 @@ first line holds a random code the model has to repeat back:
 | --- | --- | --- |
 | `command-a-03-2025` (Cohere ForAI) | no | read the code back from **65536 tokens, twice**, ~2 s a step |
 | `LLM7` (model id `default`) | no | read 65536 once, then answered round two with `429 rate_limit_exceeded` |
-| `gpt-4` (Yqcloud) | no | **measured 2048** — refused 4k with 文字过长, "text too long" |
+| `gpt-4` (Yqcloud) | no | **measured 2048** — refused 4k with 文字过长, "text too long"; dropped, it reaches its upstream through an undocumented relay with spoofed browser headers |
 | `search` (GoogleSearch) | no | took 32768 without complaining, recall not verified |
-| Cloudflare | no | went silent on a 2048-token prompt for 90 s |
+| Cloudflare | no | went silent on a 2048-token prompt for 90 s; dropped, g4f reaches it with a headless browser that clears a Turnstile check |
 | `glm-4.7-flash`, `deepseek-chat`, `gemini-2.5-flash` | no | fine at 2048; at 4096 the free path returns 401, a key request, or goes quiet for minutes |
 | OpenRouterFree, Nvidia, Pollinations, GeminiPro, G4FSpace, RelayRouter, OrcaRouter | no | hidden behind g4f's own broker, which demands proof-of-work "cake credits" (402) |
 | DeepInfra, Copilot, Cerebras, HuggingChat, Airforce, KiloCode, OpenCode, MetaAI, OperaAria, DeepSeek | no | Turnstile token, a live Chrome over CDP, your browser cookies, an account, or a plain 401 |
