@@ -91,12 +91,26 @@ function ensureVenv(python) {
   if (!fs.existsSync(VENV_PYTHON) && run(python, ["-m", "venv", VENV]) !== 0) process.exit(1);
 }
 
+function beeagentPresent(python) {
+  // The old test was "does Scripts/beecode.exe exist", and that is the one thing
+  // that cannot tell the truth: an interrupted pip run removes the package and
+  // leaves the launcher shim standing, so the shim started, imported nothing,
+  // and the user got ModuleNotFoundError from a program that looked installed.
+  // Ask the interpreter instead -- with -I, because plain `-c` puts the current
+  // directory on sys.path first, and run from a BeeCode checkout that answers
+  // "yes, installed" about a directory of source code.
+  const probe = "import importlib.util, sys; sys.exit(importlib.util.find_spec('beeagent') is None)";
+  const result = spawnSync(python, ["-I", "-c", probe], { stdio: "ignore" });
+  return !result.error && result.status === 0;
+}
+
 function keylessInstalled(python) {
   // find_spec, not import: this asks whether g4f is in the venv at all, and
   // making it answer on a phone costs seconds every run. The agent itself uses
-  // the same question to decide whether to fall back to the pool.
+  // the same question to decide whether to fall back to the pool. -I for the
+  // same reason as above.
   const probe = "import importlib.util, sys; sys.exit(importlib.util.find_spec('g4f') is None)";
-  const result = spawnSync(python, ["-c", probe], { stdio: "ignore" });
+  const result = spawnSync(python, ["-I", "-c", probe], { stdio: "ignore" });
   return !result.error && result.status === 0;
 }
 
@@ -187,6 +201,19 @@ function main() {
     process.exit(0);
   }
   if (!fs.existsSync(BEECODE)) install(python);
+  else if (!beeagentPresent(VENV_PYTHON)) {
+    // The shim is there and the package is not: an update was killed between pip
+    // removing the old copy and writing the new one. Say so, then finish the job
+    // rather than launching an empty shell.
+    console.error("the last update left BeeCode half-installed — the launcher is here but "
+                  + "the program is not. Repairing it now.");
+    install(python);
+    if (!beeagentPresent(VENV_PYTHON)) {
+      console.error("still not installed. The venv is " + VENV +
+                    "; deleting it and running `beecode` again starts from scratch.");
+      process.exit(1);
+    }
+  }
 
   const result = spawnSync(BEECODE, rest, { stdio: "inherit" });
   if (result.error) {

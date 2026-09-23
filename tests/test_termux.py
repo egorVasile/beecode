@@ -342,3 +342,34 @@ def test_no_shipped_instruction_says_g4f_needs_pydantic():
         for sentence in sentences(path.read_text(encoding="utf-8")):
             flat = " ".join(sentence.split()).lower()
             assert not ("g4f" in flat and "pydantic" in flat), f"{path}: {flat}"
+
+
+# ------------------------------------------------- a copy that is only half there
+
+def test_a_half_installed_copy_is_found_by_importing_not_by_a_file():
+    """`beecode.exe` existing proves nothing; it is a stub that imports a module.
+
+    An interrupted pip run deletes the package and leaves that stub, which is how
+    one real machine ended up with `ModuleNotFoundError: No module named
+    'beeagent'` from a program the launcher believed was installed.
+    """
+    text = BOOTSTRAP.read_text(encoding="utf-8")
+    assert "find_spec('beeagent')" in text, "the launcher must ask the interpreter"
+    probe = text.index("function beeagentPresent")
+    launch = text.index("spawnSync(BEECODE")
+    assert text.index("beeagentPresent(VENV_PYTHON)") > probe, "the guard must call it"
+    assert text.index("beeagentPresent(VENV_PYTHON)") < launch, \
+        "and it must run before the shim is started, not after it crashes"
+    assert "process.exit(1)" in text[probe:launch] or "install(python)" in text[probe:launch]
+
+
+def test_the_installed_probe_ignores_whatever_folder_it_was_started_from():
+    """Plain `python -c` puts the current directory first on sys.path.
+
+    Run from a BeeCode checkout, that answers "beeagent is installed" about a
+    folder of source code -- the check passes, the repair never runs, and the next
+    line crashes. `-I` leaves the cwd out and still reads the venv's site-packages.
+    """
+    text = BOOTSTRAP.read_text(encoding="utf-8")
+    assert '["-I", "-c", probe]' in text, \
+        "the probes must run isolated, or a checkout of this repo looks like an install"
