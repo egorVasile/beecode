@@ -6,6 +6,7 @@ account that gets left alone instead of retried.
 """
 import hashlib
 import json
+import os
 import secrets
 import sqlite3
 import sys
@@ -32,12 +33,33 @@ except ImportError:
 KEYS = {"groq": ["gsk_first_secret", "gsk_second_secret"]}
 # One install, one seat: the tests sign with this seed unless a case says otherwise.
 INSTALL_SEED = bytes(range(32))
+# These tests drive a real HTTP server, and the database behind it is whichever
+# one the environment names. Against a Postgres in another country a single
+# request takes seconds rather than milliseconds, so the client waits; on the
+# platform the pool actually runs, both are in the same region and this is never
+# noticed. The default five seconds is a local assumption, not a promise.
+CLIENT_TIMEOUT = 60.0
 
 
 @pytest.fixture()
 def pool(tmp_path, monkeypatch):
     """A live server on a random port, with the upstream replaced by a recorder."""
+    # A file database is new every test by construction; a Postgres one is shared
+    # and this fixture empties it. Running the suite against the production
+    # database would delete every seat and every counter in it, so the suite
+    # refuses unless the name says it is a test database.
+    url = os.environ.get("BEECODE_POOL_PG_URL") or ""
+    if url and not _is_test_database(url):
+        pytest.skip(f"refusing to wipe the database behind BEECODE_POOL_PG_URL "
+                    f"({_database_of(url)}); name it test_* to run against Postgres")
     pool_server._state["db"] = pool_server.open_db(str(tmp_path / "pool.db"))
+    # A file database is new every test by construction; a Postgres one is the
+    # same tables all run long, so the fixture has to empty it — otherwise seats
+    # from an earlier test trip the per-IP limits of a later one, and the failure
+    # points at nothing.
+    for table in ("tokens", "keys", "events", "seen_nonces"):
+        pool_server._state["db"].execute(f"DELETE FROM {table}")
+    pool_server._state["db"].commit()
     pool_server._state["keys"] = {k: list(v) for k, v in KEYS.items()}
     pool_server.sync_keys()
     monkeypatch.setenv("BEECODE_POOL_ADMIN", "admin-secret")
@@ -72,6 +94,15 @@ def enroll(client, base, ip=None, seed=None):
                            headers={"Content-Type": "application/json", **headers})
     assert response.status_code == 200, response.text
     return response.json()["token"]
+
+
+def _database_of(url: str) -> str:
+    from urllib.parse import urlparse
+    return (urlparse(url).path or "/").lstrip("/")
+
+
+def _is_test_database(url: str) -> bool:
+    return _database_of(url).startswith("test")
 
 
 def install(n: int) -> bytes:
@@ -118,13 +149,13 @@ def complete(client, base, token, provider="groq", seed=None, when=None, nonce=N
 
 def test_health_says_alive_and_nothing_about_capacity(pool):
     """Which upstreams are loaded and how many accounts sit behind them is a plan."""
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         body = client.get(pool.base + "/healthz").json()
     assert body == {"ok": True}
 
 
 def test_a_completions_request_needs_a_seat(pool):
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         assert complete(client, pool.base, "").status_code == 401
         assert complete(client, pool.base, "made-up-token").status_code == 401
         token = enroll(client, pool.base)
@@ -136,7 +167,7 @@ def test_a_completions_request_needs_a_seat(pool):
 def test_the_key_never_leaves_the_server_at_all(pool):
     """Not even its tail: that was a stable id for one account across every seat,
     which let a stranger aim at an account and measure the pool through seats."""
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         body = complete(client, pool.base, token).json()
     assert "pool_key" not in body
@@ -148,7 +179,7 @@ def test_the_key_never_leaves_the_server_at_all(pool):
 def test_a_rate_limited_key_is_cooled_down_and_the_next_one_tried(pool):
     pool.answers[:] = [(429, '{"error":"rate limit"}'),
                        (200, json.dumps({"choices": [{"message": {"content": "со второго"}}]}))]
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         answer = complete(client, pool.base, token)
     assert answer.status_code == 200
@@ -163,7 +194,7 @@ def test_when_every_key_is_cooling_the_answer_is_429_not_a_hang(pool, monkeypatc
     import time as clock
     pool.db.execute("UPDATE keys SET cooldown_until=?", (clock.time() + 600,))
     pool.db.commit()
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         answer = complete(client, pool.base, token)
     assert answer.status_code == 429
@@ -171,7 +202,7 @@ def test_when_every_key_is_cooling_the_answer_is_429_not_a_hang(pool, monkeypatc
 
 
 def test_the_daily_budget_is_enforced_per_seat(pool):
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         pool.db.execute("UPDATE tokens SET requests=?, requests_limit=? WHERE token=?",
                         (5, 5, token))
@@ -191,7 +222,7 @@ def test_a_forged_forwarded_header_does_not_mint_seats(pool):
     Nothing here spoofs an address: every request arrives from 127.0.0.1, and
     without a declared trusted proxy that is what the pool counts.
     """
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         for index in range(pool_server.ENROLLS_PER_IP_PER_DAY):
             enroll(client, pool.base, ip=f"8.8.8.{index}", seed=install(index + 1))
         blocked = enroll_raw(client, pool.base, ip="8.8.8.99", seed=install(99))
@@ -202,7 +233,7 @@ def test_a_declared_proxy_is_the_only_one_whose_header_is_believed(pool, monkeyp
     """With a trusted proxy in front, the counted address is the client's — so one
     client keeps its limit and the building next to it is not punished for it."""
     monkeypatch.setenv("BEECODE_POOL_TRUSTED_PROXY", "127.0.0.1")
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         for index in range(pool_server.ENROLLS_PER_IP_PER_DAY):
             enroll(client, pool.base, ip="203.0.113.7", seed=install(index + 1))
         assert enroll_raw(client, pool.base, ip="203.0.113.7",
@@ -214,7 +245,7 @@ def test_a_declared_proxy_is_the_only_one_whose_header_is_believed(pool, monkeyp
 def test_a_client_cannot_point_the_pool_at_an_arbitrary_url(pool):
     """The model decides which account answers; a provider named by the client is
     only honoured when it is one of the fixed upstreams, and never a URL."""
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         answer = complete(client, pool.base, token, provider="http://169.254.169.254/")
         assert answer.status_code == 200, "the model still resolved to a real provider"
@@ -223,7 +254,7 @@ def test_a_client_cannot_point_the_pool_at_an_arbitrary_url(pool):
 
 
 def test_a_prompt_bigger_than_the_pool_accepts_is_refused_before_parsing(pool):
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         big = {"model": "m", "pool_provider": "groq",
                "messages": [{"role": "user", "content": "x" * (pool_server.MAX_BODY + 10)}]}
@@ -236,7 +267,7 @@ def test_the_pool_forwards_chat_completions_and_nothing_else(pool):
     """Image, video, audio and embedding calls are what gets an account reported,
     so they are refused by name — before a key is leased and before the provider
     is picked, which is why a valid `pool_provider` does not open the door."""
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         for model in ("seedream-5", "qwen-image-2.0-pro", "qwen-video",
                       "text-embedding-3-small", "whisper-1", "tts-1"):
@@ -250,7 +281,7 @@ def test_the_pool_forwards_chat_completions_and_nothing_else(pool):
 def test_a_chat_model_is_not_collateral_of_the_refusal(pool):
     """The refusal matches shapes, not letters: the same name that carries a real
     chat model must still be served, or the filter would starve the pool."""
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         answer = complete(client, pool.base, token, model="deepseek-v4")
         assert answer.status_code == 200
@@ -258,7 +289,7 @@ def test_a_chat_model_is_not_collateral_of_the_refusal(pool):
 
 
 def test_admin_endpoints_need_the_admin_token(pool):
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         assert client.get(pool.base + "/v1/pool").status_code == 403
         report = client.get(pool.base + "/v1/pool", headers={"X-Admin": "admin-secret"})
         assert report.status_code == 200
@@ -272,7 +303,7 @@ def test_admin_endpoints_need_the_admin_token(pool):
 
 def test_a_seat_awaiting_approval_is_not_served(pool, monkeypatch):
     monkeypatch.setenv("BEECODE_POOL_APPROVAL", "1")
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         assert complete(client, pool.base, token).status_code == 403
         client.post(pool.base + "/v1/admin/approve", json={"token": token},
@@ -281,7 +312,7 @@ def test_a_seat_awaiting_approval_is_not_served(pool, monkeypatch):
 
 
 def test_the_budget_rolls_over_when_the_day_changes(pool):
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         pool.db.execute("UPDATE tokens SET day=?, requests=? WHERE token=?",
                         ("2000-01-01", 999, token))
@@ -354,7 +385,7 @@ def test_a_key_that_spent_todays_ceiling_is_not_offered_again(pool):
     def keys_of(report):
         return sorted(k["used_today"] for k in report["keys"])
 
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         ceiling = client.post(pool.base + "/v1/admin/key_ceiling",
                               json={"provider": "groq", "tokens": 1},
@@ -380,7 +411,7 @@ def test_a_key_that_spent_todays_ceiling_is_not_offered_again(pool):
 def test_the_ceiling_rolls_over_with_the_day(pool, monkeypatch):
     """A key is skipped on `day = today`, so a row written yesterday has spent
     nothing — and the report has to agree, or the operator sees a spent pool."""
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         complete(client, pool.base, token)
         client.post(pool.base + "/v1/admin/key_ceiling", json={"provider": "groq", "tokens": 1},
@@ -393,7 +424,7 @@ def test_the_ceiling_rolls_over_with_the_day(pool, monkeypatch):
 def test_one_number_can_give_every_key_the_same_ceiling(pool, monkeypatch):
     monkeypatch.setenv("BEECODE_POOL_KEY_CEILING", "50")
     pool_server.sync_keys()
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         report = client.get(pool.base + "/v1/pool", headers={"X-Admin": "admin-secret"}).json()
     assert [k["daily_limit"] for k in report["keys"]] == [50, 50]
 
@@ -419,7 +450,7 @@ def test_an_unreadable_or_unknown_key_blob_is_a_startup_refusal(monkeypatch):
 def test_a_seat_is_told_which_address_it_was_recorded_under(pool):
     """Without this, a proxy chain read wrongly looks like a broken pool: the
     number is the caller's own address, and it is the first thing to check."""
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         seat = enroll_raw(client, pool.base).json()
         assert seat["seen_from"] == "127.0.0.1"
         assert "debug" not in seat, "the internals stay off unless asked for"
@@ -428,7 +459,7 @@ def test_a_seat_is_told_which_address_it_was_recorded_under(pool):
 def test_the_debug_block_shows_the_chain_the_proxy_actually_wrote(pool, monkeypatch):
     monkeypatch.setenv("BEECODE_POOL_DEBUG", "1")
     monkeypatch.setenv("BEECODE_POOL_TRUSTED_PROXY", "127.0.0.0/8")
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         seat = enroll_raw(client, pool.base, ip="203.0.113.9, 10.192.0.7").json()
     assert seat["debug"]["forwarded_for"] == "203.0.113.9, 10.192.0.7"
     assert seat["seen_from"] == "10.192.0.7", "the rightmost hop is the one we were told to trust"
@@ -439,7 +470,7 @@ def test_behind_cloudflare_the_address_that_counts_is_the_one_it_verified(pool, 
     rightmost-public-hop rule records a Cloudflare address instead of a person —
     and three seats per address stops meaning three seats per install."""
     monkeypatch.setenv("BEECODE_POOL_TRUSTED_PROXY", "127.0.0.0/8, 10.0.0.0/8")
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         seat = enroll_raw(client, pool.base,
                           ip="146.120.36.40, 172.71.150.29, 10.192.163.192",
                           extra={"CF-Connecting-IP": "146.120.36.40"}).json()
@@ -450,7 +481,7 @@ def test_a_forwarded_address_is_not_believed_from_a_stranger(pool, monkeypatch):
     """CF-Connecting-IP is only the truth when it arrives from the proxy we were
     told to trust. From anywhere else it is a header anyone can write."""
     monkeypatch.setenv("BEECODE_POOL_TRUSTED_PROXY", "10.0.0.0/8")   # not loopback
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         response = client.post(pool.base + "/v1/enroll",
                                content=json.dumps({"device": "aa" * 8, "public_key":
                                                    ed25519.public_key(install(3)).hex()}).encode(),
@@ -461,7 +492,7 @@ def test_a_forwarded_address_is_not_believed_from_a_stranger(pool, monkeypatch):
 
 def test_the_pool_can_cap_seats_per_day_whatever_the_addresses_say(pool, monkeypatch):
     monkeypatch.setenv("BEECODE_POOL_ENROLLS_PER_DAY", "2")
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         assert enroll_raw(client, pool.base, seed=install(11)).status_code == 200
         assert enroll_raw(client, pool.base, seed=install(12)).status_code == 200
         third = enroll_raw(client, pool.base, seed=install(13))
@@ -473,7 +504,7 @@ def test_an_unsigned_request_never_reaches_the_provider(pool):
     """The point of the install key: a seat token copied out of beeagent.json is
     not enough to spend anything, and a request that cannot be vouched for must
     cost nothing — not even one call upstream."""
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base)
         refused = complete(client, pool.base, token, unsigned=True)
         assert refused.status_code == 401
@@ -483,7 +514,7 @@ def test_an_unsigned_request_never_reaches_the_provider(pool):
 
 def test_a_seat_signed_by_another_install_is_refused(pool):
     """Someone else's key file is not this one's; the seat belongs where it was born."""
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base, seed=install(21))
         stolen = complete(client, pool.base, token, seed=install(22))
         assert stolen.status_code == 401
@@ -493,7 +524,7 @@ def test_a_seat_signed_by_another_install_is_refused(pool):
 def test_a_captured_request_cannot_be_sent_twice(pool):
     """The signature covers a nonce and a timestamp, so a copy of a real request —
     from a proxy log or a friend's terminal — is worth one use, not two."""
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base, seed=install(31))
         once = complete(client, pool.base, token, seed=install(31), nonce="aa" * 16)
         twice = complete(client, pool.base, token, seed=install(31), nonce="aa" * 16)
@@ -506,7 +537,7 @@ def test_a_captured_request_cannot_be_sent_twice(pool):
 def test_an_old_request_dies_with_the_window(pool):
     """Without an expiry, a signature is a permanent password: valid forever, once
     captured. Two minutes is what the nonce table remembers."""
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         token = enroll(client, pool.base, seed=install(41))
         stale = complete(client, pool.base, token, seed=install(41),
                          when=time.time() - pool_server.SKEW_SECONDS - 60)
@@ -517,7 +548,7 @@ def test_an_old_request_dies_with_the_window(pool):
 def test_one_install_one_seat_and_a_keyless_enrolment_refused(pool):
     """Re-enrolling from the same machine must not mint a second seat — that is how
     a shared key file quietly multiplies against the daily caps."""
-    with httpx.Client() as client:
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
         first = enroll(client, pool.base, seed=install(51))
         again = enroll_raw(client, pool.base, seed=install(51))
         assert again.json()["token"] == first, "the same install gets its same seat"
