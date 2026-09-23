@@ -26,6 +26,10 @@ TIMEOUT_CONNECT = 10.0
 # rather than what sounds reasonable. Without it the first ask of the day reports
 # a working pool as broken.
 COLD_START_WAIT = 55.0
+# Measured on the live pool: waking a slept instance took 22.6 s for an endpoint
+# that does no work at all. Enrolment used to allow 15, which made the first
+# `/pool enroll` of the day the one call that could not wait for the box to wake.
+ENROLL_TIMEOUT = 90.0
 
 
 class PoolError(RuntimeError):
@@ -133,7 +137,7 @@ def signed_headers(seed: bytes, public_hex: str, body: bytes) -> dict:
             "X-Seat-Signature": signature.hex()}
 
 
-def enroll(url: str, timeout: float = 15.0) -> dict:
+def enroll(url: str, timeout: float = ENROLL_TIMEOUT) -> dict:
     """Ask the pool for a seat, naming this install as the one that owns it.
 
     Only the public half goes out, and only this once; the pool keeps it and
@@ -150,7 +154,7 @@ def enroll(url: str, timeout: float = 15.0) -> dict:
     return _safe_json(response) or {}
 
 
-def pool_status(url: str, token: str, timeout: float = 10.0) -> dict:
+def pool_status(url: str, token: str, timeout: float = ENROLL_TIMEOUT) -> dict:
     """A small read-only peek: is the pool there, and does it know us?"""
     endpoint = url.rstrip("/") + "/healthz"
     with httpx.Client(timeout=timeout) as client:

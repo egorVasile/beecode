@@ -141,3 +141,10 @@ def test_a_stream_that_already_started_is_not_repeated(no_wait, monkeypatch):
     with pytest.raises(PoolError):
         asyncio.run(collect())
     assert len(attempts) == 1, "the first fragment was already shown"
+
+
+def test_enrolment_is_given_long_enough_to_wake_the_pool():
+    """The one call without a retry has to outlast a cold start on its own: a
+    stranger's first `/pool enroll` is exactly the request that finds the pool
+    asleep, and a timeout there reads as a broken server."""
+    assert pool_mod.ENROLL_TIMEOUT > pool_mod.COLD_START_WAIT
