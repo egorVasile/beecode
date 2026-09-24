@@ -777,3 +777,56 @@ def test_a_model_nobody_measured_is_still_routed_by_its_hint():
         assert pool_server.provider_for("llama-3-8b-instant") == "groq"
     finally:
         pool_server._state["keys"] = saved
+
+
+def test_a_seat_can_see_its_own_budget(pool):
+    """Discovering the limit by getting a 429 mid-task is not a budget."""
+    with httpx.Client() as client:
+        token = enroll(client, pool.base)
+        answer = client.get(pool.base + "/v1/seat", headers={"Authorization": f"Bearer {token}"})
+        assert answer.status_code == 200, answer.text
+        seat = answer.json()
+        nobody = client.get(pool.base + "/v1/seat")
+    assert seat["requests_limit"] == pool_server.DEFAULT_REQUESTS_PER_DAY
+    assert seat["tokens_limit"] == pool_server.DEFAULT_TOKENS_PER_DAY
+    assert seat["resets_in_seconds"] > 0
+    assert nobody.status_code == 401, "an open /v1/seat would list other people's spend"
+
+
+def test_the_market_index_is_served_and_names_its_licence(pool, monkeypatch, tmp_path):
+    """A marketplace you cannot audit is just a download button.
+
+    Every entry has to carry the licence it was found under, so the client can
+    refuse what nobody granted before it reaches a disk.
+    """
+    index = {"generated": "now", "policy": {"allowed_licenses": ["MIT", "Apache-2.0"]},
+             "counts": {"skills": 1},
+             "items": {"skills": [{"id": "someone--demo", "name": "demo",
+                                   "license": "MIT", "description": "a demo skill",
+                                   "sha256": "ab" * 32,
+                                   "source": {"repo": "someone/skills", "path": "skills/demo",
+                                              "commit": "deadbeef"}}]}}
+    path = tmp_path / "index.json"
+    path.write_text(json.dumps(index), encoding="utf-8")
+    monkeypatch.setenv("BEECODE_POOL_MARKET", str(path))
+    with httpx.Client() as client:
+        listing = client.get(pool.base + "/v1/market")
+        one = client.get(pool.base + "/v1/market/someone--demo")
+        missing = client.get(pool.base + "/v1/market/nothing-here")
+    assert listing.status_code == 200
+    assert listing.json()["items"]["skills"][0]["license"] == "MIT"
+    assert one.status_code == 200 and one.json()["id"] == "someone--demo"
+    assert missing.status_code == 404
+
+
+def test_an_ambiguous_market_name_is_refused_not_guessed(pool, monkeypatch, tmp_path):
+    """anthropics and openai both publish a skill called `skill-creator`."""
+    same = [{"id": "anthropics--skill-creator", "name": "skill-creator", "license": "Apache-2.0"},
+            {"id": "openai--skill-creator", "name": "skill-creator", "license": "Apache-2.0"}]
+    path = tmp_path / "index.json"
+    path.write_text(json.dumps({"items": {"skills": same}}), encoding="utf-8")
+    monkeypatch.setenv("BEECODE_POOL_MARKET", str(path))
+    with httpx.Client() as client:
+        answer = client.get(pool.base + "/v1/market/skill-creator")
+    assert answer.status_code == 409, answer.text
+    assert sorted(answer.json()["ids"]) == ["anthropics--skill-creator", "openai--skill-creator"]
