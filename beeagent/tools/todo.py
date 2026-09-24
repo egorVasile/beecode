@@ -43,6 +43,18 @@ class TodoTool(BaseTool):
         if action == "add":
             if not str(text).strip():
                 return ToolResult(output="add needs a text argument", error=True)
+            wanted = " ".join(str(text).split()).casefold()
+            for existing in tasks:
+                if " ".join(str(existing.get("text", "")).split()).casefold() == wanted:
+                    # Measured on 2026-09-24: a model asked to "record the plan"
+                    # re-added the same three items on every one of nine turns and
+                    # finished nothing. An add that refuses to duplicate is the
+                    # only defence that does not depend on the model cooperating.
+                    return ToolResult(
+                        output=(f"Task #{existing['id']} already says this "
+                                f"({'done' if existing.get('done') else 'still open'}) — "
+                                f"mark it with action=done instead of adding it again"),
+                        error=False)
             task_id = max((t.get("id", 0) for t in tasks), default=0) + 1
             tasks.append({"id": task_id, "text": str(text), "done": False})
             self._save(tasks)

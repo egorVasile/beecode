@@ -328,3 +328,29 @@ def test_a_stopped_turn_ends_the_run_instead_of_continuing(tmp_path, monkeypatch
     answer = asyncio.run(agent.run("say something long"))
     assert answer == "Stopped by you", answer
     assert agent.stop_requested is False, "the flag must not leak into the next run"
+
+
+def test_the_todo_tool_refuses_to_write_the_same_task_twice(tmp_path, monkeypatch):
+    """A model told to "record the plan" re-added three tasks nine times each.
+
+    The list reached 27 entries with nothing marked done, which is worse than no
+    list: /tasks became noise. Adding the same text again returns the existing id
+    instead of growing the file.
+    """
+    import os
+
+    from beeagent.tools.todo import TodoTool
+
+    monkeypatch.chdir(tmp_path)
+    os.makedirs(".beeagent", exist_ok=True)
+    tool = TodoTool()
+
+    first = tool.execute("add", text="List what is in the folder")
+    again = tool.execute("add", text="  list WHAT is in the folder  ")
+    third = tool.execute("add", text="Read the files")
+
+    assert not first.error and not again.error
+    assert "already says this" in again.output, again.output
+    listed = tool.execute("list")
+    assert listed.metadata["count"] == 2, listed.output
+    assert not third.error
