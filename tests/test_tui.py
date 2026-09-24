@@ -42,3 +42,29 @@ def test_tui_title_and_bindings():
     keys = {b.key for b in app.BINDINGS}
     assert "ctrl+q" in keys
     assert "ctrl+b" in keys
+
+
+def test_the_sidebar_yields_the_screen_to_a_phone():
+    """40 columns of command list on a 60-column terminal is half the app.
+
+    The first version read `screen.width`, which is None until a layout pass has
+    happened, so the fallback made every terminal look narrow and the sidebar
+    vanished on desktop too. `app.size` is the value that is actually there.
+    """
+    import asyncio
+
+    from beeagent.config.schema import BeeConfig
+    from beeagent.ui.tui import BeeCodeApp
+
+    async def hidden_at(width):
+        app = BeeCodeApp(config=BeeConfig())
+        async with app.run_test(size=(width, 30)) as pilot:
+            await pilot.pause(0.3)
+            return app.query_one("#sidebar").has_class("hidden")
+
+    async def go():
+        return (await hidden_at(60), await hidden_at(130))
+
+    narrow, wide = asyncio.run(go())
+    assert narrow is True, "a phone should get the whole width for the chat"
+    assert wide is False, "a desktop must keep the sidebar it was designed for"

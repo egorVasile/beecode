@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-09-19",
+  "updated": "2026-09-24",
   "categories": [
     "skills",
     "mcp",
@@ -377,6 +377,46 @@
       "source": {
         "kind": "builtin",
         "path": "plugins/recall"
+      }
+    },
+    {
+      "name": "seat",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Plugin: /seat — how much of today's pool budget is left, and when it resets",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/seat"
+      }
+    },
+    {
+      "name": "trace",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Plugin: /trace — the last failed requests, with one line on what to do",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/trace"
+      }
+    },
+    {
+      "name": "scoreboard",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Plugin: /board — what each model actually did on this machine",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/scoreboard"
+      }
+    },
+    {
+      "name": "compact",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Plugin: narrow-terminal layout for a phone in Termux",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/compact"
       }
     }
   ]

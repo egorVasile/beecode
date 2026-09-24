@@ -283,3 +283,48 @@ def test_a_model_list_saved_by_another_version_is_not_used(tmp_path, monkeypatch
     got = commands._cached_models("groq", fresh, allow_fetch=True,
                                   fallback=["declared"])
     assert got == ["fresh-model"], got
+
+
+def test_stop_reaches_the_agent_and_reports_whether_it_was_running():
+    """`/stop` must be a request the loop honours, not a message that prints."""
+    from beeagent.core.agent import Agent
+
+    config = BeeConfig()
+    agent = Agent(config=config)
+    ctx = ReplContext(agent=agent, config=config, session=Session())
+
+    result = dispatch(ctx, "/stop")
+    assert result.action == "stop"
+    assert agent.stop_requested is True, "the flag is how a worker thread is stopped"
+    assert "nothing is running" in str(result.output.plain).lower() or \
+           "ничего не выполняется" in str(result.output.plain)
+
+
+def test_a_stopped_turn_ends_the_run_instead_of_continuing(tmp_path, monkeypatch):
+    """The flag has to end the loop at the next turn, or it is decoration."""
+    import asyncio
+
+    from beeagent.core.agent import Agent
+
+    # The provider name must be the one the config selects. Registering a fake
+    # under another name leaves run() talking to the real g4f endpoint -- which
+    # is a network call inside a test, and it passes for the wrong reason.
+    config = BeeConfig(provider="silent")
+    agent = Agent(config=config)
+
+    class Silent:
+        name = "silent"
+        models = ["m"]
+
+        async def chat(self, messages, model="m", stream=False):
+            agent.request_stop()          # the user pressed /stop during turn 1
+            # A tool call, not a final sentence: with a plain answer the run is
+            # over on turn 1 and there is nothing left to stop.
+            return '```json\n{"tool": "todo", "args": {"action": "list"}}\n```'
+
+    agent.providers.register(Silent(), replace=True)
+    assert agent.providers.get("silent") is not None
+    monkeypatch.chdir(tmp_path)
+    answer = asyncio.run(agent.run("say something long"))
+    assert answer == "Stopped by you", answer
+    assert agent.stop_requested is False, "the flag must not leak into the next run"

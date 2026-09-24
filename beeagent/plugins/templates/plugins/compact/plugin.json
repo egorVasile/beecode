@@ -1,0 +1,7 @@
+{
+    "name": "compact",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "On a phone-sized terminal: one-line opening, no frames — the chat keeps the width",
+    "entry": "plugin.py"
+}

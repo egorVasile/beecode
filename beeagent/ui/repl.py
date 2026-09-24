@@ -136,6 +136,13 @@ def handle_callback(event: str, data: dict):
               f"queued message went out with this step: {[i[:40] for i in items]}",
               f"сообщение из очереди ушло с этим шагом: {[i[:40] for i in items]}")
 
+    elif event == "stopped":
+        _note("🛑",
+              f"stopped by you after {data.get('turn', 0)} step(s) — nothing is lost, "
+              f"the session and /tasks are intact",
+              f"остановлено тобой после {data.get('turn', 0)} шаг(ов) — ничего не потеряно, "
+              f"сессия и /tasks на месте")
+
     elif event == "context_trimmed":
         _note("✂",
               f"history did not fit the context: compressed {data.get('dropped')} messages into "
@@ -526,6 +533,10 @@ async def run_repl(agent, config, session=None):
                     res = dispatch(ctx, line)
                 if res.action == "clear":
                     console.clear()
+                if res.action == "stop":
+                    # The same path Ctrl+C takes, so there is one way to stop and
+                    # not two that disagree about what they cancel.
+                    _stop_active_task()
                 if res.output is not None:
                     console.print(res.output)
                 if res.action == "update":

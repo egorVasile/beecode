@@ -166,6 +166,15 @@ class Agent:
         # model call so nothing the user says is lost.
         self.pending = PendingQueue()
         self.is_busy = False
+        # Set by /stop. A blocking read from the model cannot be interrupted from
+        # Python without killing the thread, so this ends the loop at the next
+        # turn instead of pretending to cut the request mid-byte.
+        self.stop_requested = False
+
+    def request_stop(self) -> bool:
+        """Ask the running turn to end. True if something was actually running."""
+        self.stop_requested = True
+        return self.is_busy
 
     def sync_config_permissions(self):
         """Mirror the live gate into the config so a save cannot undo it."""
@@ -428,6 +437,7 @@ class Agent:
         # used to leave it True forever, and then the REPL parked every later
         # message in agent.pending and never ran a single one.
         self.is_busy = True
+        self.stop_requested = False
         self.permissions.denied_this_run.clear()
 
         try:
@@ -439,6 +449,14 @@ class Agent:
             rescued = False
 
             for turn in range(self.config.max_turns):
+                if self.stop_requested:
+                    # Cleared here so the next run starts clean, and reported so
+                    # the user learns the answer is truncated rather than finished.
+                    self.stop_requested = False
+                    if callback:
+                        callback("stopped", {"turn": turn})
+                    return "Stopped by you"
+
                 # 1. Deliver messages the user typed while we were busy:
                 #    they go along with this step (+ the system prompt is
                 #    rebuilt every turn, so tool instructions are intact).

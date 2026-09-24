@@ -81,6 +81,7 @@ class BeeCodeApp(App):
         self._stream_buf = ""
         self._bee_i = 0
         self._applied_theme = None
+        self._sidebar_user_set = False
 
     # --- widget shortcuts -------------------------------------------------
     @property
@@ -127,9 +128,31 @@ class BeeCodeApp(App):
             pass
         self._populate_commands()
         self.set_interval(0.28, self._animate_bee)
+        self._fit_to_width()
         self._welcome()
         self._update_status()
         self.prompt.focus()
+
+    def on_resize(self, event) -> None:
+        self._fit_to_width()
+
+    def _fit_to_width(self) -> None:
+        """On a phone the 40-column sidebar is the whole screen.
+
+        Hidden until the terminal is wide enough to spare it. A sidebar the user
+        toggled by hand is left alone -- auto-hiding on every resize would take
+        back a choice they just made.
+        """
+        if self._sidebar_user_set:
+            return
+        # `screen.width` is None before the first layout pass, which made every
+        # terminal look narrow; `app.size` is the one that is actually filled in.
+        width = getattr(self.size, "width", 0) or getattr(self.screen, "width", 0) or 80
+        sidebar = self.query_one("#sidebar")
+        if width < 100:
+            sidebar.add_class("hidden")
+        else:
+            sidebar.remove_class("hidden")
 
     # --- sidebar ----------------------------------------------------------
     def _populate_commands(self, prefix: str = "") -> None:
@@ -186,6 +209,7 @@ class BeeCodeApp(App):
         self.stream.update("")
 
     def action_toggle_sidebar(self) -> None:
+        self._sidebar_user_set = True
         self.query_one("#sidebar").toggle_class("hidden")
 
     def action_help(self) -> None:
@@ -256,6 +280,14 @@ class BeeCodeApp(App):
             items = data.get("items") or []
             if items:
                 self.chatlog.write(Text(f"  📨 доставлено из очереди: {len(items)}", style="dim"))
+        elif event == "stopped":
+            # The worker ends the loop at the next turn; the partial text is
+            # dropped rather than passed off as an answer.
+            self._stream_buf = ""
+            self.stream.update("")
+            self.chatlog.write(Text(
+                f"  🛑 остановлено тобой после {data.get('turn', 0)} шаг(ов) — "
+                "сессия и /tasks на месте", style="dim"))
         elif event == "retry":
             self.chatlog.write(Text(f"  🔁 повтор попытки ({data.get('attempt')}/3)", style="dim"))
         elif event == "done":
@@ -283,6 +315,16 @@ class BeeCodeApp(App):
                 self.chatlog.write(Text("    " + out[:300], style="dim red"))
         elif event == "tool_error":
             self.chatlog.write(Text(f"  ⚠ {data.get('tool')}: {data.get('message')}", style="bold red"))
+        elif event == "tool_denied":
+            tool = data.get("tool", "")
+            self.chatlog.write(Text(f"  ⛔ {tool} — заблокировано, разрешить: /allow {tool}",
+                                    style="bold red"))
+        elif event == "provider_fallback":
+            note = ("  🐝 g4f недоступен на этой системе — отвечаем через пул" if data.get("seat")
+                    else "  🐝 g4f недоступен — возьми место в пуле: /pool enroll")
+            self.chatlog.write(Text(note, style="#ffcc00"))
+        elif event == "model_switched":
+            self.chatlog.write(Text(f"  🔄 {data.get('from')} → {data.get('to')}", style="#ffcc00"))
         elif event == "economy_hit":
             self.chatlog.write(Text("  💾 cache hit", style="bold green"))
         elif event == "error":

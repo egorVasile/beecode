@@ -473,6 +473,8 @@ mouse-clickable picker.
 | `/save` | Save the current session now | `/save` |
 | `/session` | Show current session info | `/session` |
 | `/sessions` | List saved sessions | `/sessions` |
+| `/stop` | Interrupt the answer that is being written now | `/stop` |
+| `/tasks` | Show the task list the agent is keeping | `/tasks` |
 
 ### Run Tools Directly
 

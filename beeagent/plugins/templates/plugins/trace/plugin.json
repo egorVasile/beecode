@@ -1,0 +1,7 @@
+{
+    "name": "trace",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "/trace: the last failures on this machine — model, provider, HTTP status — in a capped rolling log",
+    "entry": "plugin.py"
+}

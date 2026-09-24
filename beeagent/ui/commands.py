@@ -110,6 +110,8 @@ COMMANDS: list[Command] = [
     Command("load", "Alias for /continue", arg="session", usage="/load <id>", category="session"),
     Command("reset", "Start a new session (clear history)", category="session"),
     Command("new", "Alias for /reset", category="session"),
+    Command("stop", "Interrupt the answer that is being written now", category="session"),
+    Command("tasks", "Show the task list the agent is keeping", category="session"),
     # extensions (skills / plugins / MCP servers)
     Command("plugins", "Browse the installable catalog", arg="plugin", usage="/plugins [filter]", category="extensions"),
     Command("plugin", "Install/remove/enable an extension", usage="/plugin <install|remove|list|enable|disable> [name]", category="extensions"),
@@ -1421,6 +1423,59 @@ def _cmd_clear(ctx, args):
     return CommandResult(action="clear")
 
 
+def _cmd_stop(ctx, args):
+    """Interrupt the answer being written. Ctrl+C does this too, but it also reads
+    like the only way out, and on a phone there is no convenient Ctrl+C."""
+    agent = ctx.agent
+    was_running = bool(agent.request_stop()) if agent is not None else False
+    return CommandResult(action="stop", output=Text(
+        L("stopping after this step — the session stays open, /tasks shows what is left",
+          "останавливаю после этого шага — сессия открыта, что осталось видно в /tasks")
+        if was_running else
+        L("nothing is running right now", "сейчас ничего не выполняется"), style="dim"))
+
+
+def _cmd_tasks(ctx, args):
+    """The agent's own task list, from the same file the `todo` tool writes."""
+    import json
+    from pathlib import Path
+
+    from beeagent.tools.todo import TODO_FILE
+
+    path = Path(TODO_FILE)
+    if not path.exists():
+        return CommandResult(output=Text(
+            L("no task list yet — the agent keeps one with the todo tool",
+              "списка задач пока нет — агент ведёт его инструментом todo"), style="dim"))
+    try:
+        tasks = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _err(L("the task list cannot be read", "список задач не читается"))
+    if not isinstance(tasks, list) or not tasks:
+        return CommandResult(output=Text(L("the task list is empty", "список задач пуст"),
+                                         style="dim"))
+
+    from rich.table import Table
+
+    from beeagent.ui import skin
+    from beeagent.ui.components import bee_title
+
+    table = Table(title=bee_title(L("🐝 tasks", "🐝 задачи")),
+                  **skin.frame_kwargs(BORDER), header_style="bold " + HONEY, expand=False)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("state", width=8)
+    table.add_column("task")
+    left = 0
+    for task in tasks:
+        done = bool(task.get("done"))
+        left += 0 if done else 1
+        table.add_row(str(task.get("id", "?")),
+                      "✔" if done else "…",
+                      str(task.get("text", ""))[:90])
+    table.caption = Text(L(f"{left} still open", f"открытых осталось: {left}"), style="dim")
+    return CommandResult(output=table)
+
+
 def _pool_provider_refresh(ctx) -> None:
     """Hand a freshly stored seat to the provider object that is already running.
 
@@ -1586,6 +1641,8 @@ HANDLERS: dict[str, Callable] = {
     "continue": _cmd_continue,
     "load": _cmd_continue,
     "reset": _cmd_reset,
+    "stop": _cmd_stop,
+    "tasks": _cmd_tasks,
     "new": _cmd_reset,
     "theme": _cmd_theme,
     "bee": _cmd_bee,
