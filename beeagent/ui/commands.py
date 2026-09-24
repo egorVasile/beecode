@@ -159,6 +159,8 @@ def _cached_models(name: str, fetch, allow_fetch: bool, fallback: list[str]) -> 
     """
     from time import time
 
+    from beeagent import __version__
+
     path = Path(".beeagent") / f"models_{name}.json"
     cached: list[str] = []
     fresh = False
@@ -166,7 +168,12 @@ def _cached_models(name: str, fetch, allow_fetch: bool, fallback: list[str]) -> 
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             cached = list(data.get("models", []))
-            fresh = time() - float(data.get("saved_at", 0)) < 3600
+            # An update can change what a provider answers for -- a model list
+            # written by the previous version is not a fact about this one, and
+            # waiting out an hour of cache after `--update` is how a fixed list
+            # looks like it never got fixed.
+            fresh = (time() - float(data.get("saved_at", 0)) < 3600
+                     and data.get("version") == __version__)
         except (json.JSONDecodeError, OSError, ValueError):
             cached = []
     if cached and (fresh or not allow_fetch):
@@ -187,7 +194,8 @@ def _cached_models(name: str, fetch, allow_fetch: bool, fallback: list[str]) -> 
         return cached or fallback
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"saved_at": time(), "models": models}), encoding="utf-8")
+        path.write_text(json.dumps({"saved_at": time(), "version": __version__,
+                                    "models": models}), encoding="utf-8")
     except OSError:
         pass
     return models
@@ -267,23 +275,18 @@ def model_choices(ctx: ReplContext) -> list:
 
 
 def available_providers(ctx: ReplContext) -> list[str]:
-    from beeagent.providers.presets import BY_NAME
+    """The two providers BeeCode is offered as: keyless g4f, and our own pool.
 
-    names: list[str] = []
-    agent = ctx.agent
-    if agent is not None:
-        names.extend(agent.providers.list_names())
-    for builtin in ("g4f", "openai_compat", "ollama"):
-        if builtin not in names:
-            names.append(builtin)
-    # Free-tier endpoints are always offered: picking one without a key gets a
-    # message that says where to get the key.
-    for name in BY_NAME:
-        if name not in names:
-            names.append(name)
-    for cp in getattr(ctx.config, "custom_providers", []) or []:
-        if cp.name not in names:
-            names.append(cp.name)
+    The list used to carry every free-tier endpoint that takes a key of your own
+    (crax, groq, openrouter, ollama, …), which is a different product promise from
+    the one on the box. A key already stored in beeagent.json keeps working, and
+    `/provider <name>` still accepts a registered name -- what is gone is offering
+    a stranger ten rows that all say "go get a token first".
+    """
+    names = ["g4f", "pool"]
+    for name in getattr(ctx.config, "custom_providers", []) or []:
+        if name.name not in names:
+            names.append(name.name)
     return names
 
 
@@ -482,7 +485,9 @@ def _cmd_models(ctx, args):
                           f"ничего не подходит под «{query}» — /models покажет все модели"))
 
     if provider_name != "g4f":
-        return CommandResult(output=models_table(models))
+        from beeagent.core.context import advertised_window
+        return CommandResult(output=models_table(
+            sorted(models, key=advertised_window, reverse=True), provider=provider_name))
 
     from beeagent.core import windows
     from beeagent.core.context import advertised_window
@@ -523,29 +528,23 @@ def _cmd_models(ctx, args):
 
 def _cmd_providers(ctx, args):
     """What can serve requests right now, and what still needs a key."""
-    from beeagent.providers.presets import ENDPOINTS, key_for
     from beeagent.ui.components import providers_table
 
-    rows = [{"name": "g4f", "type": L("free, keyless", "бесплатно, без ключа"),
-             "desc": L("public endpoints routed by g4f — works out of the box",
-                       "публичные эндпоинты через g4f — работает сразу")}]
     active = getattr(ctx.config, "provider", "g4f")
-    for endpoint in ENDPOINTS:
-        ready = bool(key_for(endpoint, ctx.config.api_keys))
-        mark = "  ←" if active == endpoint.name else ""
-        detail = (L("✅ ready — ", "✅ готов — ") if ready
-                  else L("⚪ no key, run: /key ", "⚪ нет ключа, добавь: /key "))
-        rows.append({
-            "name": endpoint.name + mark,
-            "type": L("free tier + your own key", "бесплатный тариф + твой ключ"),
-            "desc": detail + endpoint.name + " <token> · " + endpoint.free + " · " + endpoint.signup,
-        })
-    if ctx.agent is not None:
-        for name in ctx.agent.providers.list_names():
-            if name != "g4f" and not any(name == e.name for e in ENDPOINTS):
-                rows.append({"name": name, "type": L("configured", "настроен"),
-                             "desc": L("registered from beeagent.json",
-                                       "зарегистрирован в beeagent.json")})
+    about = {
+        "g4f": (L("free, keyless", "бесплатно, без ключа"),
+                L("public endpoints through g4f — works out of the box",
+                  "публичные эндпоинты через g4f — работает сразу")),
+        "pool": (L("free, keyless — our own server", "бесплатно, без ключа — наш сервер"),
+                 L("your own BeeCode server holding the account keys; /pool enroll takes a seat",
+                   "твой сервер BeeCode, ключи на нём; место берётся командой /pool enroll")),
+    }
+    rows = []
+    for name in available_providers(ctx):
+        kind, desc = about.get(name, (L("registered", "зарегистрирован"),
+                                      L("from beeagent.json", "из beeagent.json")))
+        rows.append({"name": name + ("  ←" if active == name else ""),
+                     "type": kind, "desc": desc})
     return CommandResult(output=providers_table(rows))
 
 
@@ -663,14 +662,21 @@ def _cmd_provider(ctx, args):
         return _err(L(f"provider '{name}' is not registered — /providers shows what works",
                       f"провайдер '{name}' не зарегистрирован — список в /providers"))
     ctx.config.provider = name
-    if ctx.agent is not None and name != "g4f":
-        models = getattr(ctx.agent.providers.get(name), "models", None) or []
-        if models:
-            ctx.config.model = models[0]
+    # The model has to move with the provider in both directions. This used to
+    # happen only when leaving g4f, so `/provider pool` then `/provider g4f` left
+    # the session asking g4f for a crax model id it cannot serve.
+    provider = ctx.agent.providers.get(name) if ctx.agent is not None else None
+    models = list(getattr(provider, "models", None) or [])
+    if not models and name == "g4f":
+        from beeagent.providers.g4f_provider import G4fProvider
+        models = G4fProvider.discover_models()
+    if models:
+        ctx.config.model = models[0]
+        if ctx.agent is not None:
             ctx.agent.context.model = models[0]
     _persist_config(ctx)
-    return _ok(L(f"provider → {name}   its models: /models",
-                 f"провайдер → {name}   его модели: /models"))
+    return _ok(L(f"provider → {name} · model → {ctx.config.model}   all of them: /models",
+                 f"провайдер → {name} · модель → {ctx.config.model}   все: /models"))
 
 
 def _cmd_skin(ctx, args):

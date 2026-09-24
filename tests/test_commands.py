@@ -77,9 +77,16 @@ def test_available_models_falls_back_to_g4f(ctx):
 
 
 def test_available_providers_includes_builtins(ctx):
+    """Two providers are offered, and both answer without anyone holding a key.
+
+    The list used to carry every free-tier endpoint that takes a key of your own,
+    which contradicts what BeeCode is advertised as; a stored key still works via
+    `/provider <name>`, it is simply no longer offered to a stranger.
+    """
     providers = available_providers(ctx)
-    for p in ("g4f", "openai_compat", "ollama"):
-        assert p in providers
+    assert providers == ["g4f", "pool"], providers
+    for name in ("groq", "openrouter", "crax", "ollama", "openai_compat"):
+        assert name not in providers, f"{name} needs a key and must not be offered"
 
 
 def test_build_sources_keys(ctx):
@@ -234,3 +241,45 @@ def test_a_freshly_enrolled_seat_reaches_the_running_provider():
 
     assert live.token == "seat-token-just-minted", "the running provider must see the seat"
     assert live.url == "https://pool.example"
+
+
+def test_switching_provider_back_to_g4f_moves_the_model_with_it():
+    """The reset used to happen only when leaving g4f.
+
+    `/provider pool` then `/provider g4f` left the session asking g4f for a crax
+    model id, which is the same dead request in the other direction.
+    """
+    from beeagent.core.agent import Agent
+
+    config = BeeConfig(provider="pool", pool_url="https://pool.example", pool_token="t")
+    agent = Agent(config=config)
+    ctx = ReplContext(agent=agent, config=config, session=Session())
+    dispatch(ctx, "/provider pool")
+    assert config.model == "qwen3-coder-480b", config.model
+    dispatch(ctx, "/provider g4f")
+    assert config.model != "qwen3-coder-480b", "g4f cannot serve a crax model id"
+    assert config.model in available_models(ctx)
+
+
+def test_a_model_list_saved_by_another_version_is_not_used(tmp_path, monkeypatch):
+    """`beecode --update` can change what a provider answers for.
+
+    The hour-old cache had no version in it, so after an update the picker kept
+    showing the previous build's list and a fixed catalogue looked unfixed.
+    """
+    import json
+    from beeagent.ui import commands
+
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / ".beeagent" / "models_groq.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"saved_at": __import__("time").time(),
+                                "version": "0.0.0-not-this-build",
+                                "models": ["stale-model"]}), encoding="utf-8")
+
+    async def fresh():
+        return ["fresh-model"]
+
+    got = commands._cached_models("groq", fresh, allow_fetch=True,
+                                  fallback=["declared"])
+    assert got == ["fresh-model"], got

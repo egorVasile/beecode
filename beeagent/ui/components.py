@@ -443,9 +443,19 @@ def render_model_info(model: str, provider: str, mode: str, permissions: str = "
                       "   /allow <инструмент> · /permissions auto"), style="dim")
     console.print(Align.center(text))
 
-def models_table(models: list[str]) -> Table:
+def models_table(models: list[str], provider: str = "g4f") -> Table:
+    """A provider's own model list, with the context window each one claims.
+
+    The window belongs here: without it `/models` on the pool was a wall of bare
+    names, and a person could not tell a 128k model from a 1M one -- which is the
+    one thing that decides whether a session survives.
+    """
+    from beeagent.core import windows
+    from beeagent.core.context import advertised_window
+    from beeagent.ui.commands import format_window
+
     table = Table(
-        title=bee_title("🐝 Models"),
+        title=bee_title(f"🐝 {provider} models"),
         **skin.frame_kwargs(BORDER),
         show_header=True,
         header_style="bold " + HONEY,
@@ -453,9 +463,22 @@ def models_table(models: list[str]) -> Table:
     )
     table.add_column("#", style="dim", width=4)
     table.add_column("Model", style="bold #ffcc00")
+    table.add_column("window", justify="right")
     table.add_column("Provider", style="dim")
     for i, model in enumerate(models, 1):
-        table.add_row(str(i), model, "g4f")
+        measured = windows.measured(model)
+        table.add_row(str(i), model,
+                      ("✔ " if measured else "~ ") + format_window(advertised_window(model)),
+                      provider)
+    table.caption = Text(
+        L("✔ window measured on this machine · ~ claimed by the provider · requests are capped "
+          "at 32k tokens unless you raise max_context_tokens\n"
+          "switch: /model <name> · measure one: /window measure <model>",
+          "✔ окно измерено на этой машине · ~ заявлено провайдером · запросы режутся до 32k, "
+          "пока не поднят max_context_tokens\n"
+          "переключить: /model <имя> · померить: /window measure <модель>"),
+        style="dim",
+    )
     return table
 
 

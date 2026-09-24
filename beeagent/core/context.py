@@ -171,6 +171,28 @@ _WINDOW_MARKERS = re.compile(r"(\d+(?:\.\d+)?)\s*k\b")
 _WINDOW_MARKERS_M = re.compile(r"(\d+(?:\.\d+)?)\s*m\b")
 
 _MODEL_FAMILIES = (
+    # The twelve models BeeCode's own pool answers for, with the window its owner
+    # states for each (2026-09-24). Listed first because the generic rules below
+    # are shorter and would win: `qwen` matches `qwen3-coder-480b` and used to
+    # label it 32k, while `gemma-3-12b`, `llama-4-maverick` and `glm-5.2` matched
+    # nothing at all and were shown the 8k default.
+    #
+    # These are what the provider claims, not what we measured from this machine,
+    # so the interface marks them "~". Sending is still clamped to MAX_WINDOW
+    # until `/window measure` proves the endpoint takes the larger prompt -- a
+    # label may be optimistic, a request budget may not.
+    ("qwen3-coder-480b", 262144),      # 256k out of the box, 1M with YaRN
+    ("gemma-3-12b", 131072),
+    ("llama-4-maverick", 1_000_000),
+    ("gpt-5-6-luna", 1_050_000),
+    ("kimi-k2-6", 262144),
+    ("kimi-k2-7-code", 262144),
+    ("glm-5.2", 1_000_000),
+    ("glm-5.3-flash", 1_048_576),
+    ("glm-5.3", 1_000_000),            # 1M in, 128k of it as the reply
+    ("grok-4-3", 1_000_000),
+    ("grok-4-6", 500_000),
+    ("deepseek-v4-flash", 1_048_576),
     ("gpt-4.1", 128000), ("gpt-4o", 128000), ("gpt-4-turbo", 128000),
     ("gpt-4", 8192), ("gpt-3.5", 16385),
     ("claude", 200000), ("gemini", 1000000),

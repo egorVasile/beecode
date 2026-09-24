@@ -68,10 +68,15 @@ def test_api_keys_survive_a_config_round_trip():
 # --- commands --------------------------------------------------------------
 
 def test_providers_command_shows_key_state():
+    """The table and the picker have to agree: two rows, both keyless.
+
+    It used to list every endpoint with "no key, run /key ..." next to it, which
+    is a different promise from the one on the box.
+    """
     out = _text(dispatch(_ctx(), "/providers"))
-    assert "g4f" in out and "groq" in out
-    assert "no key" in out                       # honest about what is unusable
-    assert "openrouter.ai" in out or "console.groq.com" in out
+    assert "g4f" in out and "pool" in out
+    assert "no key" not in out, "an endpoint nobody can use must not be offered"
+    assert "groq" not in out and "openrouter" not in out
 
 
 def test_provider_without_key_is_refused_with_instructions():

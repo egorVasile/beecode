@@ -229,3 +229,27 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
     header = count_tokens(SYSTEM_PROMPT + "\n" + catalog, "gpt-4")
     assert header < 3000, f"prompt header costs {header} tokens"
     assert header < ContextManager(model="glm-4-9b-32k").max_tokens // 2
+
+
+def test_the_pool_models_carry_the_windows_their_owner_states():
+    """These twelve were labelled from a generic guess before.
+
+    `qwen` matched `qwen3-coder-480b` and printed 32k against a 256k model, and
+    `gemma-3-12b`, `llama-4-maverick` and `glm-5.2` matched no rule at all and got
+    the 8k default -- so the picker ranked a 1M model below an 8k one. The values
+    are what the provider claims, which is why the interface still marks them "~"
+    and `window_for` keeps sending conservatively until /window measure proves it.
+    """
+    from beeagent.core.context import advertised_window
+
+    stated = {
+        "qwen3-coder-480b": 262144, "gemma-3-12b": 131072,
+        "llama-4-maverick": 1_000_000, "gpt-5-6-luna": 1_050_000,
+        "kimi-k2-6": 262144, "kimi-k2-7-code": 262144,
+        "glm-5.2": 1_000_000, "glm-5.3": 1_000_000, "glm-5.3-flash": 1_048_576,
+        "grok-4-3": 1_000_000, "grok-4-6": 500_000, "deepseek-v4-flash": 1_048_576,
+    }
+    for model, tokens in stated.items():
+        assert advertised_window(model) == tokens, model
+    # the specific id must win over the shorter family rule it sits next to
+    assert advertised_window("glm-5.3-flash") > advertised_window("glm-5.3")
