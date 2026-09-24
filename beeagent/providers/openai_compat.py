@@ -1,9 +1,8 @@
-import json
 from typing import AsyncIterator
 
 import httpx
 
-from .base import BaseProvider
+from .base import BaseProvider, check_error_frame, read_answer_stream
 
 
 class OpenAICompatProvider(BaseProvider):
@@ -54,6 +53,22 @@ class OpenAICompatProvider(BaseProvider):
             data = resp.json()
             return data["choices"][0]["message"]["content"]
 
+    @staticmethod
+    def _pieces(event: dict) -> list[tuple[str, str]]:
+        """The text one chat-completion frame carries.
+
+        An `error` frame is the endpoint explaining itself; swallowing it is how
+        "no such model" became "the provider said nothing".
+        """
+        check_error_frame(event)
+        choices = event.get("choices")
+        first = choices[0] if isinstance(choices, list) and choices else None
+        if not isinstance(first, dict):
+            return []
+        delta = first.get("delta")
+        content = delta.get("content") if isinstance(delta, dict) else None
+        return [("content", content)] if isinstance(content, str) and content else []
+
     async def chat_stream(self, messages: list[dict], model: str = "") -> AsyncIterator[tuple[str, str]]:
         model = model or self.default_model
         headers = self._headers()
@@ -67,21 +82,12 @@ class OpenAICompatProvider(BaseProvider):
                 timeout=60,
             ) as resp:
                 resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    # Several gateways and vLLM behind nginx send `data:{...}` with
-                    # no space — legal per the SSE spec, and silently dropped before.
-                    if not line.startswith("data:"):
-                        continue
-                    payload = line[5:].strip()
-                    if payload.strip() == "[DONE]":
-                        return
-                    try:
-                        chunk = json.loads(payload)
-                    except json.JSONDecodeError:
-                        continue
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    piece = (choices[0].get("delta") or {}).get("content")
-                    if piece:
-                        yield ("content", piece)
+                # One line is not one event. `read_answer_stream` is the SSE reader
+                # for both providers: it joins the several `data:` lines of a single
+                # event, treats CRLF and a bare `data:{...}` alike, skips
+                # `: keep-alive` comments, stops at `[DONE]` without ever letting it
+                # become answer text, and raises rather than ending quietly when the
+                # stream carried nothing — the same promise Ollama makes.
+                async for piece in read_answer_stream(resp.aiter_lines(), self._pieces,
+                                                      source=self.name):
+                    yield piece

@@ -27,6 +27,7 @@ from beeagent.tools.edit import EditTool
 from beeagent.tools.bash import BashTool
 from beeagent.tools.grep import GrepTool
 from beeagent.tools.glob_tool import GlobTool
+from beeagent.tools.diagram import DiagramTool
 from beeagent.tools.list_dir import ListDirectoryTool
 from beeagent.tools.web_search import WebSearchTool
 from beeagent.tools.git import GitTool
@@ -90,6 +91,16 @@ def _reason(error, previous) -> str:
     return known or type(error).__name__
 
 
+def _no_answer(last_error) -> RuntimeError:
+    """An endpoint that answered nothing failed; it never counts as a reply."""
+    return RuntimeError(L(
+        f"the provider returned an empty answer after all attempts "
+        f"(last error: {last_error}) — try again or switch model (/models)",
+        f"провайдер вернул пустой ответ после всех попыток "
+        f"(последняя ошибка: {last_error}) — попробуй ещё раз или смени модель (/models)",
+    ))
+
+
 class Agent:
     def __init__(self, config: BeeConfig = None, workdir: str = "."):
         self.config = config or load_config(workdir)
@@ -133,7 +144,7 @@ class Agent:
         self.tools = ToolRegistry()
         for tool_cls in [ReadTool, WriteTool, EditTool, BashTool,
                          GrepTool, GlobTool, ListDirectoryTool, WebSearchTool,
-                         GitTool, TodoTool]:
+                         GitTool, TodoTool, DiagramTool]:
             self.tools.register(tool_cls())
 
         self.economy = EconomyManager(
@@ -318,12 +329,7 @@ class Agent:
 
             await asyncio.sleep(1.5 * (attempt + 1))  # backoff
 
-        raise RuntimeError(L(
-            f"the provider returned an empty answer after all attempts "
-            f"(last error: {last_error}) — try again or switch model (/models)",
-            f"провайдер вернул пустой ответ после всех попыток "
-            f"(последняя ошибка: {last_error}) — попробуй ещё раз или смени модель (/models)",
-        ))
+        raise _no_answer(last_error)
 
     def _model_for(self, provider, callback=None) -> str:
         """The model id to actually send.
@@ -437,8 +443,13 @@ class Agent:
         # used to leave it True forever, and then the REPL parked every later
         # message in agent.pending and never ran a single one.
         self.is_busy = True
-        self.stop_requested = False
+        # `stop_requested` is deliberately NOT cleared here. The REPL marks itself
+        # busy and only then creates the task, so a /stop typed inside that window
+        # used to be erased before turn one: request_stop() answered True, the user
+        # was told it was stopping, and the whole answer streamed anyway. The flag
+        # is cleared in the finally, when this run is genuinely over.
         self.permissions.denied_this_run.clear()
+        awaiting_result = None
 
         try:
             provider = self._provider_or_pool(callback)
@@ -448,11 +459,13 @@ class Agent:
             nudge_pending = False
             rescued = False
 
-            for turn in range(self.config.max_turns):
+            # A zero (or a negative, from a hand-edited beeagent.json) used to end
+            # the run before the first request and still report "Max turns reached
+            # without a final answer" — an answer was never even asked for.
+            for turn in range(max(1, int(self.config.max_turns or 0))):
                 if self.stop_requested:
-                    # Cleared here so the next run starts clean, and reported so
-                    # the user learns the answer is truncated rather than finished.
-                    self.stop_requested = False
+                    # Reported, not swallowed: the user learns the answer was cut
+                    # short rather than finished. The finally clears the flag.
                     if callback:
                         callback("stopped", {"turn": turn})
                     return "Stopped by you"
@@ -512,6 +525,13 @@ class Agent:
                         answer = await provider.complete(messages, model, tool_schemas)
                         response = answer.get("text") or ""
                         calls = answer.get("tool_calls") or []
+                        if not calls and not response.strip():
+                            # The streamed path refuses an empty answer; this one
+                            # used to hand it back as a finished reply — it reached
+                            # "done", was written into the transcript and cached,
+                            # and the user watched a turn that had said nothing.
+                            raise _no_answer("the endpoint answered with no text "
+                                             "and no tool call")
                         # The answer arrives as one object, but both interfaces
                         # render from the stream: they flush what they buffered when
                         # "done" comes, and they buffer nothing here. So the text is
@@ -641,6 +661,7 @@ class Agent:
                     try:
                         # Tools are sync (subprocess, MCP, file IO); running them
                         # in a worker thread keeps the prompt and stream alive.
+                        awaiting_result = cmd.tool
                         result = await asyncio.to_thread(tool.execute, **args)
                     except Exception as e:
                         result = ToolResult(output=f"ERROR: {e}", error=True)
@@ -659,6 +680,7 @@ class Agent:
                               "the closing ```."
                         )
                     session.add_tool_result(result_text)
+                    awaiting_result = None
 
                     if callback:
                         callback("tool_end", {
@@ -672,8 +694,19 @@ class Agent:
             if callback:
                 callback("error", {"message": "Max turns reached without a final answer"})
             return "Max turns reached"
+        except asyncio.CancelledError:
+            if awaiting_result is not None:
+                # The assistant message carrying this call is already in the
+                # session, and the session is saved and replayed on every later
+                # turn. Left unanswered, one cancelled tool would make a
+                # native-tools provider reject the whole history.
+                session.add_tool_result(
+                    f"[tool result] tool={awaiting_result} error=True\n"
+                    "cancelled by the user before it finished")
+            raise
         finally:
             self.is_busy = False
+            self.stop_requested = False
 
     def run_sync(self, user_input: str, session: Session = None, callback=None) -> str:
         return asyncio.run(self.run(user_input, session, callback))

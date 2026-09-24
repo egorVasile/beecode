@@ -218,6 +218,12 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
 
     The prompt grows by accretion, and every token of it is a token taken from
     history, so the budget is asserted rather than hoped for.
+
+    Two budgets, because they answer to different people. The strict one covers
+    BeeCode's own tools -- what this repository can actually be blamed for. MCP
+    tools are counted separately and against the window, not the 3000: a user who
+    connects a large MCP server is making their own trade-off, and failing this
+    test on their behalf would report a defect that is not in the code.
     """
     from beeagent.config.schema import BeeConfig
     from beeagent.core.agent import Agent
@@ -225,10 +231,18 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
     from beeagent.core.parser import CommandParser
     from beeagent.utils.tokens import count_tokens
 
-    catalog = CommandParser().format_tool_prompt(Agent(config=BeeConfig()).tools.to_schemas())
-    header = count_tokens(SYSTEM_PROMPT + "\n" + catalog, "gpt-4")
-    assert header < 3000, f"prompt header costs {header} tokens"
-    assert header < ContextManager(model="glm-4-9b-32k").max_tokens // 2
+    schemas = Agent(config=BeeConfig()).tools.to_schemas()
+    own = [s for s in schemas if not s["name"].startswith("mcp_")]
+    mcp = [s for s in schemas if s["name"].startswith("mcp_")]
+
+    header = count_tokens(SYSTEM_PROMPT + "\n" + CommandParser().format_tool_prompt(own),
+                          "gpt-4")
+    assert header < 3000, f"BeeCode's own prompt header costs {header} tokens"
+
+    everything = count_tokens(SYSTEM_PROMPT + "\n"
+                              + CommandParser().format_tool_prompt(schemas), "gpt-4")
+    assert everything < ContextManager(model="glm-4-9b-32k").max_tokens // 2, (
+        f"with {len(mcp)} MCP tools attached the header is {everything} tokens")
 
 
 def test_the_pool_models_carry_the_windows_their_owner_states():

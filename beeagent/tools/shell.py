@@ -153,13 +153,24 @@ def run_shell(command: str, timeout: int = 60) -> subprocess.CompletedProcess:
 def run_text(command: str, timeout: int = 60) -> tuple[str, str, int]:
     """Run a command and return (stdout, stderr, returncode) as decoded text."""
     result = run_shell(command, timeout=timeout)
-    return decode(result.stdout), decode(result.stderr), result.returncode
+    return _capped(result.stdout), _capped(result.stderr), result.returncode
 
 
 def run_argv_text(argv: list, timeout: int = 60) -> tuple[str, str, int]:
     """The same, for a command that must never reach a shell."""
     result = run_argv(argv, timeout=timeout)
-    return decode(result.stdout), decode(result.stderr), result.returncode
+    return _capped(result.stdout), _capped(result.stderr), result.returncode
+
+
+def _capped(data: bytes) -> str:
+    """Decoded output, plus the sentence saying the rest was dropped.
+
+    `_read_capped` keeps one byte past the limit precisely so we can tell "the
+    program printed exactly this" from "this is the head of something longer".
+    Without the note a 5 MB build log reads to the model — and to the user — as
+    if it ended where our buffer did.
+    """
+    return decode(data[:MAX_CAPTURE]) + truncate_note(data)
 
 
 def truncate_note(data: bytes) -> str:

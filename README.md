@@ -263,6 +263,7 @@ plugins and MCP servers):
 | `web_search` | Search the web |
 | `todo` | Keep a task list while working |
 | `skill` | Load the full instructions of an installed skill |
+| `diagram` | Draw boxes and arrows, and **return the picture as text**, so the model reads back what it drew and fixes the overlaps itself; an SVG is saved beside it |
 
 ## Providers and models
 
@@ -632,9 +633,9 @@ what is allowed — you do.** A reply from a free endpoint is a guess; guessing
 
 | Mode | What runs without asking | Switch |
 | --- | --- | --- |
-| `ask` (default) | Reading tools: `read`, `grep`, `glob`, `list_directory`, `web_search`, `todo`, `skill` | `/permissions ask` |
+| `ask` (default) | Readers: `read`, `grep`, `glob`, `list_directory`, `web_search`, `skill` — plus `todo` and `diagram`, which need no grant but each write one file of their own (`.beeagent/todo.json`, a `.svg`) | `/permissions ask` |
 | `auto` | Everything | `/permissions auto` |
-| `readonly` | Only the reading tools, even tools you granted | `/permissions readonly` |
+| `readonly` | Only the readers — `todo` and `diagram` are refused here too, and so is any tool you granted | `/permissions readonly` |
 
 In `ask` mode a tool that changes the machine — `write`, `edit`, `bash`, `git`,
 and anything a plugin or MCP server adds — is refused, and you see why:

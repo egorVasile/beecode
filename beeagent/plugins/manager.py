@@ -3,21 +3,57 @@
 Installed units live in `.beeagent/plugins/<name>/` (skills + plugin packs)
 and `.beeagent/mcp.json` (MCP servers). State (installed, enabled) is tracked
 in `.beeagent/plugins.json`.
+
+A market install is the one path here that reaches the network, and it is written
+around one rule: the bytes are hashed before they touch a disk, and a licence that
+was not granted never gets that far.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from beeagent.plugins.catalog import Catalog, CatalogItem, TEMPLATES_DIR
+from beeagent.plugins.catalog import (
+    Catalog, CatalogItem, MarketError, MarketItem, TEMPLATES_DIR,
+    fetch_bytes, install_name_ok, license_allowed, unpack,
+)
+from beeagent.i18n import L
 from beeagent.tools.shell import decode
 
 PLUGINS_DIR = Path(".beeagent") / "plugins"
 STATE_PATH = Path(".beeagent") / "plugins.json"
 MCP_CONFIG_PATH = Path(".beeagent") / "mcp.json"
+
+
+def _as_market_item(item: CatalogItem) -> MarketItem:
+    """Rebuild an index entry from an install record.
+
+    A reinstall reads `.beeagent/plugins.json`, which stores the source as a plain
+    dict; the gate and the hash live on the entry, so it goes back to being one.
+    """
+    src = item.source or {}
+    return MarketItem(
+        name=item.name, type=item.type, category=item.category,
+        description=item.description, source=src,
+        id=str(src.get("id") or item.name), license=str(src.get("license") or ""),
+        repo=str(src.get("repo") or ""), path=str(src.get("path") or ""),
+        commit=str(src.get("commit") or ""), download=str(src.get("download") or ""),
+        sha256=str(src.get("sha256") or ""),
+    )
+
+
+def _artifact_name(entry: MarketItem) -> str:
+    """What to call the download when it turns out to be one file, not an archive.
+
+    A path naming a folder ("skills/demo") has no extension to keep, and the
+    loader discovers a skill by its `SKILL.md`, so that is the name it gets.
+    """
+    tail = (entry.path or entry.download or "").replace("\\", "/").rstrip("/").split("/")[-1]
+    return tail if "." in tail else "SKILL.md"
 
 
 class PluginManager:
@@ -59,9 +95,14 @@ class PluginManager:
 
     # --- install --------------------------------------------------------------
 
-    def install(self, target: str) -> dict:
-        """Install by catalog name or git URL. Returns an install report."""
-        item = self.catalog.get(target) or self.catalog.find_git(target)
+    def install(self, target: str, item: CatalogItem | None = None) -> dict:
+        """Install by catalog name, git URL, or an already resolved market entry.
+
+        `item` is how a caller that has just fetched the market index hands the
+        entry over: resolving it is the command's job, verifying its bytes is
+        this one.
+        """
+        item = item or self.catalog.get(target) or self.catalog.find_git(target)
         if item is None:
             raise ValueError(f"'{target}' not found in catalog (and not a git URL)")
 
@@ -72,6 +113,8 @@ class PluginManager:
             self._install_mcp(item)
         elif kind == "git":
             self._install_git(item)
+        elif kind == "market":
+            self._install_market(item)
         else:
             raise ValueError(f"Unknown source kind '{kind}' for '{item.name}'")
 
@@ -85,6 +128,8 @@ class PluginManager:
             "source": item.source,
         }
         self._save_state(state)
+        # The keys of this report are pinned by tests: a caller that wants
+        # provenance reads it off the item or the state it just wrote.
         return {"name": item.name, "type": item.type, "description": item.description}
 
     def _install_builtin(self, item: CatalogItem) -> None:
@@ -122,6 +167,68 @@ class PluginManager:
                 shutil.rmtree(dst, ignore_errors=True)
             err = decode(res.stderr)
             raise RuntimeError(f"git clone failed: {err.strip()[:300]}")
+
+    def _install_market(self, item: CatalogItem) -> None:
+        """Fetch one market entry and write it only if it is the promised bytes.
+
+        The order is the whole point: licence, then hash, then disk. An entry
+        whose licence nobody granted and a download whose sha256 does not match
+        both fail before a single file exists, so a refused install leaves the
+        project exactly as it was found.
+        """
+        entry = item if isinstance(item, MarketItem) else _as_market_item(item)
+
+        if not install_name_ok(entry.name):
+            raise MarketError(L(
+                f"the index calls “{entry.name}” by a name that is not a folder name — "
+                f"nothing was fetched or written",
+                f"индекс называет «{entry.name}» так, что папкой это быть не может — "
+                f"ничего не скачано и не записано"))
+        if not license_allowed(entry.license):
+            raise MarketError(L(
+                f"“{entry.name}” is licensed “{entry.license or 'nothing — no licence field'}”, "
+                f"which this client will not install. The licence, not the code, is what is "
+                f"missing here",
+                f"«{entry.name}» распространяется под лицензией "
+                f"«{entry.license or 'ничего — поля лицензии нет'}», и такую этот клиент "
+                f"не ставит: здесь не хватает лицензии, а не кода"))
+        if not entry.sha256:
+            raise MarketError(L(
+                f"the index names no sha256 for “{entry.name}”, so its bytes cannot be "
+                f"verified — nothing was downloaded or written",
+                f"в индексе нет sha256 для «{entry.name}», а значит его байты не проверить — "
+                f"ничего не скачано и не записано"))
+        if not entry.download:
+            raise MarketError(L(
+                f"the index gives provenance for “{entry.name}” ({entry.provenance}) but no "
+                f"download to fetch — it is a pointer, and there is nothing to install",
+                f"индекс даёт для «{entry.name}» только происхождение ({entry.provenance}) "
+                f"и не даёт адреса — это ссылка, ставить нечего"))
+
+        raw = fetch_bytes(entry.download)
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest != entry.sha256.lower():
+            raise MarketError(L(
+                f"sha256 mismatch for “{entry.name}”: the index promised {entry.sha256}, "
+                f"the bytes at {entry.provenance} are {digest} — nothing was written",
+                f"sha256 для «{entry.name}» не совпал: индекс обещал {entry.sha256}, "
+                f"по адресу {entry.provenance} лежит {digest} — ничего не записано"))
+
+        dst = self.plugins_dir / entry.name
+        staging = self.plugins_dir / f"{entry.name}.market-partial"
+        shutil.rmtree(staging, ignore_errors=True)
+        self.plugins_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            unpack(raw, staging, fallback_name=_artifact_name(entry))
+            if dst.exists():
+                shutil.rmtree(dst)
+            staging.replace(dst)
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        # Remember where it came from, next to what was verified: `installed_at`
+        # alone would not tell anyone which commit these bytes were hashed at.
+        entry.source = dict(entry.source or {}) | entry.as_source()
 
     # --- uninstall ------------------------------------------------------------
 

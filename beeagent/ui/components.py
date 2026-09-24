@@ -327,6 +327,11 @@ def render_tool_end(tool_name: str, tool_args: dict, output: str, error: bool):
     elif tool_name == "todo" and not error:
         action = tool_args.get("action", "")
         console.print(f"    [bold #ffcc00]●[/] [#ffd54f]todo:[/] [dim]{action}[/]")
+    elif tool_name == "diagram" and not error:
+        # The picture is the result: the model reads it back from the tool output,
+        # and the user should not have to open a file to see what was drawn.
+        console.print("    [bold #7cb342]●[/] [#8fbf6f]diagram[/]")
+        console.print(Panel(Text(output), **skin.frame_kwargs(BORDER), padding=(0, 1)))
     else:
         console.print(f"    [bold {color}]{icon}[/] [{color}]{tool_name}[/]")
 
@@ -523,9 +528,21 @@ def tools_table(tools: list) -> Table:
         expand=False,
     )
     table.add_column("Tool", style="bold #ffcc00")
+    table.add_column("Runs", style="dim")
     table.add_column("Description")
     for t in tools:
-        table.add_row(t.name, t.description)
+        # Which column the model can actually reach: it will not call a tool that
+        # needs a grant the user has not given, so this is where the user sees why.
+        table.add_row(t.name,
+                      "as is" if t.is_safe() else L("needs /allow", "нужен /allow"),
+                      t.description)
+    table.caption = Text(
+        L("'as is' runs on its own · 'needs /allow' waits for /allow <tool> · "
+          "/permissions readonly stops everything that writes, even 'as is'",
+          "«as is» запускается сам · «нужен /allow» ждёт /allow <инструмент> · "
+          "/permissions readonly останавливает всё, что пишет, даже «as is»"),
+        style="dim",
+    )
     return table
 
 

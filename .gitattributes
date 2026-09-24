@@ -1,0 +1,16 @@
+# Without this, git rewrites every .py on checkout under Windows and the next
+# diff is all line endings.
+* text=auto
+
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+
+# Keep generated reference files out of the noise when they drift.
+README.md text

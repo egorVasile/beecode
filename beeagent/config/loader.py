@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import tempfile
 import stat
 from pathlib import Path
@@ -33,14 +34,29 @@ def _set_aside(config_path) -> None:
     in beeagent.json used to mean the stored API keys and custom providers were
     erased the first time the user changed anything. A file we could not read is
     nobody's defaults: it goes to one side, where it can still be repaired.
+
+    Two rules keep that promise: a rescue already there is never overwritten (a
+    second bad config used to delete the first one's keys), and if the move is
+    refused the file is copied instead — because BeeCode is about to run on
+    defaults, and the only thing standing between the user's keys and the next
+    save is this copy.
     """
+    broken = config_path.with_name(config_path.name + ".broken")
+    target = broken
+    step = 1
+    while target.exists():
+        target = broken.with_name(f"{broken.name}.{step}")
+        step += 1
     try:
-        broken = config_path.with_name(config_path.name + ".broken")
-        if broken.exists():
-            broken.unlink()
-        config_path.replace(broken)
+        config_path.replace(target)
     except OSError:
-        pass
+        try:
+            shutil.copyfile(str(config_path), str(target))
+        except OSError:
+            _warn(L(f"⚠ {config_path} could not be set aside — copy it before "
+                    "the next /key, /model or /permissions writes defaults over it",
+                    f"⚠ {config_path} не удалось отложить — скопируй его, пока "
+                    "/key, /model или /permissions не записали поверх него defaults"))
 
 
 def load_config(workdir: str = ".") -> BeeConfig:

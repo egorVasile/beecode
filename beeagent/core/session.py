@@ -1,6 +1,7 @@
 import json
 import os
 import secrets
+import tempfile
 from pathlib import Path
 from datetime import datetime
 
@@ -50,10 +51,22 @@ class Session:
             "messages": [m.to_dict() for m in self.messages],
         }
         # Writing in place means a crash, a full disk or Ctrl+C mid-save leaves a
-        # half a file — and then `--continue` cannot start at all. Replace atomically.
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        os.replace(tmp, path)
+        # half a file — and then `--continue` cannot start at all. Replace atomically,
+        # through a name only this save owns: two windows resumed on one session id
+        # used to share `<id>.json.tmp`, and one of them could rename the other's
+        # half-written temp over the transcript. Same lesson `save_config` learned.
+        descriptor, tmp_name = tempfile.mkstemp(dir=str(path.parent),
+                                                prefix=path.name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=2)
+            os.replace(tmp_name, path)
+        finally:
+            if os.path.exists(tmp_name):
+                try:
+                    os.remove(tmp_name)
+                except OSError:
+                    pass
 
     @classmethod
     def load(cls, session_id: str, workdir: str = ".") -> "Session":

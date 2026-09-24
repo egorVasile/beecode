@@ -8,150 +8,211 @@
   ],
   "items": [
     {
+      "id": "code-review",
       "name": "code-review",
       "type": "skill",
       "category": "skills",
       "description": "Systematic code review: correctness, security, resources, clarity",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/skills/code-review",
       "source": {
         "kind": "builtin",
         "path": "skills/code-review"
       }
     },
     {
+      "id": "commit-messages",
       "name": "commit-messages",
       "type": "skill",
       "category": "skills",
       "description": "Clean conventional commit messages",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/skills/commit-messages",
       "source": {
         "kind": "builtin",
         "path": "skills/commit-messages"
       }
     },
     {
+      "id": "test-writer",
       "name": "test-writer",
       "type": "skill",
       "category": "skills",
       "description": "Meaningful tests by behavior, not coverage theater",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/skills/test-writer",
       "source": {
         "kind": "builtin",
         "path": "skills/test-writer"
       }
     },
     {
+      "id": "docs-writer",
       "name": "docs-writer",
       "type": "skill",
       "category": "skills",
       "description": "READMEs and API docs people actually read",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/skills/docs-writer",
       "source": {
         "kind": "builtin",
         "path": "skills/docs-writer"
       }
     },
     {
+      "id": "debugging",
       "name": "debugging",
       "type": "skill",
       "category": "skills",
       "description": "Root-cause debugging: reproduce, bisect, understand, fix, prove",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/skills/debugging",
       "source": {
         "kind": "builtin",
         "path": "skills/debugging"
       }
     },
     {
+      "id": "refactoring",
       "name": "refactoring",
       "type": "skill",
       "category": "skills",
       "description": "Safe incremental refactoring with a test safety net",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/skills/refactoring",
       "source": {
         "kind": "builtin",
         "path": "skills/refactoring"
       }
     },
     {
+      "id": "api-design",
       "name": "api-design",
       "type": "skill",
       "category": "skills",
       "description": "Design clean REST APIs and SDKs",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/skills/api-design",
       "source": {
         "kind": "builtin",
         "path": "skills/api-design"
       }
     },
     {
+      "id": "security-audit",
       "name": "security-audit",
       "type": "skill",
       "category": "skills",
       "description": "Practical security audit of a codebase",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/skills/security-audit",
       "source": {
         "kind": "builtin",
         "path": "skills/security-audit"
       }
     },
     {
+      "id": "performance",
       "name": "performance",
       "type": "skill",
       "category": "skills",
       "description": "Profile-first performance optimization",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/skills/performance",
       "source": {
         "kind": "builtin",
         "path": "skills/performance"
       }
     },
     {
+      "id": "git-workflow",
       "name": "git-workflow",
       "type": "skill",
       "category": "skills",
       "description": "Branches, rebases, conflict resolution, undo table",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/skills/git-workflow",
       "source": {
         "kind": "builtin",
         "path": "skills/git-workflow"
       }
     },
     {
+      "id": "sql-optimizer",
       "name": "sql-optimizer",
       "type": "skill",
       "category": "skills",
       "description": "Diagnose slow queries, index design",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/skills/sql-optimizer",
       "source": {
         "kind": "builtin",
         "path": "skills/sql-optimizer"
       }
     },
     {
+      "id": "json-tool",
       "name": "json-tool",
       "type": "plugin",
       "category": "plugins",
       "description": "Plugin: validate and pretty-print JSON (tool json_format)",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/json-tool",
       "source": {
         "kind": "builtin",
         "path": "plugins/json-tool"
       }
     },
     {
+      "id": "notes",
       "name": "notes",
       "type": "plugin",
       "category": "plugins",
       "description": "Plugin: persistent quick notes (tool notes)",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/notes",
       "source": {
         "kind": "builtin",
         "path": "plugins/notes"
       }
     },
     {
+      "id": "sysinfo",
       "name": "sysinfo",
       "type": "plugin",
       "category": "plugins",
       "description": "Plugin: system info report (tool sysinfo)",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/sysinfo",
       "source": {
         "kind": "builtin",
         "path": "plugins/sysinfo"
       }
     },
     {
+      "id": "filesystem",
       "name": "filesystem",
       "type": "mcp",
       "category": "mcp",
       "description": "MCP: read/write/search files in allowed directories",
+      "license": "NOASSERTION",
+      "license_note": "modelcontextprotocol/servers LICENSE is a mixed MIT -> Apache-2.0 transition notice (GitHub licence detection: NOASSERTION) and src/filesystem/package.json says 'SEE LICENSE IN LICENSE', so no single SPDX id is claimed. Repo file and npm registry read 2026-09-24.",
+      "upstream": "https://github.com/modelcontextprotocol/servers",
+      "reviewed": "2026-09-24",
       "source": {
         "kind": "mcp",
         "command": "npx",
@@ -163,40 +224,52 @@
       }
     },
     {
+      "id": "git",
       "name": "git",
       "type": "mcp",
       "category": "mcp",
       "description": "MCP: git operations (status, diff, log, branches)",
+      "license": "MIT",
+      "license_note": "Official git MCP server: servers src/git/pyproject.toml declares license = MIT and PyPI mcp-server-git 2026.8.18 says so too (read 2026-09-24). Replaces the npm 'mcp-git' line, which resolves to github.com/kwanLeeFrmVi/mcp-git - a different, unrelated author (MIT, 0 stars, last push 2025-04-04).",
+      "upstream": "https://github.com/modelcontextprotocol/servers",
+      "reviewed": "2026-09-24",
       "source": {
         "kind": "mcp",
-        "command": "npx",
+        "command": "uvx",
         "args": [
-          "-y",
-          "mcp-git",
-          "."
+          "mcp-server-git"
         ]
       }
     },
     {
+      "id": "ripgrep",
       "name": "ripgrep",
       "type": "mcp",
       "category": "mcp",
-      "description": "MCP: fast code search via ripgrep",
+      "description": "MCP: fast code search via ripgrep (wrapper by mcollina; needs the rg binary on PATH)",
+      "license": "MIT",
+      "license_note": "Wrapper: LICENSE in mcollina/mcp-ripgrep is MIT, (c) 2025 Matteo Collina - npm registry and repo file read 2026-09-24. The rg binary itself is a separate project, github.com/BurntSushi/ripgrep, licensed 'Unlicense OR MIT' per its Cargo.toml; its README lists ripgrep as a prerequisite, so the stray '.' argument was dropped.",
+      "upstream": "https://github.com/mcollina/mcp-ripgrep",
+      "reviewed": "2026-09-24",
       "source": {
         "kind": "mcp",
         "command": "npx",
         "args": [
           "-y",
-          "mcp-ripgrep",
-          "."
+          "mcp-ripgrep"
         ]
       }
     },
     {
+      "id": "memory",
       "name": "memory",
       "type": "mcp",
       "category": "mcp",
       "description": "MCP: persistent knowledge-graph memory across sessions",
+      "license": "NOASSERTION",
+      "license_note": "Mixed MIT/Apache-2.0 root LICENSE (GitHub: NOASSERTION); src/memory/package.json says 'SEE LICENSE IN LICENSE'. Repo + npm registry read 2026-09-24.",
+      "upstream": "https://github.com/modelcontextprotocol/servers",
+      "reviewed": "2026-09-24",
       "source": {
         "kind": "mcp",
         "command": "npx",
@@ -207,10 +280,15 @@
       }
     },
     {
+      "id": "sequential-thinking",
       "name": "sequential-thinking",
       "type": "mcp",
       "category": "mcp",
       "description": "MCP: structured step-by-step reasoning tool",
+      "license": "NOASSERTION",
+      "license_note": "Mixed MIT/Apache-2.0 root LICENSE (GitHub: NOASSERTION); src/sequentialthinking/package.json says 'SEE LICENSE IN LICENSE'. Repo + npm registry read 2026-09-24.",
+      "upstream": "https://github.com/modelcontextprotocol/servers",
+      "reviewed": "2026-09-24",
       "source": {
         "kind": "mcp",
         "command": "npx",
@@ -221,10 +299,15 @@
       }
     },
     {
+      "id": "playwright",
       "name": "playwright",
       "type": "mcp",
       "category": "mcp",
       "description": "MCP: browser automation (navigate, click, screenshot)",
+      "license": "Apache-2.0",
+      "license_note": "microsoft/playwright-mcp LICENSE is the Apache-2.0 text (read 2026-09-24); npm @playwright/mcp declares Apache-2.0, published by Microsoft maintainers.",
+      "upstream": "https://github.com/microsoft/playwright-mcp",
+      "reviewed": "2026-09-24",
       "source": {
         "kind": "mcp",
         "command": "npx",
@@ -235,10 +318,15 @@
       }
     },
     {
+      "id": "fetch",
       "name": "fetch",
       "type": "mcp",
       "category": "mcp",
       "description": "MCP: fetch web pages and convert to markdown",
+      "license": "MIT",
+      "license_note": "PyPI mcp-server-fetch 2026.8.18 declares MIT and points at modelcontextprotocol/servers/src/fetch, whose pyproject.toml says license = { text = 'MIT' } (read 2026-09-24).",
+      "upstream": "https://github.com/modelcontextprotocol/servers",
+      "reviewed": "2026-09-24",
       "source": {
         "kind": "mcp",
         "command": "uvx",
@@ -248,25 +336,36 @@
       }
     },
     {
+      "id": "sqlite",
       "name": "sqlite",
       "type": "mcp",
       "category": "mcp",
-      "description": "MCP: read/write SQLite databases",
+      "description": "MCP: read/write SQLite databases (upstream is archived and unmaintained - no security fixes)",
+      "license": "MIT",
+      "license_note": "modelcontextprotocol/servers-archived is ARCHIVED (GitHub archived=true; its README: 'no security guarantees ... no longer maintained'); its LICENSE is MIT (c) 2024 Anthropic, PBC. src/sqlite no longer exists in the active servers repo and the last PyPI release of mcp-server-sqlite is 2025.4.25. That README documents --db-path, not --db, so the argument was corrected (all read 2026-09-24).",
+      "upstream": "https://github.com/modelcontextprotocol/servers-archived",
+      "reviewed": "2026-09-24",
+      "archived": true,
       "source": {
         "kind": "mcp",
         "command": "uvx",
         "args": [
           "mcp-server-sqlite",
-          "--db",
+          "--db-path",
           "data.db"
         ]
       }
     },
     {
+      "id": "time",
       "name": "time",
       "type": "mcp",
       "category": "mcp",
       "description": "MCP: current time and timezone conversions",
+      "license": "MIT",
+      "license_note": "PyPI mcp-server-time 2026.8.18 declares MIT; src/time/pyproject.toml says license = { text = 'MIT' } (read 2026-09-24).",
+      "upstream": "https://github.com/modelcontextprotocol/servers",
+      "reviewed": "2026-09-24",
       "source": {
         "kind": "mcp",
         "command": "uvx",
@@ -276,10 +375,15 @@
       }
     },
     {
+      "id": "everything",
       "name": "everything",
       "type": "mcp",
       "category": "mcp",
       "description": "MCP: reference server exercising every MCP feature",
+      "license": "NOASSERTION",
+      "license_note": "Mixed MIT/Apache-2.0 root LICENSE (GitHub: NOASSERTION); src/everything/package.json says 'SEE LICENSE IN LICENSE'. Repo + npm registry read 2026-09-24.",
+      "upstream": "https://github.com/modelcontextprotocol/servers",
+      "reviewed": "2026-09-24",
       "source": {
         "kind": "mcp",
         "command": "npx",
@@ -290,130 +394,182 @@
       }
     },
     {
+      "id": "word-count",
       "name": "word-count",
       "type": "plugin",
       "category": "plugins",
       "description": "Example extension: word_count tool, /wc command, a setting, an event listener",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/word-count",
       "source": {
         "kind": "builtin",
         "path": "plugins/word-count"
       }
     },
     {
+      "id": "plain",
       "name": "plain",
       "type": "plugin",
       "category": "plugins",
       "description": "Frameless interface: no panel borders, static logo, quiet waiting line",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/plain",
       "source": {
         "kind": "builtin",
         "path": "plugins/plain"
       }
     },
     {
+      "id": "skin-terminal",
       "name": "skin-terminal",
       "type": "plugin",
       "category": "plugins",
       "description": "Brutalist skin: ASCII frames, plain header, bar spinner, compact answer renderer",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/skin-terminal",
       "source": {
         "kind": "builtin",
         "path": "plugins/skin-terminal"
       }
     },
     {
+      "id": "skin-hive",
       "name": "skin-hive",
       "type": "plugin",
       "category": "plugins",
       "description": "Warm skin: heavy frames, hex-comb header, buzzing spinner phrases",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/skin-hive",
       "source": {
         "kind": "builtin",
         "path": "plugins/skin-hive"
       }
     },
     {
+      "id": "skin-work",
       "name": "skin-work",
       "type": "plugin",
       "category": "plugins",
       "description": "Quiet skin for long sessions: minimal frames, no logo, no waiting phrases",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/skin-work",
       "source": {
         "kind": "builtin",
         "path": "plugins/skin-work"
       }
     },
     {
+      "id": "undo",
       "name": "undo",
       "type": "plugin",
       "category": "plugins",
       "description": "Undo for files BeeCode overwrote: a copy before every write, /undo puts it back",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/undo",
       "source": {
         "kind": "builtin",
         "path": "plugins/undo"
       }
     },
     {
+      "id": "doctor",
       "name": "doctor",
       "type": "plugin",
       "category": "plugins",
       "description": "/doctor: which Python, is the console UTF-8, is the window measured, did a plugin fail",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/doctor",
       "source": {
         "kind": "builtin",
         "path": "plugins/doctor"
       }
     },
     {
+      "id": "changes",
       "name": "changes",
       "type": "plugin",
       "category": "plugins",
       "description": "/changes and /diff: which files this session wrote, and what git says about them",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/changes",
       "source": {
         "kind": "builtin",
         "path": "plugins/changes"
       }
     },
     {
+      "id": "recall",
       "name": "recall",
       "type": "plugin",
       "category": "plugins",
       "description": "/recall <words>: search every saved conversation and reopen the one you meant",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/recall",
       "source": {
         "kind": "builtin",
         "path": "plugins/recall"
       }
     },
     {
+      "id": "seat",
       "name": "seat",
       "type": "plugin",
       "category": "plugins",
       "description": "Plugin: /seat — how much of today's pool budget is left, and when it resets",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/seat",
       "source": {
         "kind": "builtin",
         "path": "plugins/seat"
       }
     },
     {
+      "id": "trace",
       "name": "trace",
       "type": "plugin",
       "category": "plugins",
       "description": "Plugin: /trace — the last failed requests, with one line on what to do",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/trace",
       "source": {
         "kind": "builtin",
         "path": "plugins/trace"
       }
     },
     {
+      "id": "scoreboard",
       "name": "scoreboard",
       "type": "plugin",
       "category": "plugins",
       "description": "Plugin: /board — what each model actually did on this machine",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/scoreboard",
       "source": {
         "kind": "builtin",
         "path": "plugins/scoreboard"
       }
     },
     {
+      "id": "compact",
       "name": "compact",
       "type": "plugin",
       "category": "plugins",
       "description": "Plugin: narrow-terminal layout for a phone in Termux",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/compact",
       "source": {
         "kind": "builtin",
         "path": "plugins/compact"

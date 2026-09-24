@@ -289,8 +289,9 @@ def test_a_chat_model_is_not_collateral_of_the_refusal(pool):
 
 
 def test_admin_endpoints_need_the_admin_token(pool):
+    """The accepted channel is one header: `X-Admin`, and nothing else."""
     with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
-        assert client.get(pool.base + "/v1/pool").status_code == 403
+        assert client.get(pool.base + "/v1/pool").status_code == 401
         report = client.get(pool.base + "/v1/pool", headers={"X-Admin": "admin-secret"})
         assert report.status_code == 200
         assert "gsk_first_secret" not in report.text
@@ -299,6 +300,138 @@ def test_admin_endpoints_need_the_admin_token(pool):
                               headers={"X-Admin": "admin-secret"})
         assert revoked.status_code == 200
         assert complete(client, pool.base, token).status_code == 401, "a revoked seat is gone"
+
+
+def test_a_wrong_admin_token_is_not_the_same_failure_as_sending_none(pool):
+    """The distinction an operator needs mid-incident, in the status code alone:
+
+    401 — the header never arrived, so the caller's command is wrong;
+    403 — it arrived and is not what this box holds, so a note and the
+          dashboard disagree;
+    and no other route's answer is confusable with either, because auth is
+    decided before routing.
+    """
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        missing = client.get(pool.base + "/v1/pool")
+        blank = client.get(pool.base + "/v1/pool", headers={"X-Admin": ""})
+        wrong = client.get(pool.base + "/v1/pool", headers={"X-Admin": "admin-secre"})
+        assert missing.status_code == 401, missing.text
+        assert blank.status_code == 401, "an empty header is the same as no header"
+        assert wrong.status_code == 403, wrong.text
+        assert missing.json()["refused"] != wrong.json()["refused"], "the reason differs"
+        assert "X-Admin" in missing.json()["error"], "say which header to send"
+        assert missing.headers.get("www-authenticate") == "X-Admin"
+        assert "not the one this pool holds" in wrong.json()["error"]
+        assert wrong.headers.get("www-authenticate") is None
+
+        post_missing = client.post(pool.base + "/v1/admin/revoke", json={"token": "x"})
+        post_wrong = client.post(pool.base + "/v1/admin/revoke", json={"token": "x"},
+                                 headers={"X-Admin": "not-the-token"})
+        assert (post_missing.status_code, post_wrong.status_code) == (401, 403)
+        unknown = client.post(pool.base + "/v1/admin/nosuchroute", json={},
+                              headers={"X-Admin": "admin-secret"})
+        assert unknown.status_code == 404, "only an accepted request learns the path is wrong"
+
+
+def test_a_box_with_no_admin_secret_closes_the_routes_and_says_so(pool, monkeypatch):
+    """_unset used to answer the same 403 as a typoed token, which is how an
+    operator spends an afternoon re-typing a correct secret. Routes stay closed;
+    only the lie changes — this is a configuration the server is missing, not a
+    caller doing something wrong, so it cannot be a 403 at all.
+    """
+    monkeypatch.delenv("BEECODE_POOL_ADMIN", raising=False)
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        for headers in ({}, {"X-Admin": "admin-secret"}, {"X-Admin": "anything-at-all"}):
+            closed = client.get(pool.base + "/v1/pool", headers=headers)
+            assert closed.status_code == 503, (headers, closed.text)
+            assert closed.json()["refused"] == "no-secret"
+            assert "BEECODE_POOL_ADMIN" in closed.json()["error"], "name the fix"
+        posted = client.post(pool.base + "/v1/admin/revoke", json={"token": "x"},
+                             headers={"X-Admin": "admin-secret"})
+        assert posted.status_code == 503
+        # Seats are still minted and spent by their own tokens; only the operator
+        # doors are shut.
+        assert client.get(pool.base + "/v1/seat").status_code == 401
+
+
+def test_every_admin_refusal_is_logged_with_its_own_reason(pool):
+    """The codes tell the caller; the log tells the operator what actually
+    happened on a request they are not holding. Both offered and held values are
+    recorded masked, so "I typoed" and "the secret never arrived" differ there
+    too — without the log ever becoming a copy of the secret."""
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        client.get(pool.base + "/v1/pool")
+        client.get(pool.base + "/v1/pool", headers={"X-Admin": "admin-secre"})
+    monkey = pool.db.execute("SELECT note FROM events WHERE kind=? ORDER BY ts",
+                             ("admin-denied",)).fetchall()
+    notes = [row["note"] for row in monkey]
+    assert len(notes) == 2, "one line per refusal, in order"
+    assert "nothing sent in X-Admin" in notes[0]
+    assert "does not match" in notes[1] and "offered" in notes[1]
+    assert notes[0] != notes[1], "the reasons differ in the log, not just on the wire"
+    for note in notes:
+        assert "admin-secret" not in note, "a refusal note carries tails, never values"
+        assert "admin-secre" not in note, "not even the rejected one"
+    assert pool_server._mask("admin-secret") in notes[1], "the tail is enough to compare"
+
+
+def test_the_admin_secret_is_compared_in_constant_time(pool, monkeypatch):
+    """No prefix shortcut, and no `==` on text either.
+
+    The spy asserts the shape of the comparison the code promises: both whole
+    values as bytes, once per request. A prefix or `startswith` check would show
+    up here as a call that never sees the full secret, and `str` arguments would
+    raise TypeError on a non-ASCII value instead of answering.
+    """
+    seen = []
+    real = pool_server.secrets.compare_digest
+
+    def spy(left, right):
+        seen.append((left, right))
+        return real(left, right)
+
+    monkeypatch.setattr(pool_server.secrets, "compare_digest", spy)
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        assert client.get(pool.base + "/v1/pool",
+                          headers={"X-Admin": "admin-secre"}).status_code == 403
+        assert client.get(pool.base + "/v1/pool",
+                          headers={"X-Admin": "admin-secret"}).status_code == 200
+    assert seen, "the gate really is the comparison"
+    assert all(isinstance(a, bytes) and isinstance(b, bytes) for a, b in seen)
+    assert seen[0] == (b"admin-secret", b"admin-secre"), "full values, both sides"
+    assert len(seen) == 2, "one comparison per request, however much differs"
+
+
+def test_a_secret_that_cannot_arrive_is_named_at_startup(pool, monkeypatch):
+    """Header bytes cannot carry a non-ASCII value the way this box compares it,
+    so such a secret is a lockout the configuration built and the operator gets
+    blamed for. It has to be said before anyone is locked out by it."""
+    monkeypatch.setenv("BEECODE_POOL_ADMIN", "ключ-секрет")
+    notes = pool_server.admin_config_notes()
+    assert any("ASCII" in note for note in notes), notes
+    assert not any("ключ" in note or "секрет" in note for note in notes), "nothing printed"
+    monkeypatch.setenv("BEECODE_POOL_ADMIN", "ascii-value-9f")
+    assert not any("WARNING" in note for note in pool_server.admin_config_notes())
+    assert pool_server._mask("ascii-value-9f") in pool_server.admin_config_notes()[0]
+    monkeypatch.delenv("BEECODE_POOL_ADMIN", raising=False)
+    assert "unset" in pool_server.admin_config_notes()[0]
+
+
+def test_the_operator_routes_are_matched_whatever_shape_the_url_arrives_in(pool):
+    """/v1/pool/ and /v1/pool?... used to answer 404 "unknown path", which an
+    operator reads as "this build has no such route" — the same dead end as the
+    bare 403, one step further along. Only the matching is forgiving; the token
+    is still header-only, because a secret in a URL lands in access logs."""
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        for url in ("/v1/pool", "/v1/pool/", "/v1/pool?days=1"):
+            answer = client.get(pool.base + url, headers={"X-Admin": "admin-secret"})
+            assert answer.status_code == 200, (url, answer.text)
+        in_query = client.get(pool.base + "/v1/pool?X-Admin=admin-secret")
+        assert in_query.status_code == 401, "a token in the URL is not a token sent"
+        cooled = client.post(pool.base + "/v1/admin/cooldown/",
+                             json={"provider": "groq", "seconds": 1},
+                             headers={"X-Admin": "admin-secret"})
+        assert cooled.status_code == 200, cooled.text
 
 
 def test_a_seat_awaiting_approval_is_not_served(pool, monkeypatch):

@@ -870,6 +870,13 @@ def _cmd_allow(ctx, args):
                       f"нет инструмента '{name}'. Нужного в: "
                       f"{', '.join(unsafe_tool_names(ctx)) or '—'}"))
     if tool.is_safe():
+        if getattr(tool, "writes_files", False):
+            # `todo` and `diagram` need no grant, but they are not readers either;
+            # calling them "only reads" would hide why readonly mode stops them.
+            return _ok(L(f"{name} runs without a grant — it does write a file of its "
+                         f"own, so /permissions readonly still stops it",
+                         f"{name} работает без разрешения — но он пишет свой файл, "
+                         f"поэтому /permissions readonly его остановит"))
         return _ok(L(f"{name} only reads — it never needed a grant",
                      f"{name} только читает — разрешение ему не нужно"))
     if perms.mode == READONLY:
@@ -906,7 +913,12 @@ def _redact_secrets(data: dict) -> dict:
         for p in providers
     ]
     for name, value in list(out.items()):
-        if any(part in name.lower() for part in ("key", "token", "secret", "password")) \
+        if isinstance(value, dict):
+            # `extensions` is a dict of whatever a plugin stores, and a plugin
+            # that keeps a token there would otherwise print it in full to a
+            # `/config` screenshot.
+            out[name] = _redact_secrets(value)
+        elif any(part in name.lower() for part in ("key", "token", "secret", "password")) \
                 and isinstance(value, str) and value:
             out[name] = f"…{value[-4:]}"
     return out
@@ -1193,7 +1205,15 @@ def _catalog_table(items, installed: dict, title: str) -> Table:
 
 
 def _cmd_plugins(ctx, args):
-    """Browse (or filter) the installable catalog of skills/plugins/MCP."""
+    """Browse (or filter) the installable catalog of skills/plugins/MCP.
+
+    The shipped catalog answers with no network at all. `market` as the first word
+    asks the pool for its index instead -- the only branch here that reaches
+    outward, on an explicit ask, and it degrades back to this catalog when the
+    market cannot be reached.
+    """
+    if args and args[0].lower() in MARKET_WORDS:
+        return _cmd_market(ctx, args[1:])
     manager, _ = _extensions(ctx)
     if args:
         query = " ".join(args)
@@ -1203,12 +1223,131 @@ def _cmd_plugins(ctx, args):
         items = manager.catalog.items()
         title = L("Catalog: skills, plugins and MCP servers", "Каталог: скилы, плагины и MCP-серверы")
     if not items:
-        return _err(L("Nothing found. /plugins shows the whole catalog.", "Ничего не найдено. /plugins — показать весь каталог."))
+        return _err(L("Nothing found. /plugins shows the whole catalog, "
+                      "/plugins market the pool's index.",
+                      "Ничего не найдено. /plugins — весь каталог, /plugins market — "
+                      "индекс пула."))
     table = _catalog_table(items, manager.installed(), title)
     table.caption = Text(
-        L("install: /plugin install <name> · pick with the mouse: /plugins",
-                     "установить: /plugin install <name> · выбор мышкой: /plugins"), style="dim")
+        L("install: /plugin install <name> · pick with the mouse: /plugins"
+          " · the pool's licence-gated index: /plugins market",
+          "установить: /plugin install <name> · выбор мышкой: /plugins"
+          " · индекс пула с фильтром по лицензии: /plugins market"), style="dim")
     return CommandResult(output=table)
+
+
+# --- the remote market ----------------------------------------------------------
+
+MARKET_WORDS = ("market", "remote")
+
+
+def _market_for(ctx: ReplContext):
+    """The pool's index, fetched now because a person asked. Raises `MarketError`."""
+    from beeagent.plugins.catalog import MARKET_TIMEOUT, fetch_market
+
+    config = getattr(ctx, "config", None)
+    return fetch_market(str(getattr(config, "pool_url", "") or ""),
+                        str(getattr(config, "pool_token", "") or ""),
+                        MARKET_TIMEOUT)
+
+
+def _market_line(market) -> str:
+    """What the index is, in one line: which box, which licences, what was left out.
+
+    Both numbers are printed because silence reads as "there was nothing to hide":
+    the first is what the pool never published, the second is what this client
+    additionally refused.
+    """
+    policy = ", ".join(market.policy) if market.policy else \
+        L("the client's own allow list", "собственный список клиента")
+    refused = L(f" · {market.excluded} refused here for their licence (not shown)",
+                f" · {market.excluded} отклонено здесь по лицензии (не показано)") \
+        if market.excluded else ""
+    published = L(f" · the index itself excludes {market.published_excluded} entries",
+                  f" · сам индекс не публикует {market.published_excluded} записей") \
+        if market.published_excluded else ""
+    return L(
+        f"index from {market.host or 'the pool'} · licences accepted: {policy}"
+        f" · {len(market.entries)} entries{refused}{published}",
+        f"индекс с {market.host or 'пула'} · принимаемые лицензии: {policy}"
+        f" · записей: {len(market.entries)}{refused}{published}")
+
+
+def _market_table(market, installed: dict, title: str, query: str = "") -> Table:
+    table = Table(title=bee_title(title), header_style="bold " + HONEY,
+                  border_style=BORDER, box=box.SIMPLE_HEAVY)
+    table.add_column("", width=2)
+    table.add_column("name", style="bold #ffcc00")
+    table.add_column("id", style="dim")
+    table.add_column(L("description", "описание"))
+    table.add_column(L("licence", "лицензия"), style="green")
+    table.add_column(L("from (repo/path@commit)", "откуда (репо/путь@коммит)"), style="dim")
+    table.add_column(L("status", "статус"), style="green")
+    for entry in market.search(query):
+        record = installed.get(entry.name)
+        status = "" if record is None else (
+            L("✅ installed", "✅ установлен") if record.get("enabled", True)
+            else L("⏸ disabled", "⏸ выключен"))
+        table.add_row(TYPE_ICON.get(entry.type, "•"), entry.name, entry.id,
+                      entry.description, entry.license, entry.provenance, status)
+    table.caption = Text(
+        _market_line(market) + "\n" + L(
+            "install: /plugin install <id> · the bytes come from the public commit, "
+            "and only after their sha256 matches what the index promised",
+            "установить: /plugin install <id> · байты приходят из публичного коммита, "
+            "и только когда их sha256 совпадёт с обещанным в индексе"), style="dim")
+    return table
+
+
+def _cmd_market(ctx, args):
+    """`/plugins market [filter]` — the pool's index, or the local catalog with a
+    line saying why the market was not reached."""
+    manager, _ = _extensions(ctx)
+    query = " ".join(args)
+    try:
+        market = _market_for(ctx)
+    except Exception as e:                       # a dead box is a listing, not a crash
+        from rich.console import Group
+
+        from beeagent.plugins.catalog import MarketError
+
+        reason = str(e) if isinstance(e, MarketError) else \
+            L(f"the market did not answer ({e.__class__.__name__})",
+              f"рынок не ответил ({e.__class__.__name__})")
+        local = _cmd_plugins(ctx, args)
+        notice = Text(L(f"⚠ market not reached: {reason}",
+                        f"⚠ рынок не отвечает: {reason}"), style="bold yellow")
+        tail = Text(L("showing the catalog shipped with BeeCode instead.",
+                      "показываю каталог, который идёт вместе с BeeCode."), style="dim")
+        return CommandResult(output=Group(notice, local.output, tail))
+    if not market.entries:
+        return _err(L("the market answered, and every entry in it was refused by the "
+                      "licence gate — nothing here is installable",
+                      "рынок ответил, но лицензионный фильтр отклонил все записи — "
+                      "ставить нечего"))
+    entries = market.search(query)
+    if not entries:
+        return _err(L(f"nothing named “{query}” in the market index. /plugins market shows it all.",
+                      f"в индексе рынка нет «{query}». /plugins market — весь список."))
+    title = L(f"Market: {query}" if query else "Market: the pool's index",
+              f"Рынок: {query}" if query else "Рынок: индекс пула")
+    return CommandResult(output=_market_table(market, manager.installed(), title, query))
+
+
+def _market_lookup(ctx: ReplContext, target: str):
+    """One market entry for this name or id, or None.
+
+    Returns (entry, complaint): a name two publishers share is a complaint, because
+    answering with whichever came first installs the wrong thing silently.
+    """
+    market = _market_for(ctx)
+    matches = market.find(target)
+    if len(matches) > 1:
+        return None, L(f"“{target}” is not unique in the market — ask by id: "
+                       f"{', '.join(m.id for m in matches)}",
+                       f"«{target}» в индексе рынка не уникально — проси по id: "
+                       f"{', '.join(m.id for m in matches)}")
+    return (matches[0] if matches else None), None
 
 
 def _cmd_plugin(ctx, args):
@@ -1234,7 +1373,7 @@ def _cmd_plugin(ctx, args):
         return CommandResult(output=_catalog_table(items, installed, L("Installed", "Установленное")))
 
     if not rest:
-        return _err(f"usage: /plugin {sub} <name|git-url>")
+        return _err(f"usage: /plugin {sub} <name|git-url|market-id>")
     # --trust is a flag, not part of the name or the URL.
     trusted = "--trust" in rest
     target = " ".join(w for w in rest if w != "--trust")
@@ -1243,22 +1382,60 @@ def _cmd_plugin(ctx, args):
         # A git source is someone else's Python: the loader exec_module()s it on
         # the next start, so cloning it needs an explicit act of trust.
         if not target:
-            return _err("usage: /plugin install <name|git-url> [--trust]")
+            return _err("usage: /plugin install <name|git-url|market-id> [--trust]")
         item = manager.catalog.get(target) or manager.catalog.find_git(target)
-        if item is not None and item.source.get("kind") == "git" and not trusted:
+        if item is None:
+            # Not shipped locally: the market is asked, and only now does this
+            # command touch the network. A pool that sleeps is a readable line,
+            # never a traceback and never a silent "not found".
+            try:
+                item, complaint = _market_lookup(ctx, target)
+            except Exception as e:
+                from beeagent.plugins.catalog import MarketError
+
+                reason = str(e) if isinstance(e, MarketError) else \
+                    L(f"the market did not answer ({e.__class__.__name__})",
+                      f"рынок не ответил ({e.__class__.__name__})")
+                return _err(L(f"could not install “{target}”: it is not in the shipped "
+                              f"catalog, and the market was not reached — {reason}",
+                              f"не удалось установить «{target}»: в каталоге BeeCode его нет, "
+                              f"и рынок не отвечает — {reason}"))
+            if complaint:
+                return _err(complaint)
+        if item is None:
+            return _err(L(f"could not install “{target}”: it is in neither the shipped "
+                          f"catalog nor the market index.",
+                          f"не удалось установить «{target}»: его нет ни в каталоге BeeCode, "
+                          f"ни в индексе рынка."))
+
+        kind = item.source.get("kind")
+        from beeagent.plugins.catalog import MarketItem
+
+        entry = item if isinstance(item, MarketItem) else None
+        # A market "plugin" or "mcp" entry is code from a public repo, same as a
+        # git one: the licence covers copying it, nothing in it covers running it.
+        if ((kind == "git") or (kind == "market" and item.type in ("plugin", "mcp"))) \
+                and not trusted:
             return _err(L(f"“{target}” installs external code that runs inside BeeCode as tools. "
                           f"Read it first, then re-run: /plugin install {target} --trust",
                           f"«{target}» ставит чужой код, который исполняется внутри BeeCode "
                           f"как инструменты. Прочитай его, потом: /plugin install {target} --trust"))
         try:
-            report = manager.install(target)
+            report = manager.install(target, item=item)
         except Exception as e:
             return _err(L(f"could not install “{target}”: {e}", f"не удалось установить «{target}»: {e}"))
         installed = (f"✅ installed {TYPE_ICON.get(report['type'], '')} {report['name']} "
                      f"({report['type']})")
         native = (f"✅ установлен {TYPE_ICON.get(report['type'], '')} {report['name']} "
                   f"({report['type']})")
-        return _ok(L(installed, native) + _reload_extensions(ctx))
+        line = L(installed, native)
+        if entry is not None:
+            # Provenance over bytes: what was hashed, and where from.
+            line += L(f"\n  licence {entry.license} · {entry.provenance}"
+                      f"\n  sha256 {entry.sha256[:16]}… verified against the index",
+                      f"\n  лицензия {entry.license} · {entry.provenance}"
+                      f"\n  sha256 {entry.sha256[:16]}… совпал с обещанным в индексе")
+        return _ok(line + _reload_extensions(ctx))
 
     if sub in ("remove", "uninstall"):
         try:
@@ -1467,6 +1644,13 @@ def _cmd_tasks(ctx, args):
     table.add_column("task")
     left = 0
     for task in tasks:
+        if not isinstance(task, dict):
+            # One hand-edited line used to take the whole list down with an
+            # AttributeError, so the command that reports the plan failed on it.
+            left += 1
+            table.add_row("?", "!", L("not a task record", "не запись задачи")
+                          + f": {str(task)[:70]}")
+            continue
         done = bool(task.get("done"))
         left += 0 if done else 1
         table.add_row(str(task.get("id", "?")),
