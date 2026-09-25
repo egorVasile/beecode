@@ -105,16 +105,14 @@ class _Job:
 class PatchTool(BaseTool):
     name = "patch"
     description = (
-        "Apply one unified diff to one or many files in a single call. `diff` is the whole patch: "
-        "per file a `--- a/path` and a `+++ b/path` line, then `@@ -l,s +l,s @@` hunk headers "
-        "whose lines start with a space (context), `-` (removed) or `+` (added). `--- /dev/null` "
-        "creates a file, `+++ /dev/null` deletes one; paths may also be given without the a/ b/ "
-        "prefix. Read the files first and copy their real lines into the context: every hunk is "
-        "verified against the bytes on disk, a hunk that only moved is applied where it matches "
-        "and the offset is reported, and a hunk that does not match is refused. If ANY hunk or "
-        "file is refused, NO file is written and the report names each failure, so re-sending "
-        "the whole diff after a fix is always safe. Renames, mode changes, binary content and "
-        "paths outside the working directory are refused. Needs the user's /allow patch."
+        "Apply one unified diff across several files in a single call: `--- a/path` and "
+        "`+++ b/path`, then `@@ -l,s +l,s @@` and lines starting with a space, `-` or `+`. "
+        "`--- /dev/null` creates, `+++ /dev/null` deletes. Copy the context from the file "
+        "as it is now: every hunk is checked against the bytes on disk, a hunk that only "
+        "moved is applied where it matches and the offset is reported, and if any hunk is "
+        "refused NO file is written, so re-sending the whole diff after a fix is safe. "
+        "Renames, binary content and paths outside the working directory are refused. "
+        "Needs the user's /allow patch."
     )
     parameters = {
         "type": "object",

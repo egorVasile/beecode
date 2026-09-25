@@ -513,9 +513,8 @@ class DiagnosticsTool(BaseTool):
         "`path:line[:col] severity message (checker)` lines. Runs only the "
         "checkers already on this machine (a Python syntax check always; ruff, "
         "pyflakes, mypy and tsc only if installed — nothing is ever downloaded) "
-        "and reports which it looked for and which were missing. Use it after an "
-        "edit instead of re-reading bash output. `path` may be omitted to check "
-        "the working directory; `tool` forces one checker; `timeout` is seconds."
+        "and names the ones it could not run. Use it after an edit instead of "
+        "re-reading bash output."
     )
     parameters = {
         "type": "object",

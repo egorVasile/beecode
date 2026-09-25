@@ -241,6 +241,16 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
     test, and it is why the number can be a little wrong without the user's
     question being clipped: whatever the header costs, it is shed before the
     live turn is, at every window down to 1024 tokens.
+
+    It moved again on 2026-09-25, to 4050, and the reason is arithmetic rather
+    than sloppiness: `patch`, `move`, `remove`, `diagnostics` and `web_fetch`
+    took the catalog from twelve tools to seventeen, and each one costs about 135
+    tokens of name-and-schema framing before a word of its description. Measured
+    after the descriptions were trimmed for the redundancy they carried (the same
+    five sentences appeared in the parameter schemas too): SYSTEM_PROMPT 1689,
+    catalog 2290, header 3979. A sixth tool would have to be worth 400 tokens of
+    every request in the conversation to be missed by this line, which is the
+    point of keeping the number tight and written down rather than generous.
     """
     from beeagent.config.schema import BeeConfig
     from beeagent.core.agent import Agent
@@ -254,7 +264,7 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
 
     header = count_tokens(SYSTEM_PROMPT + "\n" + CommandParser().format_tool_prompt(own),
                           "gpt-4")
-    assert header < 3400, f"BeeCode's own prompt header costs {header} tokens"
+    assert header < 4050, f"BeeCode's own prompt header costs {header} tokens"
 
     everything = count_tokens(SYSTEM_PROMPT + "\n"
                               + CommandParser().format_tool_prompt(schemas), "gpt-4")

@@ -395,13 +395,11 @@ class MoveTool(BaseTool):
     name = "move"
     aliases = ("rename", "move_file", "mv")
     description = (
-        "Rename or relocate one file OR directory inside the working directory; missing parent "
-        "folders are created unless `create_dirs=false`. Refuses a destination that already "
-        "exists unless `overwrite=true`, anything a symlink leads outside, the working directory "
-        "itself, and a folder sent into itself. The resolved pair is reported back, and a "
-        "case-only rename (`Readme.md` -> `README.md`) is done in two steps and verified against "
-        "the directory listing. Use this instead of `bash mv` so the user can allow renaming "
-        "without allowing a shell."
+        "Rename or move one file OR directory inside the working directory; missing parent "
+        "folders are created unless `create_dirs=false`. Refuses an existing destination unless "
+        "`overwrite=true`, anything a symlink leads outside, the working directory itself, and a "
+        "folder moved into itself. A case-only rename (`Readme.md` -> `README.md`) is done in two "
+        "steps and verified. Use this instead of `bash mv`, so renaming does not need a shell."
     )
     parameters = {
         "type": "object",
@@ -774,10 +772,9 @@ class RemoveTool(BaseTool):
     description = (
         "Delete one file inside the working directory, or a whole tree with `recursive=true`. "
         "Refuses the working directory and any parent of it, a directory without `recursive`, "
-        "anything a symlink leads outside, and a `.git` folder unless `confirm_git=true` on top "
-        "of `recursive=true`. Reports how many files and how many bytes were actually removed "
-        "and never calls a survivor gone. Use this instead of `bash rm` so the user can allow "
-        "deleting without allowing a shell."
+        "anything a symlink leads outside, and a `.git` folder unless `confirm_git=true`. "
+        "Reports the files and bytes actually removed. Use this instead of `bash rm`, so "
+        "deleting does not need a shell."
     )
     parameters = {
         "type": "object",

@@ -7,7 +7,7 @@ project once took 57 seconds to boot, and on a phone or Termux a slow import is
 a slow *everything*.  The rule lived only in comments and memory; here it is
 executable.
 
-Everything is measured in a subprocess (``tests/_boot_probe.py``) launched with
+Everything is measured in a subprocess (``scripts/boot_probe.py``) launched with
 ``python -I``, so the answer is not polluted by whatever the rest of the suite
 already imported, and so a checkout cannot report "installed" about its own
 source (``-I`` keeps the current folder off ``sys.path``; the probe adds the repo
@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PROBE = Path(__file__).resolve().parent / "_boot_probe.py"
+PROBE = Path(__file__).resolve().parent.parent / "scripts" / "boot_probe.py"
 
 # The module the task calls "beeagent.ui.cli" does not exist; the CLI entry point
 # wired in pyproject is ``beeagent.cli`` (``beecode = "beeagent.cli:main"``), so
@@ -54,7 +54,7 @@ BEEAGENT_IMPORT_BUDGET_MS = 150.0      # `import beeagent` must stay near-free
 FULL_CLI_HELP_BUDGET_MS = 2500.0       # interpreter-up `beecode --help`
 ONESHOT_UNREACHABLE_CEILING_MS = 30000.0  # a run against a dead host must be bounded
 
-# Loaded-machine detector (see _boot_probe.cmd_baseline for why the json loop is
+# Loaded-machine detector (see boot_probe.cmd_baseline for why the json loop is
 # not enough and a wall/CPU contention ratio is added on top).
 BASELINE_REF_MS = 4.0                  # idle `json.dumps` loop on MEASURED_ON
 LOADED_BASELINE_MULTIPLIER = 3.0       # skip if the loop costs > 3x its reference
@@ -69,7 +69,7 @@ HEAVY = ("httpx", "rich", "textual", "prompt_toolkit", "g4f", "tiktoken")
 # --------------------------------------------------------------------------
 
 def run_probe(args, cwd, timeout=180):
-    """Run ``python -I _boot_probe.py <args>`` and return its single JSON object."""
+    """Run ``python -I scripts/boot_probe.py <args>`` and return its single JSON object."""
     completed = subprocess.run(
         [sys.executable, "-I", str(PROBE), *[str(a) for a in args]],
         cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
