@@ -46,7 +46,7 @@ FOLDER = "thinking-pulse"
 ENGINE = "beeagent.core.skins"
 RENDERER = "beeagent.core.renderer"
 
-#: The six calls section 4 documents, and the positional arguments each one needs.
+#: The painter calls section 4's tables document, and the arguments they promise.
 PAINTER_API = {
     "draw_text": ("x", "y", "text"),
     "draw_box": ("x", "y", "w", "h"),
@@ -54,7 +54,15 @@ PAINTER_API = {
     "get_terminal_size": (),
     "color_support": (),
     "color": ("value",),
+    "draw_bar": ("x", "y", "width", "fraction"),
+    "draw_ramp": ("x", "y", "width", "color_a", "color_b"),
+    "draw_sparkline": ("x", "y", "width", "values"),
+    "draw_ticker": ("x", "y", "width", "text"),
+    "cell": ("x", "y"),
 }
+
+#: The second example on the page: the skin that owns three lines.
+SURFACES_NAME = "turn-ledger"
 
 #: The twelve events section 3 lists as the vocabulary a skin animates on.
 DOCUMENTED_EVENTS = [
@@ -482,6 +490,43 @@ def test_the_listing_reports_the_active_skin(host):
     assert "on_frame" in rows[0], (
         "the listing is how an author sees the hooks the host found; %r does not say"
         % rows[0])
+
+
+def test_the_surfaces_example_claims_and_answers(host):
+    """The page's second skin: gated, claimed, and read back off a real grid.
+
+    Section 5 promises that this block is installed from source text and that its
+    three lines come out as written. Both halves are checked here, because a
+    sentence about markup that nobody renders is how a page ends up teaching
+    `[bold]` as a colour.
+    """
+    from rich.text import Text
+
+    renderer = _renderer()
+    skins = host
+    source = _block_named("surfaces.py")
+    assert skins.check_source(source) == [], [
+        str(r) for r in skins.check_source(source)]
+    skins.register(SURFACES_NAME, source=source, description="docs example")
+    assert skins.switch(SURFACES_NAME) == ""
+    report = skins.surfaces()
+    assert sorted(report["held"]) == ["hud", "spinner", "status"], report
+    assert report["hud_rows"] == 1, report
+
+    skins.post("stream_delta", {"text": "x"})
+    assert str(Text.from_markup(skins.status_text("model gpt"))) == "1 tok model gpt"
+    assert str(Text.from_markup(skins.spinner_text("buzzing...", 0.0))) == "buzzing..."
+
+    grid = renderer.Grid(40, 1)
+    painter = renderer.Painter(grid, size=(40, 1))
+    assert skins.hud_frame(painter, 0.1) is True
+    assert grid.line(0).count("█") == 0, "one token is not a fifth of the bar"
+    assert grid.line(0) == "░" * 40, repr(grid.line(0))
+    for _ in range(250):
+        skins.post("stream_delta", {"text": "x"})
+    skins.hud_frame(painter, 0.1)
+    assert grid.line(0).count("█") == 40, repr(grid.line(0))
+    assert not painter.frame_warnings, painter.frame_warnings
 
 
 def test_a_skin_that_raises_is_demoted_once_and_says_so(host):
