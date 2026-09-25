@@ -11,6 +11,7 @@ checkout is shared), and the command that would ask g4f for its catalogue is
 handed a two-name list instead.
 """
 import asyncio
+import time
 from contextlib import asynccontextmanager
 
 from textual.color import Color
@@ -60,6 +61,33 @@ async def pick(pilot, app, value):
 def sidebar_row(app, name):
     rows = app.home.query_one("#cmdlist", ListView).children
     return next(row for row in rows if getattr(row, "_cmd_name", "") == name)
+
+
+async def settled_row(pilot, app, name, seconds=10.0):
+    """The sidebar row for `name`, once the list has stopped changing.
+
+    A keystroke in the prompt re-filters the command list, so a widget looked up
+    before that render can be gone by the time the mouse event is delivered and
+    the click lands on nothing. Waiting for the same widget twice in a row is the
+    honest signal that this is the list the user is looking at; a row that never
+    settles still fails, and says so.
+
+    The failure this replaces was load-sensitive: alone, one of these three click
+    tests failed per full run, and never the same one twice.
+    """
+    deadline = time.monotonic() + seconds
+    previous = None
+    while time.monotonic() < deadline:
+        await pilot.pause()
+        try:
+            current = sidebar_row(app, name)
+        except StopIteration:                # mid-render: the row is not there yet
+            previous = None
+            continue
+        if current is previous:
+            return current
+        previous = current
+    raise AssertionError(f"the sidebar row for {name!r} never stopped moving")
 
 
 def log_text(app) -> str:
@@ -168,7 +196,7 @@ def test_sidebar_click_runs_a_command_without_a_second_enter(tmp_path):
             app.prompt.value = "/bee"
             await pilot.pause(0.2)
             before = app.ctx.bee_enabled
-            await pilot.click(sidebar_row(app, "bee"))
+            await pilot.click(await settled_row(pilot, app, "bee"))
             await pilot.pause(0.3)
             return before, app.ctx.bee_enabled, app.prompt.value
 
@@ -184,7 +212,7 @@ def test_sidebar_click_opens_the_same_picker(tmp_path):
             app.prompt.focus()
             app.prompt.value = "/mode"
             await pilot.pause(0.2)
-            await pilot.click(sidebar_row(app, "mode"))
+            await pilot.click(await settled_row(pilot, app, "mode"))
             await pilot.pause(0.3)
             rows = set(picker_rows(app))
             await pick(pilot, app, "economy")
@@ -202,7 +230,7 @@ def test_a_command_needing_a_free_value_still_goes_to_the_input(tmp_path):
             app.prompt.focus()
             app.prompt.value = "/read"
             await pilot.pause(0.2)
-            await pilot.click(sidebar_row(app, "read"))
+            await pilot.click(await settled_row(pilot, app, "read"))
             await pilot.pause(0.3)
             return app.prompt.value, type(app.screen).__name__, app.config.mode
 
