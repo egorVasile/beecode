@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-09-24",
+  "updated": "2026-09-25",
   "categories": [
     "skills",
     "mcp",
@@ -464,17 +464,45 @@
       }
     },
     {
-      "id": "undo",
-      "name": "undo",
+      "id": "skin-baseline",
+      "name": "skin-baseline",
       "type": "plugin",
       "category": "plugins",
-      "description": "Undo for files BeeCode overwrote: a copy before every write, /undo puts it back",
+      "description": "Reference skin: today's honey-and-leaf status line, no animation, and the fallback every other skin degrades to",
       "license": "GPL-3.0-or-later",
       "upstream": "https://github.com/egorVasile/beecode",
-      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/undo",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/skin-baseline",
       "source": {
         "kind": "builtin",
-        "path": "plugins/undo"
+        "path": "plugins/skin-baseline"
+      }
+    },
+    {
+      "id": "skin-pulse",
+      "name": "skin-pulse",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Animated skin: a thinking pulse per token and a tool progress line on the skin's own character ramp, a static line on a plain terminal",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/skin-pulse",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/skin-pulse"
+      }
+    },
+    {
+      "id": "skin-pet",
+      "name": "skin-pet",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "An ASCII pet that reacts: blinks when idle, bobs while thinking, hops on a finished answer, hides when refused, chases the cache ball",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/skin-pet",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/skin-pet"
       }
     },
     {
@@ -489,6 +517,20 @@
       "source": {
         "kind": "builtin",
         "path": "plugins/doctor"
+      }
+    },
+    {
+      "id": "edit-ui",
+      "name": "edit-ui",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "/edit-ui <file>: look at a file in the TUI and fix a line yourself, without leaving BeeCode",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/edit-ui",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/edit-ui"
       }
     },
     {
@@ -573,6 +615,20 @@
       "source": {
         "kind": "builtin",
         "path": "plugins/compact"
+      }
+    },
+    {
+      "id": "browser",
+      "name": "browser",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Plugin: browser tool — drive a real page with Playwright (login, click, read the DOM, screenshot); never installs anything",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/browser",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/browser"
       }
     }
   ]

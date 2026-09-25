@@ -275,9 +275,10 @@ You see it happen, and `/token` shows the window it was fitted to:
 ### Mistakes are recovered, not fatal
 
 * `list_files`, `read_directory`, `read_files`, `list_dir`, `webfetch`, `fetch`,
-  `read_url`, `open_url` — invented names for `list_directory` and `web_fetch`,
-  accepted as aliases (`aliases` on those tools). Only `ToolRegistry.get()` takes
-  them, so `/tools` keeps advertising one canonical name:
+  `read_url`, `open_url`, `mv`, `rename`, `move_file`, `rm`, `delete`,
+  `remove_file` — invented names for `list_directory`, `web_fetch`, `move` and
+  `remove`, accepted as aliases (`aliases` on those tools). Only
+  `ToolRegistry.get()` takes them, so `/tools` keeps advertising one canonical name:
   `🔧 tool name corrected: read_directory → list_directory`
   (`tool_renamed` in `beeagent/ui/repl.py`)
 * Near-miss typos (`reaid` → `read`) are repaired; anything else is refused with the
@@ -303,7 +304,10 @@ plugins and MCP servers):
 | `git` | Run git (`status`, `diff`, `log`, `commit`…) — the argv is parsed and guarded, so this is not a shell wearing a git hat |
 | `web_search` | Search the web. **Needs `/allow`** even in `ask` mode: the query leaves the machine, and read-then-search is an exfiltration pair (`WebSearchTool.is_safe`) |
 | `web_fetch` | Read one http(s) page as text: title kept, scripts and styles dropped, size capped out loud. A 404, a binary file, an internal address or a non-http scheme are named and refused rather than returned empty. **Needs `/allow`**, like `web_search` (`WebFetchTool.is_safe`) |
-| `diagnostics` | Run the checkers that are already installed and return `path:line severity message (checker)`. Syntax needs nothing third-party; ruff / pyflakes / mypy / tsc are used only when present and are named as missing when not — so "never checked" can never read as "no problems". **Needs `/allow`** (it runs programs and leaves `__pycache__` behind) |
+| `patch` | Apply one unified diff across several files: hunks are verified against the context, an offset is announced, and a diff that half-applies leaves every file byte-for-byte as it was |
+| `move` | Rename or move a file or a directory — case-only renames included — inside the working roots, journalled so `/undo` gives it back |
+| `remove` | Delete one file, or a tree with `recursive=true`; refuses the project folder itself, a link that leaves it, and `.git` without its own flag |
+| `diagnostics` | Run the checkers that are already installed and return `path:line severity message (checker)`. Syntax needs nothing third-party; ruff / pyflakes / mypy / tsc are used only when present and are named as missing when not — so "never checked" can never read as "no problems". it writes nothing (compiles in-process, `--no-cache`, `--no-incremental`), so it runs without a grant — but mypy and tsc, which import plugins named in the repository's own config, are skipped until `/allow diagnostics` |
 | `todo` | Keep a task list while working — and it writes it, to `.beeagent/todo.json` |
 | `skill` | Load the full instructions of an installed skill. Registered by the built-in skill loader (`SkillTool` in `beeagent/plugins/loader.py`), not by the core tool loop, so `/extensions` does not list it as a plugin |
 | `diagram` | Draw boxes and arrows, and **return the picture as text**, so the model reads back what it drew and fixes the overlaps itself; the same lines go to an `.svg` beside it — a plain name inside the working directory, `diagram.svg` by default |
@@ -492,7 +496,9 @@ mouse-clickable picker.
 | `/provider` | Switch the active provider | `/provider <name>` |
 | `/providers` | List providers and which ones have a key | `/providers` |
 | `/skin` | Choose interface variants: frames, banner, spinner | `/skin [slot] [variant]` |
+| `/skins` | Skins that are code: list them, switch, see why one was refused | `/skins [name]` |
 | `/trust` | Let this folder change how BeeCode behaves (plugins, permission gate) | `/trust [yes|no|reset]` |
+| `/undo` | Undo what BeeCode wrote to your files, newest first | `/undo [n|list|clear]` |
 
 ### Skills, Plugins, Mcp
 
@@ -531,6 +537,7 @@ mouse-clickable picker.
 
 | Command | What it does | Usage |
 | --- | --- | --- |
+| `/compact` | Fold the oldest turns into a digest now (no model call, no quota) | `/compact [N] | /compact yes [N]` |
 | `/continue` | Load a saved session | `/continue <id>` |
 | `/export` | Export session to a Markdown file | `/export [path]` |
 | `/history` | Open the full history (scrollable) | `/history [list]` |
@@ -580,6 +587,20 @@ BeeCode has one extension mechanism with three kinds, browsed from a bundled cat
 
 First-time MCP discovery can take a minute (npm downloads), so it never runs at startup:
 startup loads cached schemas only, and `/mcp connect` does the rest explicitly.
+
+Four packs ship with the program, and each one says so when its dependency is not
+there instead of failing quietly:
+
+| Pack | What it adds | Without its dependency |
+| --- | --- | --- |
+| `browser` | the `browser` tool for the model: navigate, click, type, read text, run javascript, screenshot — every answer structured, and the screenshot also drawn for the human (`/allow browser` first, it reaches the network) | Playwright is not installed: the tool answers with the one command that fixes it and never pretends to have opened a page |
+| `edit-ui` | `/edit-ui <file>` — a full-screen file editor *you* type into, beside the agent's own `edit` tool. CRLF and Cyrillic kept byte-for-byte, a big file opened as a capped window with the real size named, unsaved changes asked about once | no full-screen app (the classic REPL): the command answers with words and touches no file |
+| `skin-baseline` | the quiet status line: one repaint when something actually changed | — |
+| `skin-pulse` | a status line that breathes at 12 fps and counts the wait | — |
+| `skin-pet` | a bee that blinks, hides on an error and shivers on a refusal | — |
+
+`/skins` lists them, switches between them and shows why a skin was refused or
+demoted; the format a skin implements is in [docs/SKINS.md](docs/SKINS.md).
 
 ## Making BeeCode your own
 
@@ -713,9 +734,9 @@ what is allowed — you do.** A reply from a free endpoint is a guess; guessing
 
 | Mode | What runs without asking | Switch |
 | --- | --- | --- |
-| `ask` (default) | Readers: `read`, `grep`, `glob`, `list_directory`, `skill` — plus `todo` and `diagram`, which need no grant but each write one file of their own (`.beeagent/todo.json`, a `.svg`) | `/permissions ask` |
+| `ask` (default) | Readers: `read`, `grep`, `glob`, `list_directory`, `skill`, `diagnostics` — plus `todo` and `diagram`, which need no grant but each write one file of their own (`.beeagent/todo.json`, a `.svg`) | `/permissions ask` |
 | `auto` | Everything | `/permissions auto` |
-| `readonly` | Only the readers — `todo`, `diagram` and `diagnostics` are refused here too, and so is any tool you granted | `/permissions readonly` |
+| `readonly` | Only the readers — anything that writes is refused here too: `todo`, `diagram`, `patch`, `move`, `remove`, and every tool you granted by hand | `/permissions readonly` |
 
 `web_search` and `web_fetch` are in none of those lists: `is_safe()` returns
 `False` for them on purpose, because the request leaves the machine and a tool

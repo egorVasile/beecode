@@ -1001,21 +1001,284 @@ def _cmd_token(ctx, args):
     return CommandResult(output=text)
 
 
+# How long `/stats --live` waits for the pool, per request. The seat ask is
+# inside `pool_status`, which also pings `/healthz`, so the worst case a person
+# who typed the flag waits is twice this. Nothing on this path runs unless asked:
+# the boot that once took 57 seconds is the reason.
+SEAT_LIVE_TIMEOUT = 4.0
+
+
+def _big(number) -> str:
+    """A count with its digit groups apart: 12345 is hard to read, 12 345 is not."""
+    try:
+        return f"{int(number):,}".replace(",", " ")
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _duration(seconds) -> str:
+    """How long an endpoint kept an answer waiting, or "—" when nothing timed it."""
+    try:
+        left = float(seconds)
+    except (TypeError, ValueError):
+        return "—"
+    if left <= 0:
+        return "—"
+    if left < 100:
+        return f"{left:.1f}s"
+    minutes, secs = divmod(int(round(left)), 60)
+    if minutes < 60:
+        return f"{minutes}m {secs:02d}s"
+    return f"{minutes // 60}h {minutes % 60:02d}m"
+
+
+def _plural(count, english_one, english_many, russian_one, russian_many) -> str:
+    """One word or its plural, in the language being read.
+
+    Russian needs the case as well as the number, so the caller hands both forms
+    rather than this function guessing a suffix that never works.
+    """
+    one = abs(int(count or 0)) % 10 == 1 and abs(int(count or 0)) % 100 != 11
+    return L(english_one if one else english_many, russian_one if one else russian_many)
+
+
+def _counts_row(row: dict) -> tuple:
+    """The six numbers every ledger row carries, in the order every table shows them.
+
+    Tokens are printed with the mark the row earned: `✔` when the endpoint said
+    how many it spent, `~` when BeeCode counted them itself — the same two marks
+    `/models` puts in front of a context window.
+    """
+    from beeagent.core import usage
+
+    tokens = int(row.get("prompt_tokens") or 0) + int(row.get("completion_tokens") or 0)
+    return (
+        _big(row.get("requests")),
+        f"{usage.mark_for(row)} {_big(row.get('prompt_tokens'))}",
+        _big(row.get("completion_tokens")),
+        _big(row.get("cache_hits")),
+        _duration(row.get("stream_seconds")),
+        _big(row.get("errors")),
+    )
+
+
+STATS_COLUMNS = ("model", "provider", "requests", "prompt", "answer",
+                 "cache hits", "time", "errors")
+
+
+def _counts_table(title: str, rows: list, first: str = "model") -> Table:
+    """One table of ledger rows, honey on leaf, biggest already first."""
+    table = Table(title=bee_title(title), box=box.ROUNDED, border_style=BORDER,
+                  header_style="bold " + HONEY, expand=False)
+    table.add_column(first, style="bold " + HONEY)
+    table.add_column("provider", style="dim")
+    for name in STATS_COLUMNS[2:]:
+        table.add_column(name, justify="right")
+    for row in rows:
+        table.add_row(str(row.get("model") or "?"), str(row.get("provider") or "—"),
+                      *_counts_row(row))
+    return table
+
+
+def _seat_live(ctx) -> tuple[list[tuple[str, str]], str]:
+    """What the pool says this seat has spent, or the one line explaining why not.
+
+    Only `/stats --live` gets here. A seat ask is one GET on an address that may
+    be a free instance asleep since yesterday, and the local totals above it are
+    true whether or not it answers — so a refusal costs a line and nothing else.
+    """
+    from beeagent.providers import pool as pool_mod
+
+    provider = str(getattr(ctx.config, "provider", "") or "")
+    if provider != "pool":
+        return [], L(f"--live asks a pool seat; this BeeCode is answering from "
+                     f"{provider or 'somewhere else'}, where a request costs nothing",
+                     f"--live спрашивает место в пуле; сейчас ответы идут от "
+                     f"{provider or 'неизвестно чего'}, где запрос ничего не стоит")
+
+    url = str(getattr(ctx.config, "pool_url", "") or "")
+    token = str(getattr(ctx.config, "pool_token", "") or "")
+    if not url:
+        return [], L("the pool has no address — /pool url https://…",
+                     "у пула нет адреса — /pool url https://…")
+    if not token:
+        return [], L("this install holds no seat yet — /pool enroll takes one; "
+                     "the numbers above are unaffected",
+                     "это BeeCode ещё не имеет места в пуле — возьми его через "
+                     "/pool enroll; цифры выше от этого не меняются")
+
+    try:
+        health = pool_mod.pool_status(url, token, timeout=SEAT_LIVE_TIMEOUT)
+    except Exception as e:                      # a sleeping box, a wrong address
+        return [], L(f"the pool at {url} did not answer within "
+                     f"{SEAT_LIVE_TIMEOUT:.0f}s ({e.__class__.__name__}) — the "
+                     f"numbers above are BeeCode's own count, not the seat's",
+                     f"пул по адресу {url} не ответил за {SEAT_LIVE_TIMEOUT:.0f} с "
+                     f"({e.__class__.__name__}) — цифры выше считает BeeCode, а не место")
+
+    seat = health.get("seat") if isinstance(health.get("seat"), dict) else None
+    if not seat or not seat.get("ok"):
+        reason = str((seat or {}).get("error") or L("the pool answered nothing about "
+                                                    "this seat", "пул ничего не сказал "
+                                                    "об этом месте"))
+        return [], reason
+
+    rows: list[tuple[str, str]] = []
+    used, limit = seat.get("requests"), seat.get("requests_limit")
+    if isinstance(used, (int, float)):
+        if isinstance(limit, (int, float)) and limit:
+            left = int(limit) - int(used)
+            bar = f"{int(100 * min(max(1 - left / limit, 0), 1))}%"
+            rows.append(("seat requests", f"{_big(used)} / {_big(limit)}"))
+            rows.append(("left today", f"{_big(max(0, left))} requests  ({bar} spent)"))
+        else:
+            rows.append(("seat requests", f"{_big(used)} (the pool named no limit)"))
+    tokens, tokens_limit = seat.get("tokens"), seat.get("tokens_limit")
+    if isinstance(tokens, (int, float)) and isinstance(tokens_limit, (int, float)):
+        rows.append(("seat tokens", f"{_big(tokens)} / {_big(tokens_limit)}"))
+    reset = seat.get("resets_in_seconds")
+    if isinstance(reset, (int, float)) and reset > 0:
+        import time as _clock
+
+        when = _clock.localtime(_clock.time() + float(reset))
+        rows.append(("resets in", f"{_duration(reset)} "
+                     f"(at {_clock.strftime('%H:%M', when)})"))
+    if seat.get("approved") is False:
+        rows.append(("approval", L("the pool owner has not approved this seat yet",
+                                   "владелец пула ещё не подтвердил это место")))
+    if not rows:
+        return [], L("the pool answered for this seat and named no budget in it",
+                     "пул ответил за это место, но нормы в ответе не назвал")
+    return rows, ""
+
+
 def _cmd_stats(ctx, args):
+    """`/stats` — the cost of this conversation and of every one before it.
+
+    Free models are not free of everything: a seat has a daily request budget and
+    a g4f route has patience, and the number worth seeing before a task ends is
+    how much of either is left. `--live` is the only branch that asks the pool,
+    and it is only ever reached by a person typing it.
+    """
     if ctx.agent is None:
         return _err("No agent available.")
+    from rich.console import Group
+
+    from beeagent.core import usage
+
+    given = [str(a).lower() for a in args]
+    flags = [a for a in given if a.startswith("-")]
+    live = any(a in ("-l", "--live") for a in given)
+
     s = ctx.agent.economy.get_stats()
-    table = Table(title=bee_title("Stats"), box=box.ROUNDED, border_style=BORDER, expand=False)
-    table.add_column("Metric", style="bold #ffcc00")
+    session_id = str(getattr(ctx.session, "session_id", "") or "")
+    snap = usage.snapshot(session_id)
+
+    table = Table(title=bee_title("🐝 Stats"), box=box.ROUNDED, border_style=BORDER,
+                  header_style="bold " + HONEY, expand=False)
+    table.add_column("Metric", style="bold " + HONEY)
     table.add_column("Value")
     # Which session these numbers belong to: a cache ratio and a pruned count say
     # nothing without the model, its provider and the window it was sized to.
     table.add_row("model", str(ctx.config.model))
     table.add_row("provider", str(ctx.config.provider))
     table.add_row("window", str(ctx.agent.context.window))
-    for k, v in s.items():
-        table.add_row(str(k), str(v))
-    return CommandResult(output=table)
+    if live:
+        rows, refusal = _seat_live(ctx)
+        for name, value in rows:
+            table.add_row(name, value)
+        if refusal:
+            table.add_row("seat", refusal)
+    else:
+        table.add_row("seat budget", L("not asked — /stats --live asks the pool, "
+                                       "and waits for its answer",
+                                       "не спрашивали — /stats --live спросит пул "
+                                       "и подождет его ответа"))
+
+    parts: list = []
+    notice = usage.take_notice()
+    if notice:
+        parts.append(Text(notice if notice.startswith("⚠") else "⚠ " + notice,
+                          style="bold yellow"))
+    # The economy rows stay where they always were: what a cache is holding and
+    # what it pruned is part of the same question the ledger answers.
+    for key, value in s.items():
+        table.add_row(str(key), str(value))
+    parts.append(table)
+
+    mine = snap["session"] or {}
+    parts.append(_counts_table("🐝 This conversation", [
+        dict(mine, model=session_id or L("this conversation", "этот разговор"),
+             provider=str(ctx.config.provider))], first="conversation"))
+
+    models = snap["models"]
+    shown = models[:usage.TOP_ROWS]
+    total = snap["all"]
+    if models:
+        every = _counts_table("🐝 All BeeCode has asked here", shown)
+        every.caption = Text(
+            " + ".join([
+                L(f"{_big(total.get('requests'))} "
+                  f"{_plural(total.get('requests'), 'request', 'requests', 'запрос', 'запросов')}",
+                  f"{_big(total.get('requests'))} "
+                  f"{_plural(total.get('requests'), 'request', 'requests', 'запрос', 'запросов')}"),
+                L(f"{usage.mark_for(total)} tokens {_big(total.get('prompt_tokens'))}"
+                  f" in · {_big(total.get('completion_tokens'))} out",
+                  f"{usage.mark_for(total)} токенов {_big(total.get('prompt_tokens'))}"
+                  f" вошло · {_big(total.get('completion_tokens'))} вышло"),
+                L(f"{_big(total.get('cache_hits'))} answered from the cache",
+                  f"{_big(total.get('cache_hits'))} из кэша"),
+                L(f"{_big(total.get('errors'))} refused",
+                  f"{_big(total.get('errors'))} отказов"),
+            ]), style="dim")
+        parts.append(every)
+    else:
+        # An empty box is not an answer. Nothing recorded is a fact worth saying
+        # in words, and saying it stops `/stats` looking like a broken screen.
+        parts.append(Text(L("the ledger is empty: no answer has been counted in this "
+                            "folder yet. Ask something, then look again",
+                            "учёт пуст: в этой папке ещё не посчитано ни одного "
+                            "ответа. Спроси что-нибудь и посмотри снова"), style="dim"))
+
+    slow = snap["slowest"]
+    tail = [L("✔ tokens the endpoint reported · ~ tokens BeeCode counted itself "
+              "(the ruler is the one /token budgets a prompt with; it under-reads "
+              "emoji and CJK where there is no tiktoken, as on Android)",
+              "✔ токены назвал сам провайдер · ~ посчитал BeeCode (той же меркой, "
+              "что и /token; без tiktoken — на Android — эмодзи и азиатские "
+              "письмена он читает меньше, чем они стоят)")]
+    if len(models) > len(shown):
+        extra = len(models) - len(shown)
+        tail.append(L(f"… and {extra} more "
+                      f"{_plural(extra, 'model', 'models', 'модель', 'моделей')} this "
+                      f"ledger knows but did not print",
+                      f"… и ещё {extra} "
+                      f"{_plural(extra, 'model', 'models', 'модель', 'моделей')}, "
+                      f"которые учёт помнит, но сюда не выписал"))
+    if slow:
+        tail.append(L(f"slowest here: {slow['model']} "
+                      f"{_duration(slow['seconds_per_request'])} an answer, over "
+                      f"{_big(slow['requests'])} "
+                      f"{_plural(slow['requests'], 'request', 'requests', 'запрос', 'запросов')}",
+                      f"медленнее всех: {slow['model']} — "
+                      f"{_duration(slow['seconds_per_request'])} на ответ, "
+                      f"{_big(slow['requests'])} "
+                      f"{_plural(slow['requests'], 'request', 'requests', 'запрос', 'запросов')}"))
+    if snap["refusal"]:
+        tail.append(L(f"last refusal: {snap['refusal']}",
+                      f"последний отказ: {snap['refusal']}"))
+    if snap["trimmed"]:
+        tail.append(L(f"{snap['trimmed']} history "
+                      f"{_plural(snap['trimmed'], 'row was', 'rows were', 'запись', 'записей')}"
+                      f" dropped, to keep the ledger inside {usage.MAX_ROWS} models "
+                      f"and {usage.MAX_SESSIONS} conversations",
+                      f"учёт убран до {usage.MAX_ROWS} моделей и "
+                      f"{usage.MAX_SESSIONS} разговоров: "
+                      f"{_big(snap['trimmed'])} "
+                      f"{_plural(snap['trimmed'], 'row', 'rows', 'запись стёрта', 'записей стёрто')}"
+                      ))
+    parts.append(Text("\n".join(tail), style="dim"))
+    return CommandResult(output=Group(*parts))
 
 
 def _cmd_thinking(ctx, args):
@@ -1863,6 +2126,12 @@ def dispatch(ctx: ReplContext, line: str) -> CommandResult:
 # `from beeagent.ui.commands import COMMANDS` sees the same registry the README is
 # built from. It used to appear only once a PluginLoader happened to be built,
 # which made the command list depend on import order.
+from beeagent.core import compact as _compact  # noqa: E402  (bottom: it imports us lazily)
+from beeagent.core import journal as _journal  # noqa: E402  (bottom: it imports us lazily)
+from beeagent.core import skins as _skins  # noqa: E402  (bottom: it imports us lazily)
 from beeagent.core import trust as _trust  # noqa: E402  (bottom: trust imports us lazily)
 
 _trust.register_command()
+_journal.register_command()
+_compact.register_command()
+_skins.register_command()

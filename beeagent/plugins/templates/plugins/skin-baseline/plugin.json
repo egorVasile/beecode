@@ -1,0 +1,7 @@
+{
+    "name": "skin-baseline",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "The look BeeCode ships with, as a skin pack: honey and leaf, one status line, zero animation — and the line the other skins fall back to",
+    "entry": "plugin.py"
+}

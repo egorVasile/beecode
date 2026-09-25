@@ -689,6 +689,12 @@ class ResponseStream:
             self._print_think_lines()
 
     def on_content(self, text):
+        try:
+            from beeagent.core import skins
+
+            skins.emit_output(text)
+        except Exception:
+            pass
         if not self._content_started:
             self._content_started = True
             self._phase = "content"

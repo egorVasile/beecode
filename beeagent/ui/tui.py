@@ -581,6 +581,12 @@ class BeeCodeApp(App):
             pass
 
     def _on_agent_event(self, event: str, data: dict) -> None:
+        try:
+            from beeagent.core import skins
+
+            skins.post(event, data)
+        except Exception:
+            pass          # a decoration must never cost the user their answer
         if event == "stream_delta":
             self._stream_buf += data.get("text", "")
             self._sent_buf += data.get("text", "")

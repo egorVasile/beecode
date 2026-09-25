@@ -16,7 +16,7 @@ from beeagent.ext.api import emit
 from beeagent.ui.commands import ReplContext, dispatch
 
 TEMPLATES = Path(__file__).resolve().parent.parent / "beeagent" / "plugins" / "templates" / "plugins"
-SHIPPED = ["undo", "doctor", "changes", "recall"]
+SHIPPED = ["doctor", "changes", "recall"]
 
 
 @pytest.fixture()
@@ -59,36 +59,7 @@ def test_every_shipped_plugin_loads_without_errors(project):
         assert not [e for e in agent.plugins.load_errors], (name, agent.plugins.load_errors)
 
 
-def test_undo_saves_a_copy_before_the_write_and_gives_it_back(project):
-    agent = load(project, "undo")
-    target = project / "recipe.txt"
-    target.write_text("как было", encoding="utf-8")
 
-    emit(agent.plugins.extensions, "tool_start",
-         {"tool": "write", "args": {"path": "recipe.txt"}})
-    target.write_text("как стало, и это не то что надо", encoding="utf-8")
-
-    result = run(agent, "/undo")
-    assert "restored" in plain(result)
-    assert target.read_text(encoding="utf-8") == "как было"
-    # What the agent wrote is not thrown away — undoing an undo stays possible.
-    assert any("discarded" in p.name for p in (project / ".beeagent" / "undo").glob("*/discarded-*"))
-
-
-def test_undo_does_not_snapshot_what_a_tool_did_not_touch(project):
-    agent = load(project, "undo")
-    (project / "quiet.txt").write_text("тихо", encoding="utf-8")
-    emit(agent.plugins.extensions, "tool_start", {"tool": "bash", "args": {"command": "ls"}})
-    assert "nothing to undo" in plain(run(agent, "/undo"))
-
-
-def test_undo_leaves_files_outside_the_project_alone(project):
-    agent = load(project, "undo")
-    elsewhere = project.parent / "not-mine.txt"
-    elsewhere.write_text("не трогать", encoding="utf-8")
-    emit(agent.plugins.extensions, "tool_start",
-         {"tool": "write", "args": {"path": str(elsewhere)}})
-    assert not (project / ".beeagent" / "undo").exists()
 
 
 def test_doctor_reports_the_install_without_touching_the_network(project, monkeypatch):
@@ -150,7 +121,7 @@ def test_recall_searches_saved_sessions_and_names_the_one_to_reopen(project):
 
 def test_a_second_agent_in_the_same_process_keeps_the_commands(project):
     """Registering an extension command again replaces it — it is not a collision."""
-    load(project, "undo")
-    second = load(project, "undo")
+    load(project, "doctor")
+    second = load(project, "doctor")
     assert not [c for c in second.plugins.extensions.contributions if "refused" in c.note]
-    assert "nothing to undo" in plain(run(second, "/undo"))
+    assert "/doctor" in plain(run(second, "/help"))

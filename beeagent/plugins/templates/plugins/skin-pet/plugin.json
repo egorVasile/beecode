@@ -1,0 +1,7 @@
+{
+    "name": "skin-pet",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "An ASCII pet that reacts: blinking when idle, bobbing while it thinks, hopping on done, hiding on error, chasing the cache ball - animated from on_frame() alone",
+    "entry": "plugin.py"
+}

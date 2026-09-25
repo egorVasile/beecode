@@ -36,8 +36,20 @@ from beeagent.ui.commands import (
 )
 from beeagent.ui.viewer import show_scrolled
 from beeagent.core.session import Session
+from beeagent.core import autosave
 
 PROMPT = HTML('<ansigreen><b>🐝 &gt;</b></ansigreen> ')
+
+# Events that mean "a turn is on the table": the answer landed, a tool answered,
+# or the user cut the run short. Not `stream_delta` — a checkpoint per token on
+# phone flash is its own kind of outage (see core/autosave.py).
+_CHECKPOINT_EVENTS = ("tool_end", "done", "stopped", "response")
+
+# The saver for the REPL run in progress. Module-level because agent events arrive
+# through `handle_callback`, which is reached from a worker thread and has no
+# context object of its own; None outside a REPL run (a one-shot `--prompt` asks
+# nothing of it, and the TUI keeps its own).
+_AUTOSAVER: autosave.AutoSaver | None = None
 
 BEE_STYLE = Style.from_dict({
     "completion-menu.completion": "bg:#102a12 #c8e6c9",
@@ -82,6 +94,36 @@ def _note(icon: str, english: str, russian: str):
     console.print(Text.assemble(f"  {icon} ", Text(L(english, russian), style="dim")))
 
 
+def _say(icon: str, text: str):
+    """The same note when the string was already translated by whoever sent it."""
+    console.print(Text.assemble(f"  {icon} ", Text(text, style="dim")))
+
+
+def _autosave_checkpoint(event: str):
+    """Checkpoint after a completed turn, and say once if the disk said no.
+
+    Swallowed whole: the autosave is the thing that catches a crash, so it must
+    never be the thing that causes one. A write that fails is already reported by
+    `AutoSaver` itself, once per session, in the conversation's own language.
+    """
+    saver = _AUTOSAVER
+    if saver is None or event not in _CHECKPOINT_EVENTS:
+        return
+    try:
+        saver.checkpoint(reason=event)
+    except Exception:
+        pass
+
+
+def _autosave_flush():
+    """Write a coalesced turn the moment the REPL stops being busy."""
+    try:
+        if _AUTOSAVER is not None:
+            _AUTOSAVER.flush(reason="idle prompt")
+    except Exception:
+        pass
+
+
 def _make_key_bindings() -> KeyBindings:
     kb = KeyBindings()
 
@@ -107,6 +149,11 @@ def agent_callback(agent):
         registry = getattr(getattr(agent, "plugins", None), "extensions", None)
         if registry is not None:
             emit(registry, event, data)
+        # The skin host sees the same event the extensions do. Imported here, not
+        # at module top: nothing slow or networked belongs in the boot path.
+        from beeagent.core import skins
+
+        skins.post(event, data)
 
     return callback
 
@@ -233,6 +280,10 @@ def handle_callback(event: str, data: dict):
 
     elif event == "error":
         stream.on_error(data["message"])
+
+    # Last, after the screen is done with the event: a turn that finished is a turn
+    # worth having on disk, and the drawing must not wait on it.
+    _autosave_checkpoint(event)
 
 
 class BeeCompleter(Completer):
@@ -496,6 +547,23 @@ async def run_repl(agent, config, session=None):
     # The provider asks the user about a rate limit only through this hook.
     agent.route_question = lambda error: _ask_route(agent, error)
 
+    global _AUTOSAVER
+    workdir = str(getattr(agent, "workdir", ".") or ".")
+    _AUTOSAVER = autosave.AutoSaver(
+        workdir=workdir, session=ctx.session,
+        on_message=lambda text: _say("·", text))
+    # Follow the live session: `/continue` and `/reset` replace the object under us,
+    # and the one left behind is finished with, not lost.
+    _AUTOSAVER.attach(lambda: ctx.session)
+    # Rule 2 — say it here, before the first prompt, because the alternative is
+    # that the user finds out by noticing the history is short.
+    try:
+        notice = autosave.recovered_notice(workdir, current_id=ctx.session.session_id)
+        if notice:
+            _say("🐝", notice)
+    except Exception:
+        pass
+
     prompt_session: PromptSession = PromptSession(
         completer=BeeCompleter(ctx),
         complete_while_typing=True,
@@ -512,6 +580,12 @@ async def run_repl(agent, config, session=None):
         while ctx.running:
             if not asked_about_update:
                 asked_about_update = await _offer_update(agent)
+            # The debounce holds a finished turn back while a burst of cheap steps
+            # is arriving. About to wait on a human is the end of the burst: write
+            # what is pending, so an idle session on disk is never behind the
+            # screen by more than the turn actually in flight.
+            if _AUTOSAVER is not None and _AUTOSAVER.pending():
+                _autosave_flush()
             console.print()
             try:
                 # patch_stdout routes agent output above the active prompt
@@ -574,7 +648,19 @@ async def run_repl(agent, config, session=None):
         console.print("\n  [dim]Goodbye! 🐝[/]\n")
     finally:
         _stop_active_task()
-        ctx.session.save()
+        # The clean save, the announcement when it does not land, and the sweep of
+        # old session files — all of it before the plugins go, so a shutdown that
+        # hangs cannot swallow the one line saying what was deleted.
+        try:
+            if _AUTOSAVER is not None:
+                _AUTOSAVER.close(ctx.session)
+            else:
+                ctx.session.save()
+        except Exception as e:
+            _say("⚠", L(f"the session could not be saved ({e.__class__.__name__}: {e})",
+                        f"сессия не сохранена ({e.__class__.__name__}: {e})"))
+        finally:
+            _AUTOSAVER = None
         try:
             agent.plugins.shutdown()      # stop live MCP server processes
         except Exception:
