@@ -132,3 +132,46 @@ def test_git_tool_runs_without_repo_and_decodes():
     result = GitTool().execute("--version")
     assert not result.error
     assert result.output.startswith("git version")
+
+
+# --- the capped capture, and what another thread may ask of a live command ------
+
+def test_capped_text_without_a_tail_is_the_capture_exactly_as_it_was():
+    """The default of `capped_text` is the whole text, note included."""
+    from beeagent.tools.shell import MAX_CAPTURE, capped_text
+
+    data = b"one\ntwo\n"
+    assert capped_text(data) == "one\ntwo\n" and capped_text(data, 1) == capped_text(data)
+    oversized = b"x" * (MAX_CAPTURE + 10)
+    text = capped_text(oversized)
+    assert len(text) < len(oversized) and "output cut at" in text
+
+
+def test_capped_text_holds_back_the_lines_the_user_already_saw():
+    """Streaming: the model gets the tail plus the count, not a second transcript."""
+    from beeagent.tools.shell import capped_text
+
+    body = "".join(f"line {i}\n" for i in range(100)).encode()
+    text = capped_text(body, keep_last=5)
+    assert "line 99" in text and "line 0\n" not in text
+    assert "95 earlier line(s)" in text and "shown as the command printed them" in text
+    assert len(text.splitlines()) == 6          # five lines and the sentence
+
+
+def test_a_run_can_be_asked_to_stop_from_another_thread():
+    """`Run` is the whole surface between the UI thread and a live command."""
+    import threading
+
+    from beeagent.tools.shell import Run
+
+    run = Run()
+    assert run.running is False and run.pid is None
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(run.interrupt()))
+               for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sum(results) == 1, f"{results}: more than one thread was told it stopped it"
+    assert run.stop_requested is True
