@@ -1,0 +1,7 @@
+{
+    "name": "edit-ui",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "/edit-ui <file>: open a file in a full-screen editor you can type into",
+    "entry": "plugin.py"
+}
