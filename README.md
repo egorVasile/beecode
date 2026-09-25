@@ -588,8 +588,8 @@ BeeCode has one extension mechanism with three kinds, browsed from a bundled cat
 First-time MCP discovery can take a minute (npm downloads), so it never runs at startup:
 startup loads cached schemas only, and `/mcp connect` does the rest explicitly.
 
-Four packs ship with the program, and each one says so when its dependency is not
-there instead of failing quietly:
+Two of these packs need something installed to do their job, and each one says so
+when its dependency is not there instead of failing quietly:
 
 | Pack | What it adds | Without its dependency |
 | --- | --- | --- |
@@ -598,6 +598,7 @@ there instead of failing quietly:
 | `skin-baseline` | the quiet status line: one repaint when something actually changed | — |
 | `skin-pulse` | a status line that breathes at 12 fps and counts the wait | — |
 | `skin-pet` | a bee that blinks, hides on an error and shivers on a refusal | — |
+| `skin-hud` | takes the lines over: its own wording on the status and waiting lines, and a strip above them with the running tool, a bar for how long this turn has taken, and the token count | — |
 
 `/skins` lists them, switches between them and shows why a skin was refused or
 demoted; the format a skin implements is in [docs/SKINS.md](docs/SKINS.md).

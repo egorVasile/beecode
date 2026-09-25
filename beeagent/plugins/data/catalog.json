@@ -506,6 +506,20 @@
       }
     },
     {
+      "id": "skin-hud",
+      "name": "skin-hud",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Surface reference skin: takes over the status, spinner, thinking and HUD lines, draws a timed strip through the painter, and asks only for what the screen can hold",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/skin-hud",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/skin-hud"
+      }
+    },
+    {
       "id": "doctor",
       "name": "doctor",
       "type": "plugin",
