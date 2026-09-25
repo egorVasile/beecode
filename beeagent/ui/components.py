@@ -6,6 +6,7 @@ from typing import Optional
 from beeagent.ui import skin
 from rich.console import Console
 from rich.live import Live
+from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 from rich.markdown import Markdown
@@ -558,6 +559,12 @@ def print_providers(providers: list[dict]):
     console.print()
 
 
+def _now() -> float:
+    import time
+
+    return time.monotonic()
+
+
 # --- playful pending states shown while the request travels to the model ---
 
 # English and Russian side by side, so a joke never exists in one language only.
@@ -575,11 +582,114 @@ PENDING_STATES = [
 ]
 
 
-def pending_text() -> str:
+def _surface(surface: str, default: str, *args) -> str:
+    """Ask the skin on screen about one of its surfaces; keep ours if it has none.
+
+    Every line of the interface that a skin may take over goes through here, so
+    "the skin broke" and "there is no skin" cannot turn into a missing line: the
+    host's own text is the fallback, and a skin that raises loses that surface and
+    nothing else (see `core/skins.ask`).
+    """
+    try:
+        from beeagent.core import skins
+
+        return skins.ask(surface, default, *args)
+    except Exception:
+        return default
+
+
+def status_line(default: str) -> str:
+    """The state line — model, provider, what happened this turn."""
+    return _surface("status", default)
+
+
+def markup_text(line, style: str = "") -> Text:
+    """One line of interface chrome, printed the same way in both interfaces.
+
+    A skin's answer is Rich markup — that is how it gets colour into a line the
+    host prints — while the wording underneath is ours and may hold square
+    brackets, so a line whose markup will not read is printed as text instead of
+    taken away.
+    """
+    body = str(line if line is not None else "")
+    try:
+        text = Text.from_markup(body)
+    except Exception:
+        text = Text(body)
+    if style:
+        text.stylize(style, 0, len(text))
+    return text
+
+
+def thinking_line(default: str) -> str:
+    """One line of the reasoning block on its way to the screen."""
+    return _surface("thinking", default)
+
+
+def hud_lines(painter, rows: int = 1) -> list:
+    """The rows a skin paints into its HUD, as Rich text for either interface.
+
+    The grid is the skin's; converting it is ours. Colour becomes a Rich style per
+    run of identical cells, so a HUD drawn at 12 fps prints as one line instead of
+    a span per character.
+    """
+    from rich.text import Text
+
+    out = []
+    grid = getattr(painter, "grid", None)
+    if grid is None:
+        return out
+    for row in range(max(0, int(rows))):
+        line = Text()
+        run, style = "", None
+        for column in range(grid.cols):
+            cell = grid.cell(column, row)
+            if cell is None:
+                break
+            cell_style = _cell_style(cell)
+            if cell_style != style:
+                if run:
+                    line.append(run, style=style or "")
+                run, style = "", cell_style
+            run += cell.ch
+        if run:
+            line.append(run, style=style or "")
+        out.append(line)
+    return out
+
+
+def _cell_style(cell) -> str:
+    """One grid cell -> the Rich style that reproduces it.
+
+    The grid speaks the renderer's own tokens (`#rrggbb`, `x256:220`, `16:3`, a
+    name), which is what a terminal wants and what Rich refuses to parse. So every
+    colour is resolved to hex first and Rich decides again how to send it: on a
+    16-colour terminal it degrades once, here, instead of raising mid-print and
+    taking the whole answer line with it.
+    """
+    from beeagent.core.renderer import token_rgb
+
+    parts = []
+    for kind, value in (("fg", getattr(cell, "fg", None)),
+                        ("bg", getattr(cell, "bg", None))):
+        if not value:
+            continue
+        rgb = token_rgb(value)
+        if rgb is None:
+            continue                     # an unresolvable colour: Rich's default
+        hexed = "#%02x%02x%02x" % tuple(rgb)
+        parts.append(hexed if kind == "fg" else f"on {hexed}")
+    parts.extend(sorted(str(style) for style in (getattr(cell, "style", ()) or ())))
+    return " ".join(parts)
+
+
+def pending_text(clock: float | None = None) -> str:
     """What the "working" line says — or nothing, when the spinner is off.
 
     Built-in variants are named strings; a plugin registers a callable that
-    returns the text it wants shown.
+    returns the text it wants shown; a skin that claimed the `spinner` surface is
+    asked last, so it can animate the line without replacing the slot's own
+    settings.
     """
     import random
 
@@ -590,8 +700,13 @@ def pending_text() -> str:
     if mode == "none":
         return ""
     if mode == "dots":
-        return "…"
-    return L(*random.choice(PENDING_STATES))
+        phrase = "…"
+    else:
+        phrase = L(*random.choice(PENDING_STATES))
+    # Ours is escaped, theirs is markup: a skin's answer to `spinner` is printed as
+    # Rich markup by both interfaces, so the wording we hand over for it to keep has
+    # to survive that trip with its brackets intact.
+    return _surface("spinner", escape(phrase), clock if clock is not None else _now())
 
 
 # --- thinking blocks -------------------------------------------------------
@@ -659,7 +774,7 @@ class ResponseStream:
 
     def _print_think_lines(self):
         for line in self._complete_think_lines()[self._think_printed:]:
-            console.print(Text("  │ " + line, style="#7a8f7a"))
+            console.print(Text("  │ " + thinking_line(line), style="#7a8f7a"))
         self._think_printed = len(self._complete_think_lines())
 
     # -- public API ---------------------------------------------------------
@@ -673,12 +788,31 @@ class ResponseStream:
         self._flush_pending()
         self._begin_turn()
         self._phase = "status"
+        self._print_hud()
         pending = pending_text()
         if not pending:
             return                      # spinner off: no line at all
         header = Text("  💬 ", style="bold")
-        header.append(pending, style="dim italic")
+        header.append_text(markup_text(status_line(pending), "dim italic"))
         console.print(header)
+
+    def _print_hud(self) -> None:
+        """The rows the skin asked for, above the line that says what is happening."""
+        try:
+            from beeagent.core import skins
+
+            if not skins.owns("hud"):
+                return
+            from beeagent.core.renderer import Painter
+
+            cols, _rows = skins.painter().size()
+            painter = Painter(size=(cols, max(1, skins.surfaces()["hud_rows"])))
+            if not skins.hud_frame(painter, 0.0):
+                return
+            for line in hud_lines(painter, painter.rows):
+                console.print(Text.assemble(("  ▏ ", "dim"), line))
+        except Exception:
+            pass                       # a HUD is decoration; it never eats a turn
 
     def on_thinking(self, text):
         if self._phase != "thinking":
@@ -693,6 +827,9 @@ class ResponseStream:
             from beeagent.core import skins
 
             skins.emit_output(text)
+            # After the notification: a skin that animates the answer reads what
+            # the host already read, and its version is what reaches the screen.
+            text = skins.stream_text(text, False)
         except Exception:
             pass
         if not self._content_started:
@@ -805,10 +942,28 @@ class ResponseStream:
         self._phase = "idle"
         self._pending = ""
 
+    def _flush_skin(self):
+        """The stream surface's last call: `done=True` is what a buffering skin flushes on.
+
+        Without this turn-end call the flag would be a promise no host keeps, and a
+        skin that holds back the last few characters to animate them would quietly
+        lose them.
+        """
+        try:
+            from beeagent.core import skins
+
+            held = skins.stream_text("", True)
+        except Exception:
+            held = ""
+        if held:
+            self._text += held
+            self._print(held)
+
     def on_done(self):
         pending = self._lead_buf if self._lead_json else self._buf
         if pending.strip() and not _looks_like_call(pending):
             self._print(pending)
+        self._flush_skin()
         self._flush_pending()
         if self._thinking.strip():
             self._store_thinking()

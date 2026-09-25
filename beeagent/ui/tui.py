@@ -26,7 +26,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import (
+from textual.widgets import (  # noqa: I001
     Button, Footer, Header, Input, Label, ListView, ListItem, RichLog, Static,
 )
 
@@ -34,7 +34,7 @@ from beeagent.core.session import Session
 from beeagent.i18n import L
 from beeagent.ui.bee import BEE_FRAME_COUNT, render_bee
 from beeagent.ui.commands import COMMANDS, ReplContext, dispatch, history_body
-from beeagent.ui.components import DARK_LEAF, HONEY, LEAF, bee_title
+from beeagent.ui.components import DARK_LEAF, HONEY, LEAF, bee_title, hud_lines
 
 # The picker is the classic dialog (`repl.BEE_DIALOG_STYLE`) drawn in Textual:
 # deep hive backdrop, honey headings, leaf frame. A default-styled Textual
@@ -181,6 +181,7 @@ class BeeCodeApp(App):
     #statuscol { width: 1fr; height: 100%; padding: 1 2; }
     #brand { color: $warning; text-style: bold; }
     #status { color: $text-muted; }
+    #hud { color: $text-muted; height: auto; display: none; }
     #hint { color: $text-disabled; }
 
     #body { height: 1fr; }
@@ -219,6 +220,14 @@ class BeeCodeApp(App):
         )
         self._stream_buf = ""
         self._think_buf = ""
+        # Whether the line in the stream area is still the waiting one. The frame
+        # clock redraws it so a skin that claimed `spinner` can animate it, and it
+        # stops mattering the moment the model's words, a thought or a timeout note
+        # takes that space over.
+        self._waiting_line = False
+        # The last text laid on the status label: the frame clock offers a new one
+        # twelve times a second, and a label told the same thing needs no repaint.
+        self._status_shown = ""
         # The model's own bytes for the turn in flight. A repaired or a cut-off
         # call is only an honest note if the user can see what was actually sent,
         # and `_stream_buf` is cleared the moment a tool starts.
@@ -263,6 +272,7 @@ class BeeCodeApp(App):
             yield Static(render_bee(0), id="bee")
             with Vertical(id="statuscol"):
                 yield Label("BeeCode", id="brand")
+                yield Label("", id="hud")
                 yield Label("", id="status")
                 yield Label("type / for commands · click runs it · ctrl+b toggles sidebar", id="hint")
         with Horizontal(id="body"):
@@ -288,6 +298,7 @@ class BeeCodeApp(App):
         except Exception:
             pass
         self._populate_commands()
+        self._skin_timer = None
         self.set_interval(0.28, self._animate_bee)
         self._fit_to_width()
         self._welcome()
@@ -296,6 +307,118 @@ class BeeCodeApp(App):
 
     def on_resize(self, event) -> None:
         self._fit_to_width()
+        self._paint_hud()                # a grid sized for the old window is wrong
+
+    # -- the skin's own clock ----------------------------------------------
+
+    FRAME_SECONDS = 1.0 / 12.0
+
+    def _sync_skin_clock(self) -> None:
+        """Run a 12 fps clock only while the skin on screen has work for one."""
+        from beeagent.core import skins
+
+        try:
+            wanted = bool(skins.needs_tick())
+        except Exception:
+            wanted = False
+        timer = getattr(self, "_skin_timer", None)
+        if wanted and timer is None:
+            self._skin_timer = self.set_interval(self.FRAME_SECONDS, self._skin_tick)
+        elif not wanted and timer is not None:
+            self._stop_skin_clock()
+
+    def _skin_tick(self) -> None:
+        """One frame: the skin advances, and the two lines it owns redraw."""
+        from beeagent.core import skins
+
+        if not self._chrome_ready():
+            # The home screen is under a dialog or on its way out: the clock has
+            # nothing to draw on, so it stops instead of missing a widget twelve
+            # times a second. `_sync_skin_clock` starts it again when the chrome
+            # is back, which every command and every finished turn calls for.
+            self._stop_skin_clock()
+            return
+        try:
+            skins.frame(self.FRAME_SECONDS)
+        except Exception:
+            pass                        # the host does not owe a skin a stack trace
+        self._paint_hud()
+        self._update_status()
+        if self._waiting_line:
+            self._repaint_waiting()
+
+    def _chrome_ready(self) -> bool:
+        """Are the home screen's own lines there to be drawn on?"""
+        try:
+            self.home.query_one("#hud", Label)
+        except Exception:
+            return False
+        return True
+
+    def _stop_skin_clock(self) -> None:
+        timer = getattr(self, "_skin_timer", None)
+        if timer is not None:
+            timer.stop()
+            self._skin_timer = None
+
+    def _repaint_waiting(self) -> None:
+        """The waiting line, redrawn at the skin's rate — only when a skin animates it.
+
+        Without a claim this is where a 12 fps clock would shuffle the built-in
+        joke under the user, because `pending_text()` picks one at random.
+        """
+        from beeagent.core import skins
+        from beeagent.ui.components import markup_text, pending_text
+
+        if not skins.owns("spinner"):
+            return
+        self.stream.update(markup_text(f"💬 {pending_text()}", "dim italic"))
+
+    def _paint_hud(self) -> None:
+        from beeagent.core import skins
+
+        if not self._chrome_ready():
+            return                      # a strip has nowhere to go; not the skin's fault
+        try:
+            label = self.home.query_one("#hud", Label)
+            if not skins.owns("hud"):
+                if label.display:
+                    label.display = False
+                    label.update("")
+                return
+            from beeagent.core.renderer import Painter
+
+            cols = max(20, self.screen.size.width - 8)
+            painter = Painter(size=(cols, max(1, skins.surfaces()["hud_rows"])))
+            painted = skins.hud_frame(painter, self.FRAME_SECONDS)
+            lines = hud_lines(painter, painter.rows) if painted else []
+            if not lines:
+                # Nothing drawn — including a skin that broke on this frame — means
+                # no strip: an empty reserved row would push the answer down for a
+                # picture that is not there.
+                label.display = False
+                label.update("")
+                return
+            # One Rich Text per row, joined with real line breaks: the cells carry
+            # the colours the skin chose, and a plain string here would flatten the
+            # picture it spent the frame building.
+            from rich.text import Text as Row
+
+            joined = Row()
+            for number, row in enumerate(lines):
+                if number:
+                    joined.append("\n")
+                joined.append_text(row)
+            label.display = True
+            label.update(joined)
+        except Exception as exc:                    # noqa: BLE001 - see below
+            # A HUD is decoration: it must not eat the answer. But a strip that
+            # silently never appears is a bug nobody can see, so the reason is said
+            # once, the same way the skin host says everything else about a skin.
+            if not getattr(self, "_hud_warned", False):
+                self._hud_warned = True
+                self._note("⚠", f"the skin's hud strip could not be drawn: {exc}",
+                           f"полосу hud скина нарисовать не смогла: {exc}")
 
     def _fit_to_width(self) -> None:
         """On a phone the 40-column sidebar is the whole screen.
@@ -581,6 +704,10 @@ class BeeCodeApp(App):
             pass
 
     def _on_agent_event(self, event: str, data: dict) -> None:
+        # Only the line the `status` event draws is the waiting line: every other
+        # event writes over that space, and the frame clock must stop animating a
+        # thought, a tool note or the answer as if it were still the joke.
+        self._waiting_line = event == "status"
         try:
             from beeagent.core import skins
 
@@ -592,11 +719,11 @@ class BeeCodeApp(App):
             self._sent_buf += data.get("text", "")
             self.stream.update(Text(self._stream_buf))
         elif event == "status":
-            from beeagent.ui.components import pending_text
+            from beeagent.ui.components import markup_text, pending_text
             # A fresh turn: the bytes the model sends now are the ones the notes
             # about this turn's calls will quote.
             self._sent_buf = ""
-            self.stream.update(Text(f"💬 {pending_text()}", style="dim italic"))
+            self.stream.update(markup_text(f"💬 {pending_text()}", "dim italic"))
         elif event == "waiting":
             # Silence is not death: say the endpoint is being waited on, and how
             # long, or the user closes a working program.
@@ -879,6 +1006,7 @@ class BeeCodeApp(App):
 
     def _finish_turn(self) -> None:
         """Close the turn in the log too: the status line can be off-screen."""
+        self._waiting_line = False
         incidents = self._turn_incidents()
         if incidents:
             self._note("📋", "this turn: " + ", ".join(incidents),
@@ -902,10 +1030,20 @@ class BeeCodeApp(App):
         n = len(self.ctx.session.messages) if self.ctx.session is not None else 0
         incidents = self._turn_incidents()
         tail = (L(" · this turn: ", " · этот ход: ") + ", ".join(incidents)) if incidents else ""
-        self.home.query_one("#status", Label).update(
+        from beeagent.ui.components import markup_text, status_line
+        from rich.markup import escape
+
+        self._sync_skin_clock()
+        # Escaped on the way in, markup on the way out: a skin that keeps our
+        # wording hands it back inside its own tags, and a model name holding a
+        # bracket must survive that trip.
+        line = markup_text(status_line(escape(
             f"model {cfg.model} · provider {cfg.provider} · mode {cfg.mode} · msgs {n}"
             + tail
-        )
+        )))
+        if str(line) != self._status_shown:
+            self._status_shown = str(line)
+            self.home.query_one("#status", Label).update(line)
 
     def _welcome(self) -> None:
         from beeagent.ui.components import BANNER_ROWS, GRADIENT
