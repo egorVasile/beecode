@@ -43,6 +43,7 @@ from .shell import run_argv_text
 
 # ---- tunables ---------------------------------------------------------------
 
+MAX_SYNTAX_FILES = 2000
 DEFAULT_TIMEOUT = 20          # seconds per checker
 MIN_TIMEOUT = 1
 MAX_TIMEOUT = 300
@@ -96,6 +97,20 @@ class Outcome:
 
 _module_cache: dict[str, bool] = {}
 _probe_cache: dict[str, tuple] = {}
+
+
+_GRANTED = False
+
+
+def set_granted(granted: bool) -> None:
+    """Whether the user allowed this tool right now; mypy and tsc consult it.
+
+    A module flag rather than an argument because the checkers are singletons
+    built at import. The worst a race can do is run a gated checker under a grant
+    or skip it without one — never write anything.
+    """
+    global _GRANTED
+    _GRANTED = bool(granted)
 
 
 def _module_available(name: str) -> bool:
@@ -166,6 +181,9 @@ class Checker:
     """
     name = "checker"
     module: str | None = None      # python module that must import for us to run
+    # A checker that loads the project's own config can end up executing code the
+    # repository supplied. Those run only when the user granted this tool.
+    needs_grant = False
 
     def __init__(self, **overrides):
         # Instance attributes shadow the methods below, so a fake needs no subclass.
@@ -196,6 +214,12 @@ class Checker:
         if not self.applies(target):
             return Outcome(SKIPPED, note=L("does not apply to this target",
                                            "не применима к этой цели"))
+        if self.needs_grant and not _GRANTED:
+            # Installed and applicable, but it imports plugins named in the
+            # repository's own config — that is the folder running code.
+            return Outcome(SKIPPED, note=L(
+                "needs /allow diagnostics: it loads the project's own config",
+                "нужен /allow diagnostics: он подхватывает настройки самого проекта"))
         ok, reason = self.probe(target)
         if not ok:
             return Outcome(MISSING, note=reason)
@@ -229,62 +253,65 @@ class Checker:
 
 
 class SyntaxChecker(Checker):
-    """`python -m py_compile` for a file, `-m compileall` for a directory.
+    """Compile every Python file in-process — no subprocess, and no byte-code.
 
-    Always available: it is stdlib, and it alone makes the tool worth shipping.
+    `py_compile` writes `__pycache__`, and `compileall` exists precisely to write
+    it, so the one checker that always runs would dirty the user's tree and made
+    this tool a writer. `compile()` on the source text gives the same verdict with
+    no side effect: it never executes the file, so nothing the repository contains
+    is run here either.
     """
     name = "syntax"
 
     def applies(self, target: Path) -> bool:
-        if target.is_dir():
-            return True
-        return target.suffix.lower() in (".py", ".pyw")
+        return target.is_dir() or target.suffix.lower() in (".py", ".pyw", ".pyi")
 
-    def argv(self, target: Path) -> list[str]:
-        if target.is_dir():
-            # -q keeps the listing chatter out but leaves the error blocks.
-            return [sys.executable, "-m", "compileall", "-q", str(target)]
-        return [sys.executable, "-m", "py_compile", str(target)]
+    def check(self, target: Path, timeout: int) -> "Outcome":
+        if not self.applies(target):
+            return Outcome(SKIPPED, note=L("not a Python file", "это не Python-файл"))
+        files = _python_files(target)
+        if not files:
+            return Outcome(SKIPPED, note=L("no Python file here", "здесь нет Python-файлов"))
+        found = []
+        for path in files:
+            try:
+                source = path.read_bytes()
+            except OSError as exc:
+                found.append(Finding(path=_display(str(path)), line="1", severity="error",
+                                     message=L(f"cannot be read: {exc.strerror or exc}",
+                                               f"не читается: {exc.strerror or exc}"),
+                                     checker=self.name))
+                continue
+            try:
+                compile(source, str(path), "exec")
+            except SyntaxError as exc:
+                found.append(Finding(
+                    path=_display(str(path)), line=str(getattr(exc, "lineno", 1) or 1),
+                    col=str(getattr(exc, "offset", "") or ""), severity="error",
+                    message=f"{exc.__class__.__name__}: {getattr(exc, 'msg', exc)}",
+                    checker=self.name))
+            except ValueError as exc:       # a NUL byte, a broken encoding cookie
+                found.append(Finding(
+                    path=_display(str(path)), line="1", severity="error",
+                    message=f"{exc.__class__.__name__}: {exc}", checker=self.name))
+        return Outcome(FINDINGS, findings=found) if found else Outcome(CLEAN)
 
-    _FILE_RE = re.compile(r'File "(?P<path>.*)", line (?P<line>\d+)'
-                          r'(?:, col (?P<col>\d+))?')
-    _ERR_RE = re.compile(r'^(?:\*\*\*\s*)?(?P<kind>\w*(?:Error|Exception)):\s+(?P<msg>.+)$')
-    _SORRY_RE = re.compile(r'(?P<kind>\w*(?:Error|Exception)):\s+(?P<msg>.*?)\s+'
-                           r'\((?P<path>.+), line (?P<line>\d+)\)')
 
-    def parse(self, stdout, stderr, rc, target):
-        text = (stderr or "") + "\n" + (stdout or "")
-        lines = text.splitlines()
-        found, seen = [], set()
-        for i, line in enumerate(lines):
-            m = self._FILE_RE.search(line)
-            if not m:
-                continue
-            message, kind = "", "SyntaxError"
-            for nxt in lines[i + 1:i + 5]:
-                em = self._ERR_RE.match(nxt.strip())
-                if em:
-                    kind, message = em.group("kind"), em.group("msg").strip()
-                    break
-            key = (m.group("path"), m.group("line"), message)
-            if key in seen:
-                continue
-            seen.add(key)
-            found.append(Finding(
-                path=_display(m.group("path")), line=m.group("line"),
-                col=m.group("col") or "", severity="error",
-                message=f"{kind}: {message}".strip(": "), checker=self.name))
-        for sm in self._SORRY_RE.finditer(text):
-            key = (sm.group("path"), sm.group("line"), sm.group("msg"))
-            if key in seen:
-                continue
-            seen.add(key)
-            found.append(Finding(
-                path=_display(sm.group("path")), line=sm.group("line"),
-                severity="error",
-                message=f"{sm.group('kind')}: {sm.group('msg').strip()}",
-                checker=self.name))
-        return found
+def _python_files(target: Path) -> list:
+    """The .py files under a target, with the generated directories left out."""
+    skip = {"__pycache__", ".venv", "venv", "node_modules", ".git", "build", "dist",
+            ".mypy_cache", ".ruff_cache", ".beeagent"}
+    if target.is_file():
+        return [target]
+    found = []
+    for root, dirs, files in os.walk(target):
+        dirs[:] = [d for d in dirs if d not in skip]
+        for name in files:
+            if name.lower().endswith((".py", ".pyw", ".pyi")):
+                found.append(Path(root) / name)
+            if len(found) >= MAX_SYNTAX_FILES:
+                return found
+    return found
 
 
 class RuffChecker(Checker):
@@ -296,7 +323,7 @@ class RuffChecker(Checker):
         return target.is_dir() or target.suffix.lower() in (".py", ".pyw", ".pyi")
 
     def argv(self, target: Path) -> list[str]:
-        return [sys.executable, "-m", "ruff", "check", "--output-format", "json", str(target)]
+        return [sys.executable, "-m", "ruff", "check", "--no-cache", "--output-format", "json", str(target)]
 
     def crash_code(self, rc: int) -> bool:
         return rc >= 2          # ruff: 1 = findings, >=2 = operational error
@@ -356,6 +383,9 @@ class PyflakesChecker(Checker):
 
 
 class MyPyChecker(Checker):
+    # mypy imports plugin modules named in the repository's own config, so running
+    # it is running something the folder chose. Needs the grant.
+    needs_grant = True
     """`python -m mypy --no-error-summary` — `path:line: severity: message [code]`."""
     name = "mypy"
     module = "mypy"
@@ -367,7 +397,7 @@ class MyPyChecker(Checker):
         return target.is_dir() or target.suffix.lower() in (".py", ".pyw", ".pyi")
 
     def argv(self, target: Path) -> list[str]:
-        return [sys.executable, "-m", "mypy", "--no-error-summary", str(target)]
+        return [sys.executable, "-m", "mypy", "--no-incremental", "--no-error-summary", str(target)]
 
     def crash_code(self, rc: int) -> bool:
         return rc >= 2
@@ -386,6 +416,8 @@ class MyPyChecker(Checker):
 
 
 class TscChecker(Checker):
+    # tsconfig is read from the repository too; same reasoning as mypy.
+    needs_grant = True
     """`npx --no-install tsc --noEmit -p <tsconfig>` for a TypeScript project.
 
     Runs only when a `tsconfig.json` exists next to the target *and* a tsc is
@@ -498,12 +530,18 @@ class DiagnosticsTool(BaseTool):
         },
         "required": [],
     }
-    # It runs programs, so it needs an explicit grant even though it edits no
-    # source file of yours. See `writes_files` below for why it is still True.
-    writes_files = True
+    # Nothing is written any more: the syntax pass compiles in-process, ruff and
+    # mypy are told not to cache. It stays `/allow`-free, but the checkers that
+    # load a repo's own config (mypy plugins, tsconfig) are skipped until the user
+    # grants the tool — so out of the box it reads code and runs none of it.
+    writes_files = False
+
+    def is_safe(self) -> bool:
+        return True
 
     def execute(self, path: str = "", tool: str = "", timeout=DEFAULT_TIMEOUT) -> ToolResult:
         seconds = _clamp_timeout(timeout)
+        set_granted(bool(getattr(self, "granted", False)))
 
         raw = path if str(path or "").strip() else "."
         target, refusal = guard(raw, "diagnostics")
@@ -570,12 +608,6 @@ class DiagnosticsTool(BaseTool):
                          f"установленные."),
                 error=True, metadata={"available": names})
         return [c for c in CHECKERS if c.name == wanted]
-
-    def is_safe(self) -> bool:
-        # It executes programs found on PATH with arguments built from a path the
-        # model typed, so it is not a read-only tool: `/allow diagnostics` first.
-        return False
-
 
 def _clamp_timeout(value) -> int:
     """Fit the model's `timeout` into [MIN, MAX]; a bad value is the default.

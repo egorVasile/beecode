@@ -223,7 +223,10 @@ def test_classic_text_parsers(checker, stdout, expect, tmp_path, monkeypatch):
     obj = {"pyflakes": D.PyflakesChecker, "mypy": D.MyPyChecker}[checker]()
     monkeypatch.setattr(D, "CHECKERS", [obj])
 
-    result = DiagnosticsTool().execute("any.py")
+    tool = DiagnosticsTool()
+    if checker == "mypy":
+        tool.granted = True       # mypy reads the project's own config, so it is gated
+    result = tool.execute("any.py")
 
     assert expect in result.output, result.output
 
@@ -347,12 +350,37 @@ def test_execute_passes_the_clamped_timeout_to_checkers(tmp_path, monkeypatch):
 
 # ---- flags and i18n ---------------------------------------------------------
 
-def test_flags_require_a_grant_and_are_honest_about_the_disk():
+def test_the_tool_writes_nothing_and_gates_what_loads_project_config():
     tool = DiagnosticsTool()
-    # It runs programs, so it needs /allow; and py_compile/compileall/mypy leave
-    # __pycache__/ .mypy_cache__ bytes behind, so writes_files is the honest True.
-    assert tool.is_safe() is False
-    assert tool.writes_files is True
+    # The syntax pass compiles in-process and ruff/mypy are told not to cache, so
+    # no checker run leaves a byte in the user's tree: this is a reader, like grep.
+    assert tool.is_safe() is True
+    assert tool.writes_files is False
+    # mypy and tsc import plugins named by the repository's own config — that is
+    # the folder running code — so they need the grant, and say so when refused.
+    assert D.MyPyChecker.needs_grant is True
+    assert D.TscChecker.needs_grant is True
+    assert D.RuffChecker.needs_grant is False
+
+
+def test_a_config_loading_checker_is_skipped_not_silently_dropped(tmp_path, monkeypatch):
+    """`tool="mypy"` without a grant must not read as "no problems found"."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "any.py").write_text("x = 1\n", encoding="utf-8")
+    ran = []
+    monkeypatch.setattr(D, "run_argv_text",
+                        lambda argv, timeout=60: (ran.append(list(argv)), "", "", 0)[1:])
+    monkeypatch.setattr(D, "_module_available", lambda name: True)
+    monkeypatch.setattr(D, "CHECKERS", [_fake("syntax", D.CLEAN), D.MyPyChecker()])
+
+    refused = DiagnosticsTool().execute("any.py")
+    assert ran == [], "mypy must not run without the grant"
+    assert any("mypy" in str(item) for item in refused.metadata["skipped"]), refused.output
+
+    granted = DiagnosticsTool()
+    granted.granted = True
+    granted.execute("any.py")
+    assert ran and any("mypy" in " ".join(a) for a in ran), ran
 
 
 def test_verdict_language_follows_i18n(tmp_path, monkeypatch):
@@ -408,7 +436,9 @@ def test_tsc_runs_with_no_install_and_parses(tmp_path, monkeypatch):
     monkeypatch.setattr(D, "_tsc_launcher_available", lambda: (True, ""))
     monkeypatch.setattr(D, "CHECKERS", [_fake("syntax", D.CLEAN), D.TscChecker()])
 
-    result = DiagnosticsTool().execute("any.py")
+    tool = DiagnosticsTool()
+    tool.granted = True          # tsc reads the project's tsconfig
+    result = tool.execute("any.py")
 
     assert launched, "tsc should have run for a project with a tsconfig.json"
     argv = launched[0]
