@@ -596,6 +596,31 @@ def test_a_legacy_colour_dict_skin_still_resolves(host):
     assert skins.hooks_of(retro) == ()                     # no hooks, no calls
 
 
+def test_a_dict_of_hooks_is_a_skin_and_not_a_colour_table(host):
+    """`hooks()` is how a pack hands its lifecycle over — the host has to read it.
+
+    Read as a legacy dict it produced a skin with no hooks: registered, switched
+    to, painting nothing, saying nothing. Both shipped reference packs arrived
+    through exactly this route.
+    """
+    drawn = []
+
+    def on_frame(dt, painter):
+        drawn.append(dt)
+
+    skins.register("fromdict", {"SURFACES": ("status",),
+                                "on_frame": on_frame,
+                                "on_status": lambda default: "theirs"})
+    record = skins.stats("fromdict")
+    assert record["kind"] != "legacy", record
+    assert sorted(record["hooks"]) == ["on_frame", "on_status"], record
+    assert skins.switch("fromdict") == ""
+    assert skins.surfaces()["held"] == ["status"], skins.surfaces()
+    skins.frame(None, 0.08)
+    assert drawn == [0.08], drawn
+    assert skins.status_text("ours") == "theirs"
+
+
 def test_the_shipped_skins_still_work_and_the_baseline_follows_them(host):
     """BeeCode's own skins go through `ui/skin.py`; the fallback reads it live.
 

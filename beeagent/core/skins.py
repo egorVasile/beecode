@@ -195,7 +195,29 @@ FORBIDDEN_NAMES = frozenset({
     "globals", "locals", "breakpoint", "input",
 })
 
-HOOKS = ("on_init", "on_frame", "on_event", "on_output")
+HOOKS = ("on_init", "on_surfaces", "on_frame", "on_event", "on_output",
+         "on_status", "on_spinner", "on_thinking", "on_stream", "on_hud")
+
+#: The pieces of the interface a skin may take over, and the hook that answers for
+#: each. A surface a skin has not claimed is drawn by BeeCode exactly as it always
+#: was: taking over is asked for, never assumed, so `/skins` can say in one line
+#: how much of the screen the skin on it is responsible for.
+SURFACES = {
+    "status": "on_status",        # the state line under the prompt
+    "spinner": "on_spinner",      # the waiting line before an answer begins
+    # ...`on_spinner` is handed the monotonic clock rather than a tick count, so a
+    # skin can phase anything it likes without having to remember when it last ran.
+    "thinking": "on_thinking",    # the reasoning block, while it is on screen
+    "stream": "on_stream",        # the answer text as each piece arrives
+    "hud": "on_hud",              # rows the frame loop paints for the skin
+}
+#: Late calls on one surface that are tolerated before the skin loses that surface
+#: and nothing else. `on_frame` has its own clock; a per-token hook that takes
+#: 30 ms must not slow the interface down three hundred times a minute.
+SURFACE_GRACE_CALLS = 3
+#: Rows a skin may reserve for its HUD, whatever it asks for. The screen is
+#: shared: an answer still has to be readable, so half of it is not rentable.
+HUD_MAX_ROWS = 4
 
 # =========================================================== budget policy ====
 
@@ -527,6 +549,16 @@ class Entry:
     unknown: dict = field(default_factory=dict)
     errors: int = 0
     outputs: int = 0
+    #: The surfaces this skin took over, in the order it asked for them.
+    claims: tuple = ()
+    #: ...and the ones it asked for and was refused, each with its reason.
+    claim_refusals: dict = field(default_factory=dict)
+    #: Surfaces lost after they misbehaved: name -> why.
+    dropped: dict = field(default_factory=dict)
+    surface_calls: dict = field(default_factory=dict)
+    surface_overruns: dict = field(default_factory=dict)
+    surface_errors: dict = field(default_factory=dict)
+    hud_rows: int = 1
 
     @property
     def refused(self) -> bool:
@@ -553,6 +585,10 @@ class Entry:
             "unknown_events": dict(self.unknown),
             "errors": self.errors,
             "outputs": self.outputs,
+            "claims": list(self.claims),
+            "refused_claims": dict(self.claim_refusals),
+            "dropped": dict(self.dropped),
+            "hud_rows": self.hud_rows,
         }
 
 
@@ -574,9 +610,21 @@ _BUDGET = {"frame_ms": FRAME_BUDGET_MS, "overruns": DEMOTE_AFTER_OVERRUNS,
 
 
 def configure(frame_budget_ms=None, demote_after_overruns=None,
-              hard_cap_factor=None, event_budget_ms=None) -> dict:
+              hard_cap_factor=None, event_budget_ms=None, **report_names) -> dict:
     """Move the budget, and report what it is. A skin cannot call this: the
-    allow-list gives it no route to this module's namespace."""
+    allow-list gives it no route to this module's namespace.
+
+    The names `budget()` reports (`frame_ms`, `overruns`, `hard_factor`,
+    `event_ms`) are accepted too, so a number read out of the host can be handed
+    back unchanged — a report that cannot be fed back is half an API, and the
+    tests that move the clock and restore it are the first callers to notice.
+    """
+    frame_budget_ms = report_names.pop("frame_ms", frame_budget_ms)
+    demote_after_overruns = report_names.pop("overruns", demote_after_overruns)
+    hard_cap_factor = report_names.pop("hard_factor", hard_cap_factor)
+    event_budget_ms = report_names.pop("event_ms", event_budget_ms)
+    if report_names:
+        raise TypeError(f"unknown budget names: {sorted(report_names)}")
     if frame_budget_ms is not None:
         _BUDGET["frame_ms"] = max(0.0, float(frame_budget_ms))
     if demote_after_overruns is not None:
@@ -780,6 +828,12 @@ def register(name: str, skin=None, description: str = "", source=None,
         skin = loaded
         entry.module_name = module_name
     previous = _REGISTRY.get(clean)
+    if isinstance(skin, dict) and any(key in HOOKS for key in skin):
+        # A pack's `hooks()` is a mapping, and `getattr` on a dict answers nothing:
+        # handed over this way every lifecycle hook was invisible, so `/skins`
+        # listed a skin that drew no frame and owned no surface. A colour dict has
+        # no hook names in it and stays the legacy thing it is.
+        skin = types.SimpleNamespace(**skin)
     entry.skin = skin
     _REGISTRY[clean] = entry
     if previous is not None and _ACTIVE == clean:
@@ -879,10 +933,15 @@ def switch(name: str) -> str:
     _ACTIVE = entry.name
     _COUNTS["switches"] += 1
     _LAST_FRAME = time.monotonic()
+    entry.dropped = {}
+    entry.surface_calls = {}
+    entry.surface_overruns = {}
+    entry.surface_errors = {}
     _apply_legacy(entry)
     _warm()
     init = _hook(entry.skin, "on_init")
     if init is None:
+        _resolve_claims(entry)
         return ""
     started = time.perf_counter()
     try:
@@ -896,7 +955,238 @@ def switch(name: str) -> str:
     # slow `on_event` — once per token — does.
     _guard_event(entry, (time.perf_counter() - started) * 1000.0, "on_init",
                  demote=False)
+    # Asked for after `on_init`, because a skin may decide what it owns from the
+    # terminal it was just handed.
+    _resolve_claims(entry)
     return ""
+
+
+# ------------------------------------------------------------------ surfaces --
+
+def _wanted(entry):
+    """What the skin asks to own: the answer of `on_surfaces()`, or its SURFACES."""
+    hook = _hook(entry.skin, "on_surfaces")
+    if hook is not None:
+        started = time.perf_counter()
+        try:
+            asked = _call(hook, (Context(entry.name),))
+        except Exception as e:
+            return [], L(f"on_surfaces raised {type(e).__name__}: {_flat(e)}",
+                         f"on_surfaces поднял {type(e).__name__}: {_flat(e)}")
+        _guard_event(entry, (time.perf_counter() - started) * 1000.0, "on_surfaces",
+                     demote=False)
+        return list(asked or []), ""
+    asked = getattr(entry.skin, "SURFACES", None)
+    if asked is None:
+        return [], ""
+    return list(asked or []), ""
+
+
+def _hud_rows(entry) -> int:
+    """How many rows the HUD strip gets: the skin asks, the screen decides."""
+    asked = getattr(entry.skin, "HUD_ROWS", None)
+    if asked is None:
+        hook = _hook(entry.skin, "hud_rows")
+        asked = None
+        if callable(hook):
+            try:
+                asked = _call(hook, ())
+            except Exception:
+                asked = None
+    try:
+        wanted = int(asked or 1)
+    except (TypeError, ValueError):
+        wanted = 1
+    if asked is not None and wanted > HUD_MAX_ROWS:
+        # Said out loud rather than quietly drawing fewer rows than the skin
+        # believes it reserved: a skin that laid its picture out for four rows and
+        # got two has it cut off, and only an honest notice explains the cut.
+        cut = L(f"hud asked for {wanted} rows, the screen gives {HUD_MAX_ROWS}",
+                f"hud просит {wanted} строк, экран даёт {HUD_MAX_ROWS}")
+        if entry.notice != cut:
+            entry.notice = entry.notice or cut
+            _announce(cut)   # a picture laid out for four rows and given two is cut
+    return max(1, min(HUD_MAX_ROWS, wanted))
+
+
+def _resolve_claims(entry) -> None:
+    """Keep the surfaces the skin both asked for and can actually answer for."""
+    asked, refusal = _wanted(entry)
+    claims, denied = [], {}
+    if refusal:
+        denied["*"] = refusal
+    for name in asked:
+        word = str(name or "").strip().lower()
+        if word not in SURFACES:
+            denied[word or "?"] = L("not a surface — BeeCode has: "
+                                    + ", ".join(sorted(SURFACES)),
+                                    "это не поверхность; есть: "
+                                    + ", ".join(sorted(SURFACES)))
+            continue
+        if not callable(_hook(entry.skin, SURFACES[word])):
+            denied[word] = L(f"it claims {word} but does not define {SURFACES[word]}()",
+                             f"заявляет {word}, но не определяет {SURFACES[word]}()")
+            continue
+        if word not in claims:
+            claims.append(word)
+    entry.claims = tuple(claims)
+    entry.claim_refusals = denied
+    entry.hud_rows = _hud_rows(entry) if "hud" in claims else 1
+    for word, why in denied.items():
+        entry.notice = entry.notice or f"{word}: {why}"
+
+
+def needs_tick() -> bool:
+    """Whether the skin on screen has anything to do on a timer.
+
+    The TUI asks this before it starts its frame clock: an interface that paints
+    twelve times a second for a skin with no animation is a battery question nobody
+    was asked, and a spinner that does not move is not a style, it is a bug.
+    """
+    entry = _active_entry()
+    if entry is None or entry.demoted:
+        return False
+    animates = _hook(entry.skin, "on_frame") is not None
+    return bool(animates or owns("hud", entry.name) or owns("spinner", entry.name))
+
+
+def owns(surface: str, skin: str = "") -> bool:
+    """Whether the skin on screen (or `skin`) holds that surface right now."""
+    entry = _REGISTRY.get(skin or "") if skin else _active_entry()
+    if entry is None:
+        return False
+    word = (surface or "").strip().lower()
+    return word in (entry.claims or ()) and word not in (entry.dropped or {})
+
+
+def surfaces(skin: str = "") -> dict:
+    """The claim report: held, refused, lost. `/skins` and the doctor read this."""
+    entry = _REGISTRY.get(skin or "") if skin else _active_entry()
+    if entry is None:
+        return {"held": [], "refused": {}, "dropped": {}, "hud_rows": 0}
+    return {"held": [word for word in entry.claims if word not in entry.dropped],
+            "refused": dict(entry.claim_refusals), "dropped": dict(entry.dropped),
+            "hud_rows": entry.hud_rows if "hud" in entry.claims else 0}
+
+
+def _drop_surface(entry, word: str, why: str) -> None:
+    """Take one surface away, and tell the user which one and why."""
+    if entry is None or word in entry.dropped:
+        return
+    entry.dropped[word] = why
+    entry.notice = entry.notice or L(
+        f"skin “{entry.name}” no longer draws the {word} line: {why}",
+        f"скин «{entry.name}» больше не рисует строку «{word}»: {why}")
+    _announce(entry.notice)
+
+
+def ask(surface: str, default: str = "", *args) -> str:
+    """The guarded call: a surface nobody holds answers with the built-in text.
+
+    `None` from the hook means "keep yours"; a string — even an empty one — is the
+    skin's own answer, because "show nothing here" is something a skin may want
+    correctly and the host has no business second-guessing. Any other return value
+    is its mistake, and the built-in text stands.
+    """
+    word = (surface or "").strip().lower()
+    entry = _active_entry()
+    if entry is None or word not in (entry.claims or ()) or word in (entry.dropped or {}):
+        return default
+    hook = _hook(entry.skin, SURFACES.get(word, ""))
+    if hook is None:
+        _drop_surface(entry, word, L("the hook is gone", "хук исчез"))
+        return default
+    started = time.perf_counter()
+    try:
+        # The host's own wording travels to the hook as its first argument, so a
+        # skin can keep it, wrap it, or replace it without asking for state.
+        answer = _call(hook, (default,) + tuple(args))
+    except Exception as e:
+        entry.surface_errors[word] = entry.surface_errors.get(word, 0) + 1
+        _drop_surface(entry, word, L(f"{SURFACES[word]} raised {type(e).__name__}: "
+                                     f"{_flat(e)}",
+                                     f"{SURFACES[word]} поднял {type(e).__name__}: "
+                                     f"{_flat(e)}"))
+        return default
+    elapsed = (time.perf_counter() - started) * 1000.0
+    entry.surface_calls[word] = entry.surface_calls.get(word, 0) + 1
+    if elapsed > _BUDGET["event_ms"]:
+        entry.surface_overruns[word] = entry.surface_overruns.get(word, 0) + 1
+        _COUNTS["overruns"] += 1
+        if elapsed >= _BUDGET["frame_ms"] * _BUDGET["hard_factor"]:
+            # Once per token on a hot path, this is a hang and not a slow frame:
+            # the skin loses the surface and, being wrong about the clock at all,
+            # stops drawing altogether.
+            _drop_surface(entry, word, L(f"{SURFACES[word]} took {elapsed:.1f} ms",
+                                         f"{SURFACES[word]} занял {elapsed:.1f} мс"))
+            _demote(entry, L(f"{SURFACES[word]} took {elapsed:.1f} ms on the caller's "
+                             f"thread",
+                             f"{SURFACES[word]} занял {elapsed:.1f} мс в нити вызывающего"))
+            return default
+        if entry.surface_overruns[word] > SURFACE_GRACE_CALLS:
+            _drop_surface(entry, word, L(
+                f"{SURFACES[word]} went over {int(_BUDGET['event_ms'])} ms "
+                f"{entry.surface_overruns[word]} times",
+                f"{SURFACES[word]} превысил {int(_BUDGET['event_ms'])} мс "
+                f"{entry.surface_overruns[word]} раз"))
+            return default
+    if answer is None:
+        return default
+    if not isinstance(answer, str):
+        _drop_surface(entry, word, L(f"{SURFACES[word]} returned a "
+                                     f"{type(answer).__name__}, not text",
+                                     f"{SURFACES[word]} вернул "
+                                     f"{type(answer).__name__}, а не текст"))
+        return default
+    return answer
+
+
+def status_text(default: str = "") -> str:
+    """The state line, as the skin on it wants it worded."""
+    return ask("status", default)
+
+
+def spinner_text(default: str = "", clock: float | None = None) -> str:
+    """The waiting line. `clock` is the monotonic now, so a skin can phase itself."""
+    if clock is None:
+        clock = time.monotonic()
+    return ask("spinner", default, clock)
+
+
+def thinking_text(default: str = "") -> str:
+    """The reasoning block while it is on the screen."""
+    return ask("thinking", default)
+
+
+def stream_text(default: str = "", done: bool = False) -> str:
+    """One arriving piece of the answer, on its way to the log.
+
+    `done` marks the last call for this answer, so a skin that buffers characters
+    to animate them can flush what it held.
+    """
+    return ask("stream", default, done)
+
+
+def hud_frame(painter=None, dt: float = 0.0) -> bool:
+    """Let the skin paint its reserved rows. True when it did."""
+    if not owns("hud"):
+        return False
+    entry = _active_entry()
+    started = time.perf_counter()
+    try:
+        _call(_hook(entry.skin, "on_hud"), (painter, dt))
+    except Exception as e:
+        _drop_surface(entry, "hud", L(f"on_hud raised {type(e).__name__}: {_flat(e)}",
+                                      f"on_hud поднял {type(e).__name__}: {_flat(e)}"))
+        return False
+    elapsed = (time.perf_counter() - started) * 1000.0
+    entry.surface_calls["hud"] = entry.surface_calls.get("hud", 0) + 1
+    if elapsed > _BUDGET["frame_ms"]:
+        entry.surface_overruns["hud"] = entry.surface_overruns.get("hud", 0) + 1
+        if entry.surface_overruns["hud"] >= SURFACE_GRACE_CALLS:
+            _drop_surface(entry, "hud", L(f"on_hud took {elapsed:.1f} ms repeatedly",
+                                          f"on_hud брал {elapsed:.1f} мс снова и снова"))
+    return True
 
 
 def _warm() -> None:
@@ -1035,6 +1325,39 @@ class Context:
 
     def stats(self) -> dict:
         return stats(self.skin)
+
+    def owns(self, surface: str) -> bool:
+        """Whether this skin holds that surface — it can lose one while running."""
+        return owns(surface, self.skin)
+
+    def language(self) -> str:
+        """"en" or "ru": the language the user reads the interface in."""
+        try:
+            from beeagent.i18n import get_lang
+
+            return get_lang()
+        except Exception:
+            return "en"
+
+    def translate(self, english: str, russian: str) -> str:
+        """Words in the user's language.
+
+        `beeagent.i18n` is not on the import allow-list — a stranger's file gets
+        the host's words through this call instead of reaching into the module.
+        """
+        try:
+            from beeagent.i18n import L
+
+            return L(english, russian)
+        except Exception:
+            return str(english)
+
+    def claims(self) -> list:
+        return list(surfaces(self.skin)["held"])
+
+    def hud_rows(self) -> int:
+        """How many rows the host reserved for its HUD, 0 without the claim."""
+        return surfaces(self.skin)["hud_rows"]
 
 
 _Context = Context          # the older name; a skin may hold either
@@ -1440,6 +1763,19 @@ def listing() -> str:
                          f"цвета/слоты ({chosen})" if chosen else "цвета/слоты")
             else:
                 note = hooks
+                held = [word for word in entry.claims if word not in entry.dropped]
+                if held:
+                    # The line a skin is responsible for is the interesting part of
+                    # a skin that draws nothing but text: without it, /skins says
+                    # "four hooks" and the user cannot tell a colour theme from a
+                    # skin that redrew the answer.
+                    note = L(f"{note} · draws {', '.join(held)}"
+                             + (f" (+{entry.hud_rows} hud rows)" if "hud" in held else ""),
+                             f"{note} · рисует {', '.join(held)}"
+                             + (f" (+{entry.hud_rows} строк hud)" if "hud" in held else ""))
+                lost = ", ".join(f"{word}: {why}" for word, why in entry.dropped.items())
+                if lost:
+                    note = f"{note} · {L('lost', 'потеряно')} {lost}"
             if entry.description:
                 note = f"{entry.description} · {note}"
         rows.append((mark, entry.name, note, _tally(entry)))

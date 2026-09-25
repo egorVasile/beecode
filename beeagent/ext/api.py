@@ -156,6 +156,23 @@ class ExtensionAPI:
 
         return skin.choose(slot, name, source=f"plugin:{self.plugin}")
 
+    def skin_hooks(self, name: str, hooks: dict, description: str = "") -> bool:
+        """Register a programmable skin: the lifecycle, not a slot.
+
+        `skin()` offers one *piece* of the interface to the legacy slot table; this
+        hands the whole `on_init`/`on_frame`/`on_event`/surface set to the skin
+        host, which is what a pack that animates the screen needs. True when the
+        host took it. The pack still contributes a row for `/extensions` itself,
+        so this records nothing.
+        """
+        from beeagent.core import skins
+
+        try:
+            entry = skins.register(name, hooks, description=description)
+        except Exception:
+            return False
+        return not entry.refused
+
 
 def _wrap(handler):
     """Adapt `handler(ctx, args)` to the command contract used by the REPL."""
