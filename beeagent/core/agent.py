@@ -27,6 +27,7 @@ from beeagent.tools.edit import EditTool
 from beeagent.tools.bash import BashTool
 from beeagent.tools.grep import GrepTool
 from beeagent.tools.glob_tool import GlobTool
+from beeagent.tools.diagnostics import DiagnosticsTool
 from beeagent.tools.diagram import DiagramTool
 from beeagent.tools.list_dir import ListDirectoryTool
 from beeagent.tools.web_fetch import WebFetchTool
@@ -197,7 +198,8 @@ class Agent:
         self.tools = ToolRegistry()
         for tool_cls in [ReadTool, WriteTool, EditTool, BashTool,
                          GrepTool, GlobTool, ListDirectoryTool, WebSearchTool,
-                         WebFetchTool, GitTool, TodoTool, DiagramTool]:
+                         WebFetchTool, GitTool, TodoTool, DiagramTool,
+                         DiagnosticsTool]:
             self.tools.register(tool_cls())
 
         self.economy = EconomyManager(

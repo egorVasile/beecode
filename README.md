@@ -303,6 +303,7 @@ plugins and MCP servers):
 | `git` | Run git (`status`, `diff`, `log`, `commit`…) — the argv is parsed and guarded, so this is not a shell wearing a git hat |
 | `web_search` | Search the web. **Needs `/allow`** even in `ask` mode: the query leaves the machine, and read-then-search is an exfiltration pair (`WebSearchTool.is_safe`) |
 | `web_fetch` | Read one http(s) page as text: title kept, scripts and styles dropped, size capped out loud. A 404, a binary file, an internal address or a non-http scheme are named and refused rather than returned empty. **Needs `/allow`**, like `web_search` (`WebFetchTool.is_safe`) |
+| `diagnostics` | Run the checkers that are already installed and return `path:line severity message (checker)`. Syntax needs nothing third-party; ruff / pyflakes / mypy / tsc are used only when present and are named as missing when not — so "never checked" can never read as "no problems". **Needs `/allow`** (it runs programs and leaves `__pycache__` behind) |
 | `todo` | Keep a task list while working — and it writes it, to `.beeagent/todo.json` |
 | `skill` | Load the full instructions of an installed skill. Registered by the built-in skill loader (`SkillTool` in `beeagent/plugins/loader.py`), not by the core tool loop, so `/extensions` does not list it as a plugin |
 | `diagram` | Draw boxes and arrows, and **return the picture as text**, so the model reads back what it drew and fixes the overlaps itself; the same lines go to an `.svg` beside it — a plain name inside the working directory, `diagram.svg` by default |
@@ -714,7 +715,7 @@ what is allowed — you do.** A reply from a free endpoint is a guess; guessing
 | --- | --- | --- |
 | `ask` (default) | Readers: `read`, `grep`, `glob`, `list_directory`, `skill` — plus `todo` and `diagram`, which need no grant but each write one file of their own (`.beeagent/todo.json`, a `.svg`) | `/permissions ask` |
 | `auto` | Everything | `/permissions auto` |
-| `readonly` | Only the readers — `todo` and `diagram` are refused here too, and so is any tool you granted | `/permissions readonly` |
+| `readonly` | Only the readers — `todo`, `diagram` and `diagnostics` are refused here too, and so is any tool you granted | `/permissions readonly` |
 
 `web_search` and `web_fetch` are in none of those lists: `is_safe()` returns
 `False` for them on purpose, because the request leaves the machine and a tool
