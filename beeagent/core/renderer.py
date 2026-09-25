@@ -952,10 +952,238 @@ class Painter:
             return None
         return token
 
+    # -- reading back ------------------------------------------------------
+
+    def cell(self, x, y):
+        """The cell at (x, y), or None off the grid. A skin that reacts to what is
+        already drawn — glow over a letter, avoid a glyph — asks instead of
+        remembering."""
+        try:
+            return self.grid.cell(int(x), int(y))
+        except (TypeError, ValueError):
+            return None
+
+    # -- widgets: each one is a few `blit`s with the arithmetic done ---------
+
+    def draw_bar(self, x, y, width, fraction, color=None, bg=None,
+                 filled="█", empty="░") -> int:
+        """A progress bar as `width` cells. Returns the cells written."""
+        # The values go through unconverted: `draw_ramp` is where a width that is
+        # not a number turns into a warning instead of a raised ValueError.
+        return self.draw_ramp(x, y, width, color, color, filled=filled,
+                              empty=empty, fraction=fraction, bg=bg, style=None)
+
+    def draw_ramp(self, x, y, width, color_a, color_b, filled="█", empty=" ",
+                  fraction: float = 1.0, bg=None, style=None) -> int:
+        """`width` cells coloured from `color_a` to `color_b`.
+
+        `fraction` says how far across the ramp is filled: a bar whose colour runs
+        the whole width and whose length is the progress, which is one loop instead
+        of a table the skin has to keep.
+        """
+        try:
+            width, x, y = int(width), int(x), int(y)
+            part = min(1.0, max(0.0, float(fraction)))
+        except (TypeError, ValueError):
+            self.warn("a bar was asked for with values it cannot use",
+                      "полосу запросили со значениями, которые нельзя применить")
+            return 0
+        painted = 0
+        full = int(round(width * part))
+        for index in range(width):
+            token = blend(color_a, color_b, index / max(1, width - 1))
+            if index < full:
+                cells, _lost = self.grid.blit(x + index, y, filled, fg=token, bg=bg,
+                                              style=style)
+            elif filled and empty != filled:
+                cells, _lost = self.grid.blit(x + index, y, empty, fg=token, bg=bg,
+                                              style=style)
+            else:
+                continue
+            painted += cells
+        return painted
+
+    def draw_sparkline(self, x, y, width, values, color=None, bg=None) -> int:
+        """The last `width` numbers as one row of block glyphs, tallest = max."""
+        try:
+            numbers = [float(v) for v in (values or [])][-int(width):]
+        except (TypeError, ValueError):
+            self.warn("a sparkline was asked for values that are not numbers",
+                      "для графика переданы значения, которые не числа")
+            return 0
+        if not numbers:
+            return 0
+        top, bottom = max(numbers), min(numbers)
+        span = top - bottom or 1.0
+        written = 0
+        for index, value in enumerate(numbers):
+            step = int(round((value - bottom) / span * (len(SPARK_BLOCKS) - 1)))
+            cells, _lost = self.grid.blit(int(x) + index, int(y), SPARK_BLOCKS[step],
+                                          fg=color, bg=bg)
+            written += cells
+        return written
+
+    def draw_ticker(self, x, y, width, text, phase: float = 0.0, color=None,
+                    bg=None, style=None, gap: int = 3) -> int:
+        """A marquee: `text` scrolls right to left through `width` cells.
+
+        `phase` is anything that grows — the frame count, `time.monotonic()`, the
+        loop's own number; it is taken modulo the travel, so a skin never has to
+        remember where it stopped.
+        """
+        body = str(text or "")
+        try:
+            width, gap = int(width), max(1, int(gap))
+        except (TypeError, ValueError):
+            return 0
+        if not body or width <= 0:
+            return 0
+        strip = body + " " * gap
+        offset = int(float(phase) * len(strip)) % len(strip)
+        window = (strip * (2 + width // len(strip)))[offset:offset + width]
+        cells, _lost = self.grid.blit(int(x), int(y), window, fg=color, bg=bg,
+                                      style=style)
+        return cells
+
 
 # ---------------------------------------------------------------------------
-# Screen — alternate screen, cursor, clearing
+# widgets for text surfaces: markup, blends, easing, phases
+#
+# The four lines the skin owns as *strings* — status, spinner, thinking, stream —
+# go through Rich, which reads its colour from markup. A skin that wants a
+# shimmering status line should not have to build SGR codes or interpolate hex by
+# hand every frame, so the arithmetic lives here once.
 # ---------------------------------------------------------------------------
+
+SPARK_BLOCKS = "▁▂▃▄▅▆▇█"
+
+#: The curves a skin may name, and what each does with t in 0..1.
+EASINGS = {
+    "linear": lambda t: t,
+    "in": lambda t: t * t,
+    "out": lambda t: t * (2.0 - t),
+    "in_out": lambda t: 2.0 * t * t if t < 0.5 else -1.0 + (4.0 - 2.0 * t) * t,
+    "pulse": lambda t: abs(math.sin(t * math.pi)),
+}
+
+
+def blend(color_a, color_b, t: float) -> str:
+    """A colour between two, as `#rrggbb`. `t` is clamped, and a name either side
+    is resolved through the same table the painter uses."""
+    a = token_rgb(color_a) or token_rgb("")
+    b = token_rgb(color_b) or a
+    part = min(1.0, max(0.0, float(t)))
+    return "#%02x%02x%02x" % tuple(
+        int(round(one + (other - one) * part)) for one, other in zip(a, b))
+
+
+def ease(name: str, t: float) -> float:
+    """`t` pushed through a named curve; an unknown name is linear, not an error."""
+    try:
+        value = min(1.0, max(0.0, float(t)))
+    except (TypeError, ValueError):
+        return 0.0
+    return (EASINGS.get(str(name or "linear"), EASINGS["linear"]))(value)
+
+
+def phase(clock, period: float = 1.0) -> float:
+    """Where a cycle of `period` seconds we are, in 0..1 — wrapping included."""
+    try:
+        seconds, length = float(clock), max(0.001, float(period))
+    except (TypeError, ValueError):
+        return 0.0
+    return (seconds % length) / length
+
+
+def markup(text, fg=None, bg=None, style=None) -> str:
+    """`text` wrapped in the Rich markup for one colour and/or style.
+
+    Square brackets in the text itself are escaped: the answer a skin restyles is
+    the model's bytes, and a `[bold]` inside a quoted piece of code is data, not an
+    instruction to the terminal.
+    """
+    body = str(text if text is not None else "")
+    if not body:
+        return body
+    words = [item for item in (str(fg or "").strip(), str(bg or "").strip(),
+                               str(style or "").strip()) if item]
+    # The backslash goes in through a constant: a backslash inside an f-string
+    # expression is a syntax error on the 3.10 this project still claims to run on.
+    body = body.replace("[", "\\[")
+    if not words:
+        return body
+    return "[" + " ".join(words) + "]" + body + "[/]"
+
+
+def ramp_markup(text, color_a, color_b, style: str = "") -> str:
+    """Every character its own colour between two — a shimmer or a wave in one call."""
+    body = str(text or "")
+    if not body:
+        return ""
+    if len(body) == 1:
+        return markup(body, blend(color_a, color_b, 0.5), style=style)
+    return "".join(markup(word, blend(color_a, color_b, index / (len(body) - 1)),
+                          style=style) for index, word in enumerate(body))
+
+
+def bar_markup(fraction, width: int = 10, filled: str = "█", empty: str = "░",
+               fg=None, bg=None, label: str = "") -> str:
+    """A bar as text, for the line a terminal draws with Rich instead of a grid."""
+    try:
+        cells = max(0, int(width))
+        part = min(1.0, max(0.0, float(fraction)))
+    except (TypeError, ValueError):
+        return str(label or "")
+    full = int(round(cells * part))
+    strip = filled * full + empty * (cells - full)
+    return markup(strip + (f" {label}" if label else ""), fg, bg=bg)
+
+
+def spark_markup(values, fg=None, width: int = 0) -> str:
+    """A row of block glyphs for the last few numbers — tokens, timings, retries."""
+    try:
+        numbers = [float(v) for v in (values or [])]
+    except (TypeError, ValueError):
+        return ""
+    if not numbers:
+        return ""
+    if width and len(numbers) > int(width):
+        numbers = numbers[-int(width):]
+    top, bottom = max(numbers), min(numbers)
+    span = top - bottom or 1.0
+    row = "".join(SPARK_BLOCKS[int(round((value - bottom) / span * (len(SPARK_BLOCKS) - 1)))]
+                  for value in numbers)
+    return markup(row, fg)
+
+
+def ticker_markup(text, width: int, phase_value: float = 0.0, gap: int = 3,
+                  fg=None) -> str:
+    """A scrolling one-line strip of text, cut to `width` visible cells."""
+    body = str(text or "")
+    try:
+        cells, gap = max(0, int(width)), max(1, int(gap))
+    except (TypeError, ValueError):
+        return body[:max(0, int(width))] if width else body
+    if not body or cells <= 0:
+        return ""
+    if text_cells(body) <= cells:
+        return markup(body, fg)
+    strip = body + " " * gap
+    offset = int(float(phase_value or 0.0) * len(strip)) % len(strip)
+    window = (strip * (2 + cells // max(1, len(strip))))[offset:offset + cells]
+    return markup(window, fg)
+
+
+def blink(on: bool, text, off=None) -> str:
+    """The text, or nothing. `off=None` keeps the width with spaces, which is what
+    stops a status line from jumping when a dot appears in it."""
+    if on:
+        return str(text or "")
+    if off is None:
+        return " " * text_cells(str(text or ""))
+    return str(off or "")
+
+
 
 _ENABLE_VIRTUAL_TERMINAL = 0x0004
 

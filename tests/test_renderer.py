@@ -874,3 +874,98 @@ def test_the_grid_never_becomes_a_monster_because_the_environment_said_so():
     loop = FrameLoop(lambda p: p.draw_text(0, 0, "hi"), stream=FakeTTY(), size=(2000, 5))
     assert (loop.grid.cols, loop.grid.rows) == (R.MAX_DIM, 5)
     assert loop.run(fps=30, max_frames=1)["frames"] == 1
+
+
+# ------------------------------------------------------- widgets and tweens --
+#
+# A skin that owns a line of the interface has to build it every frame. Everything
+# here exists so that "make the status line shimmer" is one call: without these
+# helpers every skin writes the same hex arithmetic, and the ones that get it wrong
+# show colours the terminal cannot draw.
+
+def test_blend_endpoints_and_clamping():
+    assert R.blend("#000000", "#ffffff", 0.0) == "#000000"
+    assert R.blend("#000000", "#ffffff", 1.0) == "#ffffff"
+    assert R.blend("#ffcc00", "#7cb342", 2.0) == "#7cb342", "past the end holds"
+    assert R.blend("#ffcc00", "#7cb342", -1.0) == "#ffcc00"
+    assert R.blend("#ffcc00", "#7cb342", 0.5) == "#bec021"
+
+
+def test_named_curves_go_the_way_their_names_say():
+    assert R.ease("linear", 0.4) == pytest.approx(0.4)
+    assert R.ease("in", 0.5) < 0.5 and R.ease("out", 0.5) > 0.5
+    assert R.ease("in_out", 0.0) == 0.0 and R.ease("in_out", 1.0) == pytest.approx(1.0)
+    assert R.ease("pulse", 0.5) == pytest.approx(1.0)
+    assert R.ease("not-a-curve", 0.3) == pytest.approx(0.3), "an unknown name is linear"
+    assert R.ease("linear", "junk") == 0.0 and R.ease("linear", None) == 0.0
+
+
+def test_phase_wraps_instead_of_running_off_the_screen():
+    assert R.phase(0.0, 2.0) == 0.0
+    assert R.phase(1.0, 2.0) == pytest.approx(0.5)
+    assert R.phase(7.5, 2.0) == pytest.approx(0.75), "the cycle continues, not climbs"
+    assert R.phase(None) == 0.0
+
+
+def test_markup_escapes_a_bracket_because_the_text_is_the_model_s_bytes():
+    assert R.markup("a", fg="bold red") == "[bold red]a[/]"
+    assert R.markup("") == ""
+    assert R.markup("list[0]") == r"list\[0]", "no markup is read out of the payload"
+    assert R.markup("[bold] hi") == r"\[bold] hi"
+    assert R.markup("x") == "x", "no colour asked, nothing added"
+    assert R.markup("x", "red", "#0000ff", "bold") == "[red #0000ff bold]x[/]"
+
+
+def test_ramp_markup_colours_every_character_once():
+    line = R.ramp_markup("abc", "#ffcc00", "#7cb342")
+    assert line.count("[/") == 3 and line.count("[#") == 3
+    assert "#7cb342" in line and "#ffcc00" in line, "the ends are the colours asked for"
+    assert "b" in line and R.ramp_markup("", "#fff", "#000") == ""
+
+
+def test_the_text_widgets_answer_with_what_they_were_given():
+    assert R.bar_markup(0.5, 8).startswith("████░░░░")
+    assert R.bar_markup(1.0, 4, label="100%") == "████ 100%"
+    assert R.bar_markup(0.0, 4) == "░░░░"
+    assert R.bar_markup("junk", 4) == "", "a number that is not one draws nothing"
+    assert len(R.spark_markup([0, 5, 10])) == 3
+    assert R.spark_markup([]) == "" and R.spark_markup(["x"]) == ""
+    assert R.spark_markup(list(range(50)), width=6) != ""
+    assert R.ticker_markup("short", 40) == "short"
+    scrolling = R.ticker_markup("длинная строка состояния", 8, 0.25)
+    assert len(scrolling.replace("[", "").replace("]", "")) >= 8
+
+
+def test_blink_keeps_the_width_so_the_line_does_not_jump():
+    assert R.blink(True, "●") == "●"
+    assert R.blink(False, "●") == " ", "space, not nothing: the rest of the line holds"
+    assert R.blink(False, "ab") == "  " and R.blink(False, "ab", off="-") == "-"
+
+
+def test_the_painter_widgets_write_cells_and_report_the_clipped_ones():
+    painter = R.Painter(size=(20, 3), depth="truecolor")
+    assert painter.draw_bar(0, 0, 10, 0.5, color="#ffcc00") == 10
+    assert painter.grid.line(0).startswith("█████░░░░░")
+    assert painter.draw_bar(15, 1, 10, 1.0, color="#ffcc00") == 5, "clipped, and counted"
+    assert painter.draw_ramp(0, 2, 6, "#ffcc00", "#7cb342") == 6
+    assert painter.draw_sparkline(0, 0, 5, [1, 2, 3, 4, 5]) == 5
+    assert painter.draw_ticker(0, 1, 12, "hello world and more", 0.0) == 12
+
+
+def test_a_widget_given_nonsense_warns_and_draws_nothing():
+    """A skin can hand the painter anything; the frame still has to finish."""
+    painter = R.Painter(size=(20, 3), depth="truecolor")
+    assert painter.draw_bar(0, 0, "wide", None) == 0
+    assert painter.draw_sparkline(0, 0, 4, ["a"]) == 0
+    assert painter.draw_ramp(0, 0, 4, None, None, fraction="z") == 0
+    assert painter.draw_ticker(0, 0, 5, "") == 0
+    joined = " | ".join(painter.frame_warnings)
+    assert "bar" in joined and "sparkline" in joined, painter.frame_warnings
+
+
+def test_a_skin_can_read_the_cell_it_is_sitting_on():
+    painter = R.Painter(size=(12, 2), depth="truecolor")
+    painter.draw_text(2, 0, "х", color="#ffcc00")
+    assert painter.cell(2, 0).ch == "х"
+    assert painter.cell(0, 0).ch == " "
+    assert painter.cell(99, 99) is None and painter.cell("a", 0) is None
