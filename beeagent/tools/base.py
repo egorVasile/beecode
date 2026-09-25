@@ -119,6 +119,10 @@ class BaseTool:
     # Set for anything a plugin or MCP server provided: its own `is_safe()` is a
     # claim we do not trust, and permissions treat it as unsafe until granted.
     from_extension: bool = False
+    # Set by the loop before execute(): True when the user granted this tool for
+    # the session or runs in `auto`. A tool that can do both a harmless and a
+    # config-loading kind of work uses it to pick the harmless one alone.
+    granted: bool = False
     # Whether running this tool leaves a byte changed on disk. `is_safe()` means
     # "only reads"; this one means "even a tool that is safe to look with writes",
     # which is what /permissions readonly has to refuse.

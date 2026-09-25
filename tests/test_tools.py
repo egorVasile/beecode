@@ -84,14 +84,16 @@ def test_read_metadata(tmp_path):
 
 from beeagent.tools.write import WriteTool
 
-def test_write_file(tmp_path):
+def test_write_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     f = tmp_path / "output.txt"
     tool = WriteTool()
     result = tool.execute(path=str(f), content="hello world")
     assert result.error is False
     assert f.read_text() == "hello world"
 
-def test_write_creates_dirs(tmp_path):
+def test_write_creates_dirs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     f = tmp_path / "sub" / "dir" / "file.txt"
     tool = WriteTool()
     result = tool.execute(path=str(f), content="nested")
@@ -103,7 +105,8 @@ def test_write_is_not_safe():
 
 from beeagent.tools.edit import EditTool
 
-def test_edit_replace(tmp_path):
+def test_edit_replace(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     f = tmp_path / "code.py"
     f.write_text("def hello():\n    print('world')\n")
     tool = EditTool()
@@ -454,11 +457,12 @@ def test_registry_resolves_typos_only(capsys):
 
 # --- verified fixes, 2026-09-21 ------------------------------------------------
 
-def test_write_and_edit_keep_the_files_own_line_endings(tmp_path):
+def test_write_and_edit_keep_the_files_own_line_endings(tmp_path, monkeypatch):
     """Universal-newline translation rewrote every LF file as CRLF on Windows."""
     from beeagent.tools.write import WriteTool
     from beeagent.tools.edit import EditTool
 
+    monkeypatch.chdir(tmp_path)
     lf = tmp_path / "lf.py"
     lf.write_bytes(b"a = 1\nb = 2\n")
     assert EditTool().execute(path=str(lf), old_text="a = 1", new_text="x = 1").error is False
@@ -502,6 +506,15 @@ def test_bash_timeout_actually_stops_the_process_tree(tmp_path, monkeypatch):
     bash while it is a device under cmd.  Without the chdir this test dropped a
     file named `nul` into the repository root of every clone that ran the suite,
     next to the `big.svg`/`diagram.svg`/`out.svg` family of the same bug.
+
+    The bound is 12 s, where it used to be 4 s.  Not because the kill got slower:
+    the one thing here that can reach a grandchild, `taskkill /T /F`, measures
+    3.5-6.5 s on this box, and the old 4 s bound fails on the unmodified wait path
+    as well (median 4.87 s for a 1 s budget, measured 2026-09-25).  What this test
+    guards is that the wait after the kill is *bounded* -- that we are not sitting
+    on a pipe a survivor still holds -- and the proof that the tree really dies,
+    with the grandchild's own heartbeat as the witness, is
+    `test_bash_timeout_kills_the_whole_process_tree` in tests/test_shell.py.
     """
     import time
 
@@ -512,7 +525,7 @@ def test_bash_timeout_actually_stops_the_process_tree(tmp_path, monkeypatch):
     result = BashTool().execute(command="ping -n 6 127.0.0.1 > nul", timeout=1)
     took = time.time() - started
     assert result.error is True and "timed out" in result.output
-    assert took < 4, f"the timeout is not honoured: {took:.1f}s for a 1s budget"
+    assert took < 12, f"the timeout is not honoured: {took:.1f}s for a 1s budget"
 
 
 def test_a_tool_that_takes_kwargs_is_not_blocked_by_its_own_signature():

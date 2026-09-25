@@ -2,6 +2,7 @@
 import codecs
 import os
 
+from beeagent.core import journal
 from beeagent.i18n import L
 
 from ._path_policy import guard
@@ -51,6 +52,17 @@ class WriteTool(BaseTool):
                 refusal = _not_text_yet(target)
                 if refusal:
                     return ToolResult(output=refusal, error=True)
+            # The journal is written BEFORE a single byte changes: a `write` the
+            # undo net does not cover is a `write` the user cannot take back, so
+            # an unrecordable one is refused rather than done. A refusal from
+            # `guard` above never reaches here, so a refused write records nothing.
+            was_new = not target.exists()
+            try:
+                saved = journal.record(os.getcwd(), "write", path,
+                                       action="new" if was_new else "modify")
+            except journal.JournalError as e:
+                return ToolResult(output=journal.refusal("write", e), error=True,
+                                  metadata={"refused": "undo-journal-not-recorded"})
             target.parent.mkdir(parents=True, exist_ok=True)
             write_text_preserving(target, content)
             # The count is measured from the disk, not from len(content): the
@@ -60,8 +72,12 @@ class WriteTool(BaseTool):
             except OSError:
                 written = len(content.encode("utf-8"))
             return ToolResult(
-                output=L(f"Written {written} bytes to {path}", f"Записано {written} байт в {path}"),
-                error=False, metadata={"bytes": written, "resolved": str(target)})
+                output=L(f"Written {written} bytes to {path}"
+                         f"{journal.recoverable_clause(saved)}",
+                         f"Записано {written} байт в {path}"
+                         f"{journal.recoverable_clause(saved)}"),
+                error=False, metadata={"bytes": written, "resolved": str(target),
+                                       "undo": saved})
         except Exception as e:
             return ToolResult(output=str(e), error=True)
 

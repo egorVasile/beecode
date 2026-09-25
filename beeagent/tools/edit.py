@@ -4,6 +4,9 @@ Every byte the model did not ask for has to survive the call, which is what the
 stamp around the read is for: the copy in the conversation and the file on disk
 are two things, and the tool may only write when they are still the same thing.
 """
+import os
+
+from beeagent.core import journal
 from beeagent.i18n import L
 
 from ._path_policy import guard
@@ -77,9 +80,20 @@ class EditTool(BaseTool):
                 # their edits are in those bytes, and writing now would drop them
                 # while reporting a clean "Replaced".
                 return _too_late(path)
+            # The pre-image goes into the journal before the rename, so an edit
+            # the user cannot take back is an edit that never happened. Every
+            # refusal above leaves the journal untouched.
+            try:
+                saved = journal.record(os.getcwd(), "edit", path, action="modify")
+            except journal.JournalError as e:
+                return ToolResult(output=journal.refusal("edit", e), error=True,
+                                  metadata={"refused": "undo-journal-not-recorded"})
             write_text_preserving(target, content.replace(find, replace, 1))
             remember(target)      # the new bytes are now what we showed
-            return ToolResult(output=L(f"Replaced in {path}", f"Изменено в {path}"), error=False)
+            return ToolResult(
+                output=L(f"Replaced in {path}{journal.recoverable_clause(saved)}",
+                         f"Изменено в {path}{journal.recoverable_clause(saved)}"),
+                error=False, metadata={"undo": saved})
         except Exception as e:
             return ToolResult(output=str(e), error=True)
 

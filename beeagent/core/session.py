@@ -3,6 +3,7 @@ import os
 import re
 import secrets
 import tempfile
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -95,24 +96,63 @@ class Session:
     def to_dicts(self) -> list[dict]:
         return [m.to_dict() for m in self.messages]
 
-    def save(self, workdir: str = "."):
+    def save(self, workdir: str = ".", clean: bool = True, prepare=None,
+             checkpoint: bool = False, stamp: float = None) -> Path:
+        """Write the transcript atomically; say whether the session is over.
+
+        `clean` is the flag crash recovery reads. A session that ended because the
+        REPL closed it, because `/save` was typed, or because the user simply moved
+        on to another session, carries `closed: true`; a checkpoint written while
+        the conversation was still live carries `closed: false`, and a process that
+        died mid-turn leaves that false as the last thing on disk. See
+        `core/autosave.py`, which is what reads it back.
+
+        `prepare` is a hook for `rows -> rows` (the opt-in tool-body trim); it runs
+        on the copy, never on the live transcript, so a save that trims for disk
+        still holds every byte in memory for the model.
+
+        `saved_at` is wall-clock on purpose and is only ever compared to another
+        `saved_at` or to the clock at pruning time, where a negative age means
+        "the clock moved" and the file is kept (see autosave). The debounce that
+        decides *when* to write uses `time.monotonic()` for the same reason.
+
+        Writing in place means a crash, a full disk or Ctrl+C mid-save leaves a
+        half a file — and then `--continue` cannot start at all. Replace atomically,
+        through a name only this save owns: two windows resumed on one session id
+        used to share `<id>.json.tmp`, and one of them could rename the other's
+        half-written temp over the transcript. Same lesson `save_config` learned.
+        """
         path = Path(workdir) / ".beeagent" / "sessions" / f"{self.session_id}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
+        rows = [m.to_dict() for m in self.messages]
+        if prepare is not None:
+            rows = prepare(rows)
+        # `messages` stays the last key: a scanner reading the head of the file
+        # then sees the flags and the size without pulling a megabyte of transcript
+        # into memory to count a row it could have counted on disk.
         data = {
             "id": self.session_id,
             "created_at": self.created_at,
-            "messages": [m.to_dict() for m in self.messages],
+            "closed": bool(clean),
+            "checkpoint": bool(checkpoint),
+            # `stamp` is the caller's clock, and autosave passes the one it was
+            # built with: a stamp written by a different clock than the one that
+            # later judges it is how a file gets called older than it is.
+            "saved_at": time.time() if stamp is None else float(stamp),
+            "message_count": len(rows),
+            "messages": rows,
         }
-        # Writing in place means a crash, a full disk or Ctrl+C mid-save leaves a
-        # half a file — and then `--continue` cannot start at all. Replace atomically,
-        # through a name only this save owns: two windows resumed on one session id
-        # used to share `<id>.json.tmp`, and one of them could rename the other's
-        # half-written temp over the transcript. Same lesson `save_config` learned.
         descriptor, tmp_name = tempfile.mkstemp(dir=str(path.parent),
                                                 prefix=path.name + ".", suffix=".tmp")
         try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                json.dump(data, handle, indent=2)
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(data, handle, indent=2, ensure_ascii=False)
+                handle.flush()
+                # Ask the drive to have it, not the operating system: the crash
+                # this defends against is the window closed on a phone, and a
+                # page cache that never reached flash is the same loss. Measured
+                # per checkpoint on a 200-message session — see autosave's note.
+                os.fsync(handle.fileno())
             os.replace(tmp_name, path)
         finally:
             if os.path.exists(tmp_name):
@@ -120,6 +160,8 @@ class Session:
                     os.remove(tmp_name)
                 except OSError:
                     pass
+        return path
+
 
     @classmethod
     def load(cls, session_id: str, workdir: str = ".") -> "Session":
@@ -158,3 +200,94 @@ class Session:
             if isinstance(data, dict) and data.get("messages") is not None:
                 ids.append(candidate.stem)
         return ids
+
+    @classmethod
+    def latest(cls, workdir: str = ".") -> "Session | None":
+        """The newest session on disk, or None when there is nothing to resume.
+
+        Ordered by the file's own mtime, not by the id: an id carries the clock of
+        the machine that made it, and a session resumed and saved on a phone whose
+        clock is behind would otherwise lose to a transcript from last week.
+        """
+        path = Path(workdir) / ".beeagent" / "sessions"
+        if not path.is_dir():
+            return None
+        for candidate in sorted(session_files(path), key=_mtime_of, reverse=True):
+            try:
+                return cls.load(candidate.stem, workdir)
+            except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                continue
+        return None
+
+
+# --- reading a session file without reading its transcript ---------------------
+
+SESSION_JSON = re.compile(r"^\d{8}_\d{6}_[0-9A-Za-z_\-]+$")
+HEAD_BYTES = 4096
+SCALAR_INT = ("saved_at", "message_count")
+
+_SCALARS = {
+    "id": re.compile(r'"id"\s*:\s*"((?:[^"\\]|\\.)*)"'),
+    "created_at": re.compile(r'"created_at"\s*:\s*"((?:[^"\\]|\\.)*)"'),
+    "closed": re.compile(r'"closed"\s*:\s*(true|false)'),
+    "checkpoint": re.compile(r'"checkpoint"\s*:\s*(true|false)'),
+    "saved_at": re.compile(r'"saved_at"\s*:\s*(-?\d+(?:\.\d+)?)'),
+    "message_count": re.compile(r'"message_count"\s*:\s*(-?\d+)'),
+    "messages": re.compile(r'"messages"\s*:\s*(\[)'),
+}
+
+
+def session_files(directory) -> list[Path]:
+    """Files in `directory` that are sessions, and nothing else.
+
+    Deliberately narrow, because this decides what is safe to delete later: a
+    `/compact` backup (`<id>.pre-compact.json`) is a name with a dot in it and so
+    is not a session id, and anything a person or another program dropped in the
+    folder is not one either. What is not recognised is never pruned.
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        return []
+    return [p for p in directory.glob("*.json")
+            if p.is_file() and SESSION_JSON.match(p.stem)]
+
+
+def read_head(path) -> dict:
+    """The flags of a session file, from its first few kilobytes.
+
+    `save()` writes `messages` last, so everything except the transcript itself is
+    inside the head. A file we cannot read, or whose `id` is not its own filename,
+    answers `{}` — which every caller treats as "leave this alone".
+    """
+    try:
+        with open(str(path), "r", encoding="utf-8", newline="\n") as handle:
+            text = handle.read(HEAD_BYTES)
+    except (OSError, UnicodeDecodeError):
+        return {}
+    found = {}
+    for name, pattern in _SCALARS.items():
+        match = pattern.search(text)
+        if match is None:
+            continue
+        raw = match.group(1)
+        if name in ("id", "created_at"):
+            found[name] = raw
+        elif name in ("closed", "checkpoint"):
+            found[name] = raw == "true"
+        elif name == "saved_at":
+            found[name] = float(raw)
+        elif name == "message_count":
+            found[name] = int(raw)
+        else:
+            found[name] = True
+    if found.get("id") != Path(path).stem or "messages" not in found:
+        return {}
+    return found
+
+
+def _mtime_of(path) -> float:
+    try:
+        return os.path.getmtime(str(path))
+    except OSError:
+        return 0.0
+

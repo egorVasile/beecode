@@ -283,13 +283,14 @@ def test_write_does_not_invent_a_file_called_none(tmp_path, monkeypatch):
     assert not (tmp_path / "None").exists()
 
 
-def test_edit_refuses_to_overwrite_a_file_that_changed_under_it(tmp_path):
+def test_edit_refuses_to_overwrite_a_file_that_changed_under_it(tmp_path, monkeypatch):
     import time
 
     from beeagent.tools.edit import EditTool
 
     from beeagent.tools.read import ReadTool
 
+    monkeypatch.chdir(tmp_path)
     target = tmp_path / "shared.py"
     target.write_text("def a():" + chr(10) + "    pass" + chr(10), encoding="utf-8")
     assert not ReadTool().execute(path=str(target)).error, "the model is shown the file"
