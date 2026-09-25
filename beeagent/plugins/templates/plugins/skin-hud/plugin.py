@@ -223,12 +223,14 @@ class Hud:
     def thinking(self, line: str) -> str:
         """Plain text, not markup: the host styles these lines itself.
 
-        The marker is «», not curly quotes: a cp1251 console has the guillemets
-        and not the quotes, and a marker that cannot print is worse than none.
+        The marker is a closing guillemet, not an opening one — a block of
+        reasoning prints many lines, and a skin that opens a quote it never closes
+        puts a typo on every one of them. Curly quotes are out too: a cp1251
+        console has «» and not "".
         """
         if not line:
             return line
-        return "« " + line
+        return "» " + line
 
     # -- the grid surface ---------------------------------------------------------
 
