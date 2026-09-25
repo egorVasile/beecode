@@ -456,15 +456,29 @@ def capped_text(data: bytes, keep_last: int = 0) -> str:
     being pasted into the transcript a second time.
     """
     body = decode(data[:MAX_CAPTURE])
-    note = truncate_note(data)
+    notes: list[str] = []
     if keep_last > 0:
         lines = body.splitlines()
         if len(lines) > keep_last:
-            dropped = len(lines) - keep_last
-            body = "\n".join(lines[-keep_last:]) + "\n"
-            note = (f"\n… {dropped} earlier line(s) not repeated here — they were "
-                    f"shown as the command printed them" + note)
-    return body + note
+            kept = "\n".join(lines[-keep_last:])
+            held = (f"… {len(lines) - keep_last} earlier line(s) not repeated "
+                    "here — they were shown as the command printed them")
+            # Trade content for a sentence only when the sentence is the cheaper
+            # of the two: holding back one line and adding a line to explain it
+            # makes the answer longer, not shorter.
+            if len(body) - len(kept) > len(held):
+                notes.append(held)
+                body = kept
+    cut = truncate_note(data)
+    if cut:
+        notes.append(cut.strip("\n"))
+    if not notes:
+        return body
+    # One line, not two: a body that already ends in a newline and a note that
+    # starts with one put an empty line between the output and its own footnote.
+    if not body.endswith("\n"):
+        body += "\n"
+    return body + "\n".join(notes) + "\n"
 
 
 def truncate_note(data: bytes) -> str:

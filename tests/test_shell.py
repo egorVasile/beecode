@@ -142,9 +142,13 @@ def test_capped_text_without_a_tail_is_the_capture_exactly_as_it_was():
 
     data = b"one\ntwo\n"
     assert capped_text(data) == "one\ntwo\n" and capped_text(data, 1) == capped_text(data)
-    oversized = b"x" * (MAX_CAPTURE + 10)
+    # A capture with a real tail. The sentence about the cut is extra text on top
+    # of the cap, so a fixture that crosses the limit by ten bytes measures
+    # nothing but the length of that sentence.
+    oversized = b"x" * (MAX_CAPTURE * 2)
     text = capped_text(oversized)
-    assert len(text) < len(oversized) and "output cut at" in text
+    assert len(text) < len(oversized), "the model got less than the child printed"
+    assert text.startswith("x" * 1000) and "output cut at" in text
 
 
 def test_capped_text_holds_back_the_lines_the_user_already_saw():
