@@ -29,6 +29,8 @@ from beeagent.tools.grep import GrepTool
 from beeagent.tools.glob_tool import GlobTool
 from beeagent.tools.diagnostics import DiagnosticsTool
 from beeagent.tools.diagram import DiagramTool
+from beeagent.tools.files import MoveTool, RemoveTool
+from beeagent.tools.patch import PatchTool
 from beeagent.tools.list_dir import ListDirectoryTool
 from beeagent.tools.web_fetch import WebFetchTool
 from beeagent.tools.web_search import WebSearchTool
@@ -199,7 +201,7 @@ class Agent:
         for tool_cls in [ReadTool, WriteTool, EditTool, BashTool,
                          GrepTool, GlobTool, ListDirectoryTool, WebSearchTool,
                          WebFetchTool, GitTool, TodoTool, DiagramTool,
-                         DiagnosticsTool]:
+                         DiagnosticsTool, PatchTool, MoveTool, RemoveTool]:
             self.tools.register(tool_cls())
 
         self.economy = EconomyManager(
@@ -778,6 +780,9 @@ class Agent:
                             })
                         continue
 
+                    # The tool may behave differently for a granted run (see
+                    # BaseTool.granted); the gate above already refused otherwise.
+                    tool.granted = self.permissions.mode == "auto" or                         cmd.tool in self.permissions.granted
                     if callback:
                         callback("tool_start", {"tool": cmd.tool, "args": args})
 
