@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "beeagent"
-version = "6.0.0"
+version = "7.0.0"
 description = "BeeCode — a free AI coding agent for your terminal, powered by g4f (no API key)"
 readme = "README.md"
 license = "GPL-3.0-or-later"

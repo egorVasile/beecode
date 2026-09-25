@@ -29,8 +29,6 @@ env/
 *.swo
 *~
 
-.beeagent/
-
 # user config and local state (keep the example in git)
 beeagent.json
 .beeagent/
@@ -38,6 +36,25 @@ beeagent.json
 site/
 space_shooter.py
 -p
+
+# a shell redirect typed as `> nul` instead of `> /dev/null` writes the device
+# name into the working tree on Windows — ping output sitting in the repo root,
+# untracked and, until this line, not ignored
+nul
+
+# scratch artifacts a run leaves in whatever folder it started from: the
+# `diagram` tool's SVG output (big.svg, diagram.svg appeared here on 2026-09-24)
+# and the side file every guarded write goes through (`<target>.beecode-tmp`,
+# beeagent/tools/base.py)
+*.svg
+!docs/**/*.svg
+*.beecode-tmp
+
+# save_config writes beside the target and moves it in; a save killed halfway also
+# leaves the unreadable original set aside. Neither is anybody's config file.
+beeagent.json.*.tmp
+beeagent.json.broken
+beeagent.json.broken.*
 
 # local working notes, not part of the release
 docs/superpowers/

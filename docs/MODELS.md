@@ -17,7 +17,7 @@ naming the model.
 | model id | answers? | route | latency, first and second run | note |
 | --- | --- | --- | --- | --- |
 | `command-a-03-2025` | **yes** | Cohere ForAI | 44 s / 26 s | the config default; window measured at 32768 here, 65536 on 2026-09-21 |
-| `command-r-plus-08-2024` | **yes** | Cohere ForAI | 21 s / 48 s | window unmeasured, so the table prints the conservative `~ 8k` |
+| `command-r-plus-08-2024` | **yes** | Cohere ForAI | 21 s / 48 s | window unmeasured from this machine; `_MODEL_FAMILIES` in `beeagent/core/context.py` carries 128000 for the Command R line (Cohere's own number), so `/models` prints `~ 128k` while requests are sent at 32768 until `/window measure` says otherwise |
 | `command-r-08-2024` | **yes** | Cohere ForAI | 21 s / 55 s | as above |
 | `command-r7b-12-2024` | **yes** | Cohere ForAI | 13 s / 30 s | as above |
 | `default` | **yes** | LLM7 | 10 s / 0.4 s | LLM7's only id; it does not say which model answers behind it |

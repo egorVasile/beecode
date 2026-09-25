@@ -21,13 +21,13 @@ shows every step, and keeps working until the task is done.
    💬 storing honey for winter...
    💭 thinking...
    ⏳ glob path='api', pattern='**/*.py'
-     found files 12 files
+     ● found files **/*.py
    ⏳ read path='api/test_client.py'
-     read api/test_client.py
+     ● read api/test_client.py
    ⏳ bash command='pytest api -q'
-     executed pytest
+     ● executed pytest api -q
      3 passed in 1.42s
-   ✅ done — changed api/client.py: retry on timeout, see diff above
+   I changed api/client.py — it retries once on a read timeout; the diff is above.
 ```
 
 <p align="center">
@@ -56,10 +56,12 @@ cd C:\path\to\your\project
 beecode
 ```
 
-The first run installs BeeCode and a fresh `g4f`; every later run starts in
-about two seconds. `beecode --update` refreshes both, and it means the same
-thing from any install path: a checkout is pulled, an installed copy is
-reinstalled from the repository.
+The first run installs BeeCode and a fresh `g4f`; every later run only probes
+that environment and starts — how long that takes is a property of your disk,
+and no number for it has been measured here. `beecode --update` refreshes both,
+and it means the same thing from any install path: a checkout is pulled
+(`git pull --ff-only`, `update_self` in `beeagent/cli.py`), an installed copy is reinstalled
+from the repository.
 
 ```bat
 beecode --update
@@ -82,6 +84,28 @@ Every install path above starts **clean**: sessions and settings live in the
 folder you run it from (`.beeagent/` and `beeagent.json`), so a new folder is a
 new agent with no history. Nothing is resumed unless you ask for it with
 `beecode --continue`.
+
+### Add this to your project's .gitignore first
+
+Running BeeCode once inside a project leaves two things there, and a fresh clone
+of your own repository shows them as untracked (`?? beeagent.json`, `??
+.beeagent/`) — this repository's `.gitignore` protects BeeCode's sources, not your
+project. `beeagent.json` holds `api_keys`, `custom_providers[].key`, your
+`vpn_command` and the pool seat token `/pool enroll` wrote (`pool_token` in `beeagent/config/schema.py`); `.beeagent/sessions/*.json` holds every message
+and every tool output, including the contents of any file BeeCode read. Put this
+in the project before the first run:
+
+```gitignore
+beeagent.json
+.beeagent/
+*.beecode-tmp
+```
+
+BeeCode does not write that for you yet, and it does not keep the seat token out
+of the project config — both belong to code this document only describes. What it
+does today: `beeagent.json` is made owner-readable-only on POSIX when it holds an
+API key (`_restrict` in `beeagent/config/loader.py`), and a Windows box gets no such
+permission at all.
 
 <details>
 <summary>Other install options</summary>
@@ -153,7 +177,10 @@ None of this has been run on a real phone: the measurement above was made on
 desktop Python by blocking compiled modules at import, which establishes what
 `g4f` needs, not how Termux's pip behaves.
 
-`/doctor` on a phone prints the `pkg install` line for whatever is missing.
+`/doctor` prints the `pkg install` line for whatever is missing. It is a catalog
+plugin, not a built-in command — `/plugin install doctor` first; the REPL and the
+TUI both tell you to run it without saying so, which is a UI bug this page flags
+rather than repeats as a promise.
 
 ## Run
 
@@ -167,8 +194,8 @@ desktop Python by blocking compiled modules at import, which establishes what
 | `beecode --continue` | Resume the last saved session |
 | `beecode --tui` | Full-screen Textual interface instead of the REPL |
 | `beecode -p "explain this repo"` | One-shot: ask, print the answer, exit |
-| `beecode models` | List every model the pinned keyless providers serve |
-| `beecode providers` | List configured providers |
+| `beecode models` | List every model the pinned keyless providers advertise, read off the installed `g4f` |
+| `beecode providers` | List the three provider kinds the CLI knows: `g4f`, `openai_compat`, `ollama` |
 | `beecode plugins list` | Browse the installable skill / plugin / MCP catalog |
 | `beecode mcp list` | Show configured MCP servers |
 
@@ -207,12 +234,22 @@ A model with a small window used to lose the thread for one turn and then "remem
 after you repeated yourself. Two causes, both fixed:
 
 * **The budget follows the model, not a constant.** A request is built to fit the
-  model's own context window minus room for its reply — 8k for a `llama-3.1-8b`,
-  12k for a `gpt-4o` — instead of a flat 12 000 tokens that a small endpoint then
-  trimmed on its own side, silently cutting the oldest history.
+  model's own context window minus room for its reply (`window // 8`, floor 512 — `REPLY_RESERVE_*` in
+  `beeagent/core/context.py`): 7168 tokens for a `llama-3.1-8b` (8k window),
+  28672 for a `gpt-4o` (its name claims 128k, so the request is capped at 32k) —
+  instead of a flat 12 000 tokens that a small endpoint then trimmed on its own
+  side, silently cutting the oldest history.
+* **The 32k is a default, not a wall.** With `max_context_tokens` at `0` nothing is
+  sent above `MAX_WINDOW` = 32768 (`MAX_WINDOW`, `beeagent/core/context.py`). Raising that key lifts the
+  ceiling — as far as the model's name claims for itself, and never past
+  `MEASURED_MAX_WINDOW` = 262144 (`window_for`, `beeagent/core/context.py`). `ContextManager.window` is
+  `min(window_for(model), cap)`, so a configured value can only ever move the
+  budget *towards* the model's window, never past it. A window `/window measure`
+  proved on your route skips the 32k clamp entirely.
 * **Tokens are counted, not guessed.** `gpt-4`-style names aside, every g4f model id
   fell back to "four characters per token", which read Russian text as half its real
-  size — so an oversized request looked like it fit.
+  size — so an oversized request looked like it fit. With no `tiktoken` (Termux) the
+  count is a deliberate **over**-estimate, chunked by script (`utils/tokens.py`).
 
 When the conversation still does not fit, nothing is thrown away in silence:
 
@@ -237,8 +274,11 @@ You see it happen, and `/token` shows the window it was fitted to:
 
 ### Mistakes are recovered, not fatal
 
-* `list_files`, `read_directory`, `read_files` — invented names for `list_directory`,
-  accepted as aliases: `🔧 tool name corrected: read_directory → list_directory`
+* `list_files`, `read_directory`, `read_files`, `list_dir` — invented names for
+  `list_directory`, accepted as aliases (`aliases` on `ListDirectoryTool`). Only
+  `ToolRegistry.get()` takes them, so `/tools` keeps advertising one canonical
+  name: `🔧 tool name corrected: read_directory → list_directory`
+  (`tool_renamed` in `beeagent/ui/repl.py`)
 * Near-miss typos (`reaid` → `read`) are repaired; anything else is refused with the
   real tool list handed back to the model, so it corrects itself.
 * Missing arguments are reported to the model as `grep needs path; its parameters are:
@@ -252,18 +292,18 @@ plugins and MCP servers):
 
 | Tool | Purpose |
 | --- | --- |
-| `read` | Read a file, lines numbered; `offset`/`limit` for long files |
+| `read` | Read a file, lines numbered from 1; `offset` (0-based) / `limit` (default 2000) for long files |
 | `write` | Create or overwrite a file |
 | `edit` | Replace exact text in a file |
-| `bash` | Run a shell command (Git Bash on Windows, so `&&`, `~`, `mkdir -p` work) |
-| `list_directory` | List a folder: directories end with `/`, files show size |
+| `bash` | Run a shell command (Git Bash on Windows, so `&&`, `~`, `mkdir -p` work; `timeout` is clamped to 1–1800 s) |
+| `list_directory` | List a folder: directories end with `/`, files show size; `recursive` is capped at 300 entries |
 | `glob` | Find files by name pattern |
-| `grep` | Search file contents with a regex |
-| `git` | Run git (`status`, `diff`, `log`, `commit`…) |
-| `web_search` | Search the web |
-| `todo` | Keep a task list while working |
-| `skill` | Load the full instructions of an installed skill |
-| `diagram` | Draw boxes and arrows, and **return the picture as text**, so the model reads back what it drew and fixes the overlaps itself; an SVG is saved beside it |
+| `grep` | Search file contents with a regex; skips `.git`, `node_modules`, `__pycache__`, `.venv`, `.beeagent`, `build`, `dist` |
+| `git` | Run git (`status`, `diff`, `log`, `commit`…) — the argv is parsed and guarded, so this is not a shell wearing a git hat |
+| `web_search` | Search the web. **Needs `/allow`** even in `ask` mode: the query leaves the machine, and read-then-search is an exfiltration pair (`WebSearchTool.is_safe`) |
+| `todo` | Keep a task list while working — and it writes it, to `.beeagent/todo.json` |
+| `skill` | Load the full instructions of an installed skill. Registered by the built-in skill loader (`SkillTool` in `beeagent/plugins/loader.py`), not by the core tool loop, so `/extensions` does not list it as a plugin |
+| `diagram` | Draw boxes and arrows, and **return the picture as text**, so the model reads back what it drew and fixes the overlaps itself; the same lines go to an `.svg` beside it — a plain name inside the working directory, `diagram.svg` by default |
 
 ## Providers and models
 
@@ -275,43 +315,56 @@ free-tier endpoint that speaks the OpenAI API once **you** add your own key.
 /key groq <token>     store a key you obtained yourself (saved to beeagent.json, never echoed)
 /provider groq        switch; the model list and the default model follow the provider
 /models               recommended first: widest context, then the rest of the catalog
-/models --all         every model the pinned providers serve (5, measured 2026-09-23)
+/models --all         every model the pinned providers advertise, read off the installed g4f
 /models command-r     filter by name, or by an upstream: CohereForAI_C4AI_Command
 /model command-a-03-2025  pick one
 ```
 
 Each row carries a window: `✔ 32k` was measured on this machine by the endpoint
-refusing or forgetting a prompt, `~ 1M` is what the model id claims. Measured wide
+refusing or forgetting a prompt, `~ 1M` is what the model id claims — a `-128k`
+suffix in the name, or the family table in `beeagent/core/context.py`
+(`_MODEL_FAMILIES`), which for the pool's models records what *their owner* states
+rather than anything BeeCode measured. A `~` row is still sent at most 32768
+tokens until `/window measure` proves your route. Measured wide
 models lead the list; a model measured at 2k sits at the bottom whatever its name
 says, because the claim describes a name and the measurement describes your route.
 
 ### What answers without a key
 
-"Free" upstreams move constantly, so this is measured rather than believed. Two
-measurements sit in the table: the window numbers were taken on g4f 8.5.7 on
-2026-09-21 by sending prompts whose first line holds a random code the model has
-to repeat back, and the "does it still answer" column on g4f 8.5.1 on 2026-09-23
-— one request per model id to each of the two pinned providers on its own,
-retried once, with the surviving ids asked again through the shipped listing:
+"Free" upstreams move constantly, so this is measured rather than believed. Nothing
+below was re-measured while this page was edited — re-checking a README by spending
+the user's quota is not a trade worth making, and `python scripts\probe_models.py`
+is how you do it yourself in a minute. Two runs sit in the table: the window
+numbers from g4f 8.5.7 on 2026-09-21, sent as prompts whose first line holds a
+random code the model has
+to repeat back; and the "does it still answer" column from g4f 8.5.1 on 2026-09-23
+— one request per model id to each of the providers pinned then (`LLM7`,
+Cohere ForAI), retried once, with the surviving ids asked again through the
+shipped listing. `KiloCode` joined `KEYLESS_PROVIDERS` on 2026-09-24 and is
+measured on its own line below:
 
 | Route | Keyless | Result of the measurement |
 | --- | --- | --- |
-| `command-a-03-2025` (Cohere ForAI) | no | read the code back from **65536 tokens, twice**, ~2 s a step; answered again on 2026-09-23, in 26–56 s for one word |
-| `command-r-plus-08-2024`, `command-r-08-2024`, `command-r7b-12-2024` | no | answered the one-word prompt on the same space in 13–55 s each; none of them has a measured window, so the table prints `~ 8k` — the conservative default, not a claim about the model |
-| `default` (LLM7) | no | read 65536 once, then answered round two with `429 rate_limit_exceeded`; answered again in 0.4–10 s. LLM7's `models` list holds this one id, and llm7.io refused every other name BeeCode asked it for |
-| `command-r`, `command-r-plus`, `command-r7b-arabic-02-2025` | no | advertised by the pinned provider, but the space sent an empty completion twice for the first two and stayed silent for 95 s twice for the third — so they are not listed anywhere |
-| `gpt-4o`, `gemini-2.5-pro`, `glm-*`, `deepseek-*`, `kimi-k2`, `qwen-*`, `llama-4-*`, `grok-3`, `claude-*` | no | **dead on this provider.** Auto-routing served them; asked of the pinned providers they die as `Model gpt-4o not found` (Cohere ForAI) or `400 model_unavailable` (llm7.io). BeeCode ships no route to them without a key |
+| `command-a-03-2025` (Cohere ForAI) | no | read the code back from **65536 tokens, twice**, ~2 s a step; answered again on 2026-09-23 in 26 s and 44 s for one word (`docs/MODELS.md`) |
+| `command-r-plus-08-2024`, `command-r-08-2024`, `command-r7b-12-2024` | no | answered the one-word prompt on the same space in 13–55 s each; none has a measured window, so `/models` prints `~ 128k` — which is Cohere's claim for the Command R line read off `_MODEL_FAMILIES`, not a number BeeCode saw. Requests go at 32768 unless you raise `max_context_tokens` |
+| `default` (LLM7) | no | read 65536 once, then answered round two with `429 rate_limit_exceeded`; answered again in 0.4–10 s. llm7.io advertises 44 ids at `/v1/models` and served exactly one of the names BeeCode asked for — `default` (`docs/MODELS.md`) |
+| `command-r`, `command-r-plus`, `command-r7b-arabic-02-2025` | no | advertised by the pinned provider, but the space sent an empty completion twice for the first two and stayed silent for 95 s twice for the third — so they are dropped by name in `MEASURED_SILENT` and `discover_models()` cannot put them back |
+| `gpt-4o`, `gemini-2.5-pro`, `kimi-k2`, `qwen-*`, `llama-4-*`, `grok-3`, `claude-*` | no | **dead on these routes.** Auto-routing served them; asked of the pinned providers they die as `Model gpt-4o not found` (Cohere ForAI) or `400 model_unavailable` (llm7.io). BeeCode ships no route to them without a key |
+| `glm-*`, `deepseek-*`, `nvidia/*`, `cohere/*` and nine other vendor families | no | **not dead since 2026-09-24, and not measured either.** `KiloCode` joined the pin and its `KILOCODE_MEASURED` list carries 17 free ids (`z-ai/glm-5.2:free`, `nvidia/nemotron-3-super-120b-a12b:free`, …) — every one of them a name the row above called unreachable a day earlier. They were checked with a two-word prompt and a needle, never with a window probe, so `/models` shows them `~` and the table above says nothing about their size |
 | `gpt-4` (Yqcloud) | no | **measured 2048** — refused 4k with 文字过长, "text too long"; dropped, it reaches its upstream through an undocumented relay with spoofed browser headers |
 | `search` (GoogleSearch) | no | took 32768 without complaining, recall not verified; not pinned, g4f reaches it through a browser |
 | Cloudflare | no | went silent on a 2048-token prompt for 90 s; dropped, g4f reaches it with a headless browser that clears a Turnstile check |
 | `glm-4.7-flash`, `deepseek-chat`, `gemini-2.5-flash` | no | fine at 2048 **while auto-routing was in use**; at 4096 the free path returns 401, a key request, or goes quiet for minutes |
 | OpenRouterFree, Nvidia, Pollinations, GeminiPro, G4FSpace, RelayRouter, OrcaRouter | no | hidden behind g4f's own broker, which demands proof-of-work "cake credits" (402) |
-| DeepInfra, Copilot, Cerebras, HuggingChat, Airforce, KiloCode, OpenCode, MetaAI, OperaAria, DeepSeek | no | Turnstile token, a live Chrome over CDP, your browser cookies, an account, or a plain 401 |
+| DeepInfra, Copilot, Cerebras, HuggingChat, Airforce, KiloCode, OpenCode, MetaAI, OperaAria, DeepSeek | no | Turnstile token, a live Chrome over CDP, your browser cookies, an account, or a plain 401 — **except `KiloCode`, which was dropped from this row on 2026-09-24** when it became a pinned keyless route (two rows up) |
 
 That is why `command-a-03-2025` is the default model: it is the one keyless route
-measured to hold a real working session, and the same file-reading turn through it
-took 5.0 s against 35.1 s on the `gpt-4` route — which the pin dropped, so it no
-longer answers here at all. Run `/window measure <model>` in
+measured to hold a real working session. The same page once reported a file-reading
+turn at 5.0 s through it against 35.1 s on the `gpt-4` route; that pair is a
+one-machine observation from before the pin dropped `gpt-4`, it is recorded nowhere
+in this repository, and nobody has reproduced it since — treat it as an anecdote,
+and `python scripts\probe_models.py` as the way to get a number you can believe.
+Run `/window measure <model>` in
 your own session to see what *your* route carries today — the answer is cached per
 model and wins over any name-based guess.
 
@@ -319,7 +372,7 @@ model and wins over any name-based guess.
 
 | Provider | Where the free key comes from | What the free tier gives |
 | --- | --- | --- |
-| `g4f` | no key at all | two pinned keyless providers, 5 model ids — see the table above |
+| `g4f` | no key at all | the providers in `KEYLESS_PROVIDERS` — `LLM7`, `CohereForAI_C4AI_Command`, and `KiloCode` since 2026-09-24 — with 5 ids shipped and 22 the pin advertises today |
 | `openrouter` | openrouter.ai/settings/keys | a shelf of `:free` models, no card |
 | `groq` | console.groq.com/keys | very fast llama/qwen, generous free quota |
 | `gemini` | aistudio.google.com/apikey | flash/mini models free per minute |
@@ -337,11 +390,14 @@ BeeCode separates them: a spent **daily allowance** moves to the next key (anoth
 account), because waiting until midnight does not; a **per-IP** limit does not
 care how many keys you have, so it stops and asks — wait it out, or raise your own
 `vpn_command`, which is printed in full and runs only after you press the button.
-Several keys go in one line: `/key crax crk_live_a,crk_live_b`.
+Several keys go in one line, comma-separated: `/key crax <key1>,<key2>`.
 
 Keys are read from `beeagent.json` (`api_keys`) or the matching environment
-variable, and `beeagent.json` is gitignored — the repository ships
-`beeagent.example.json` instead. **Only your own keys**: BeeCode does not ship,
+variable each preset names (`env` in `beeagent/providers/presets.py`, e.g.
+`GROQ_API_KEY`). `beeagent.json` is gitignored **in this repository**, which ships
+`beeagent.example.json` instead; it is not ignored in yours until you say so — see
+[Add this to your project's .gitignore first](#add-this-to-your-projects-gitignore-first).
+**Only your own keys**: BeeCode does not ship,
 harvest or share other people's credentials, and using leaked ones gets the key,
 the account and often the user's IP banned.
 
@@ -350,18 +406,22 @@ the account and often the user's IP banned.
 Free endpoints come and go, so ask the code instead of a README:
 
 ```bat
-python scripts\probe_models.py            :: every model BeeCode lists (5)
-python scripts\probe_models.py --all      :: the same set, read offline from the pin
+python scripts\probe_models.py            :: the 5 ids BeeCode ships (`G4fProvider.models`)
+python scripts\probe_models.py --all      :: every id the pinned providers advertise (22 today, read offline)
 ```
 
-`--all` is the same five today: the listing and the pin are one set, because a
-request goes to LLM7 or Cohere ForAI and nowhere else.
+The two sets are not one set any more: `KiloCode` joined `KEYLESS_PROVIDERS` on
+2026-09-24 and advertises its own ids, so `--all` is larger than the shipped list.
+Only the ids in `KILOCODE_MEASURED` were checked against that storefront; the rest
+of its 394-entry catalogue is a paid page, which is why the pin carries a list
+instead of reading it.
 
 Each model gets one tiny request; the script prints `✅`/`❌`, latency and the
 reply, and `--json` writes the raw results.
 
-Last full run: **5 of 5** listed models answered a one-word instruction
-(2026-09-23, 10–56 s each). The run that reported **620 of 645** measured g4f's
+Last full run of the shipped list: **5 of 5** answered a one-word instruction
+(2026-09-23, 0.4–55 s each — `docs/MODELS.md` has both passes per model). The run
+that reported **620 of 645** measured g4f's
 whole catalogue, and most of those names reached their endpoint through
 auto-routing — including the browser-cleared ones — so the number no longer
 describes a BeeCode request. [docs/MODELS.md](docs/MODELS.md) keeps both, and
@@ -392,7 +452,9 @@ model cannot repeat is a size it did not receive, and the window stops at the
 last size it genuinely read. An endpoint that fumbles the trick at the smallest
 prompt is dim rather than dishonest, and the measurement falls back to refusals.
 
-Measurements are cached in `.beeagent/windows.json` (never committed) and then win
+Measurements are cached in `.beeagent/windows.json` — in the folder you ran it
+from, which your project only stops committing if you ignored `.beeagent/` first —
+and then win
 over the guess taken from the model name, so the request ceiling follows the model
 you actually picked. A refusal that names its limit (`maximum context length is
 8192 tokens`) is used as stated; a refusal that only says "too long" still narrows
@@ -427,6 +489,7 @@ mouse-clickable picker.
 | `/provider` | Switch the active provider | `/provider <name>` |
 | `/providers` | List providers and which ones have a key | `/providers` |
 | `/skin` | Choose interface variants: frames, banner, spinner | `/skin [slot] [variant]` |
+| `/trust` | Let this folder change how BeeCode behaves (plugins, permission gate) | `/trust [yes|no|reset]` |
 
 ### Skills, Plugins, Mcp
 
@@ -592,11 +655,18 @@ keys and answers instead of handing them out — BeeCode talks to it as a provid
 /pool status
 ```
 
-`/pool enroll` asks the pool for a seat and stores its token in `beeagent.json`;
-the address it writes to is the one BeeCode ships with, and running your own pool
-means pointing at it with `/pool url https://your-host:8077`.
-the address and the seat are the only things this client ever learns, and neither
-is a key. The pool decides which account serves a model, so `/provider pool` works
+`/pool enroll` asks the pool for a seat and writes its token to `pool_token` in
+`beeagent.json` — the same plaintext file as your API keys, in the folder you are
+working in, so it is yours to ignore before you commit anything. The screen only
+ever shows the last four characters. The address it writes to is the one BeeCode
+ships with (`pool_url` in `beeagent/config/schema.py`), and running your own pool
+means pointing at it with `/pool url https://your-host:8077`; `/pool url` on a plain
+`http://` address warns you that the seat token travels in the clear.
+
+A seat token is not one of your provider keys and the pool never sees yours — but
+it is a credential: it authorises this install to spend the operator's budget, and
+it is worth keeping as privately as a key. The pool decides which account serves a
+model, so `/provider pool` works
 with the model names you already use. Errors come back as what they are — no seat
 yet, seat awaiting approval, today's budget spent, every key rate-limited — with
 the retry wait attached.
@@ -610,19 +680,26 @@ the retry wait attached.
 | `model` | `command-a-03-2025` | Model id passed to the provider |
 | `provider` | `g4f` | Which registered provider to use |
 | `mode` | `normal` | `economy` enables answer caching |
+| `native_tools` | `true` | Send the calls in the request's `tools` field when the provider takes them, instead of as JSON prose |
 | `max_turns` | `50` | Tool-loop iterations per request |
-| `max_context_tokens` | `0` | Ceiling for one request; `0` takes the window from the model |
+| `max_context_tokens` | `0` | Ceiling for one request. `0` takes the model's window capped at 32768; a larger value lifts that cap towards what the model claims for itself, never past 262144. It is a ceiling, not a pin: it can also cut the budget below the model's window |
+| `stream_idle_timeout` | `90` | Seconds a streamed reply may stay silent before the request is cut |
 | `language` | `en` | Interface language, `en` or `ru` |
-| `custom_providers` | `[]` | `openai_compat` / `ollama` endpoints |
+| `custom_providers` | `[]` | `openai_compat` / `ollama` endpoints, each carrying its own `key` |
 | `api_keys` | `{}` | Your own keys per provider, added with `/key` (never printed in full) |
+| `pool_url` | `https://beecode-pool.onrender.com` | The key pool this install enrolls with |
+| `pool_token` | `""` | The seat token `/pool enroll` wrote here — a credential in that plaintext file; see the gitignore note above |
+| `vpn_command` | `""` | The command BeeCode offers, in full, to change your exit address |
 | `permissions.mode` | `ask` | `ask` · `auto` · `readonly` — see [Permissions](#permissions) |
 | `permissions.allowed` | `[]` | Tools pre-approved for every session, e.g. `["bash", "write"]` |
 | `ui` | `{}` | Interface slots: `frame`, `banner`, `spinner`, `stream` — see `/skin` |
 | `extensions` | `{}` | Settings owned by plugins, keyed by plugin name |
 | `economy.cache_enabled` | `true` | Turn answer caching off even in economy mode |
-| `economy.cache_dir` | `.beeagent/cache` | Where answers and sessions live |
+| `economy.cache_dir` | `.beeagent/cache` | Where cached answers live — sessions sit beside it in `.beeagent/sessions/` |
 | `economy.cache_ttl_minutes` | `30` | How long a cached answer may stand before it is re-asked |
 
+Every field of `BeeConfig` has a row here, and `tests/test_docs_match_code.py`
+fails when a new one ships without one.
 `BEECODE_LANG=ru` and `BEECODE_NO_ANIM=1` are also honoured.
 
 ## Permissions
@@ -633,12 +710,17 @@ what is allowed — you do.** A reply from a free endpoint is a guess; guessing
 
 | Mode | What runs without asking | Switch |
 | --- | --- | --- |
-| `ask` (default) | Readers: `read`, `grep`, `glob`, `list_directory`, `web_search`, `skill` — plus `todo` and `diagram`, which need no grant but each write one file of their own (`.beeagent/todo.json`, a `.svg`) | `/permissions ask` |
+| `ask` (default) | Readers: `read`, `grep`, `glob`, `list_directory`, `skill` — plus `todo` and `diagram`, which need no grant but each write one file of their own (`.beeagent/todo.json`, a `.svg`) | `/permissions ask` |
 | `auto` | Everything | `/permissions auto` |
 | `readonly` | Only the readers — `todo` and `diagram` are refused here too, and so is any tool you granted | `/permissions readonly` |
 
+`web_search` is in none of those lists: `is_safe()` returns `False` for it on
+purpose, because the query leaves the machine and a tool that can read any file
+plus a tool that can send text out is an exfiltration pair. Grant it with
+`/allow web_search` when you want it.
+
 In `ask` mode a tool that changes the machine — `write`, `edit`, `bash`, `git`,
-and anything a plugin or MCP server adds — is refused, and you see why:
+`web_search`, and anything a plugin or MCP server adds — is refused, and you see why:
 
 ```
 ⛔ bash command='pytest -q'  blocked — no permission
