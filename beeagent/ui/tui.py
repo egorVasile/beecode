@@ -45,6 +45,14 @@ HIVE_ROW = "#c8e6c9"
 HIVE_CURSOR = "#2e7d32"
 
 
+def _num(value) -> str:
+    """Seconds the way a person reads them: `15`, not `15.0`."""
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
 class BeePicker(ModalScreen):
     """The one choice list every picker command opens.
 
@@ -211,6 +219,15 @@ class BeeCodeApp(App):
         )
         self._stream_buf = ""
         self._think_buf = ""
+        # The model's own bytes for the turn in flight. A repaired or a cut-off
+        # call is only an honest note if the user can see what was actually sent,
+        # and `_stream_buf` is cleared the moment a tool starts.
+        self._sent_buf = ""
+        # What happened to this turn that the user did not ask for, counted so the
+        # status line cannot report a clean turn that was not clean.
+        self._turn_flags: dict[str, int] = {}
+        # Event names no branch handles, reported once instead of forever.
+        self._seen_unknown: set[str] = set()
         self._bee_i = 0
         self._applied_theme = None
         self._sidebar_user_set = False
@@ -456,7 +473,8 @@ class BeeCodeApp(App):
             from beeagent.ui.components import thinking_body
 
             body = thinking_body()
-            self.chatlog.write(Text(body.strip() or "размышлений в этом ответе не было",
+            self.chatlog.write(Text(body.strip() or L("no reasoning in this answer",
+                                                      "размышлений в этом ответе не было"),
                                     style="dim italic"))
         if res.action == "history_pager":
             # `/history` promised "scroll with the wheel, q closes it" and opened
@@ -532,6 +550,8 @@ class BeeCodeApp(App):
     def _run_agent(self, text: str) -> None:
         self._stream_buf = ""
         self._think_buf = ""
+        self._sent_buf = ""
+        self._turn_flags = {}
 
         def cb(ev: str, data: dict):
             try:
@@ -556,17 +576,33 @@ class BeeCodeApp(App):
 
     def _stop_writing(self) -> None:
         try:
-            self.call_from_thread(self._update_status)
+            self.call_from_thread(self._finish_turn)
         except Exception:
             pass
 
     def _on_agent_event(self, event: str, data: dict) -> None:
         if event == "stream_delta":
             self._stream_buf += data.get("text", "")
+            self._sent_buf += data.get("text", "")
             self.stream.update(Text(self._stream_buf))
         elif event == "status":
             from beeagent.ui.components import pending_text
+            # A fresh turn: the bytes the model sends now are the ones the notes
+            # about this turn's calls will quote.
+            self._sent_buf = ""
             self.stream.update(Text(f"💬 {pending_text()}", style="dim italic"))
+        elif event == "waiting":
+            # Silence is not death: say the endpoint is being waited on, and how
+            # long, or the user closes a working program.
+            seconds = _num(data.get("seconds"))
+            self.stream.update(Text(
+                f"⌛ {L(f'still waiting for the model… {seconds}s', f'всё ещё жду модель… {seconds}с')}",
+                style="dim"))
+            self._note("⌛",
+                       f"the endpoint has said nothing for {seconds}s — still waiting, "
+                       f"nothing was lost",
+                       f"эндпоинт молчит {seconds}с — жду дальше, ничего не потерялось")
+            self._count("waiting")
         elif event == "reasoning_delta":
             # The text was thrown away here: the stream line said "думает..." and
             # never showed what the model actually thought, so the one thing the
@@ -574,6 +610,22 @@ class BeeCodeApp(App):
             self._think_buf += data.get("text", "")
             tail = " ".join(self._think_buf.split() [-18:])
             self.stream.update(Text(f"💭 {tail}", style="#ffcc00"))
+        elif event == "stream_reset":
+            # The retry writes over the abandoned fragment. Without this branch
+            # the two answers glued together on screen ("half an answer… the real
+            # answer") while the transcript held only the clean one.
+            fragment = self._stream_buf
+            self._stream_buf = ""
+            self._sent_buf = ""
+            self.stream.update("")
+            self._note("🗑",
+                       f"the unfinished answer was thrown away, not appended — the next "
+                       f"try starts on a clean screen. Gone: {len(fragment)} characters: "
+                       f"“{self._snippet(fragment)}”",
+                       f"недописанный ответ выброшен, а не дописан — следующая попытка "
+                       f"начнётся с чистого экрана. Выброшено {len(fragment)} символов: "
+                       f"«{self._snippet(fragment)}»")
+            self._count("stream_reset")
         elif event == "response":
             # An economy cache hit returns without streaming and without `done`,
             # and this interface had no branch for it: the answer existed in the
@@ -582,33 +634,96 @@ class BeeCodeApp(App):
             self.stream.update("")
             self.chatlog.write(Text("🐝 BeeCode", style="bold green"))
             self.chatlog.write(Markdown(data.get("text", "")))
+        elif event == "context_trimmed":
+            dropped = data.get("dropped") or 0
+            self._note("✂",
+                       f"history did not fit the window: {self._trim_detail(dropped)} fell "
+                       f"out of the request — the model gets a digest line instead of them "
+                       f"and may contradict what they said. /history keeps the full text",
+                       f"история не влезла в окно: {self._trim_detail(dropped)} не попали в "
+                       f"запрос — вместо них модель видит строку конспекта и может "
+                       f"противоречить тому, что в них было. Полный текст — в /history")
+            self._count("context_trimmed", int(dropped))
+        elif event == "tool_repaired":
+            notes = "; ".join(data.get("notes") or [])
+            self._note("🩹",
+                       f"incomplete tool call repaired before running: {notes}. The model "
+                       f"sent “{self._raw_call()}” — the line that runs next is the fixed "
+                       f"shape, not these bytes",
+                       f"неполный вызов починен до запуска: {notes}. Модель прислала "
+                       f"«{self._raw_call()}» — следующая строка это исправленный вызов, "
+                       f"а не эти байты")
+            self._count("tool_repaired")
+        elif event == "tool_dropped":
+            notes = "; ".join(data.get("notes") or [])
+            self._note("✂️",
+                       f"a tool call arrived cut off and NOTHING ran: {notes}. The model "
+                       f"sent “{self._raw_call()}”. It has been asked to send it again — "
+                       f"what follows is that retry",
+                       f"вызов инструмента пришёл обрезанным и НИЧЕГО не запустилось: "
+                       f"{notes}. Модель прислала «{self._raw_call()}». Её попросили "
+                       f"прислать заново — дальше будет этот повтор")
+            self._count("tool_dropped")
+        elif event == "tool_renamed":
+            self._note("🔧",
+                       f"the model called it “{data.get('from', '')}”, which is not the "
+                       f"tool's name; the same tool runs as “{data.get('to', '')}” and is "
+                       f"written to history under that name",
+                       f"модель звала его «{data.get('from', '')}» — такого имени нет; "
+                       f"тот же инструмент запустится как «{data.get('to', '')}» и в "
+                       f"истории будет это имя")
+            self._count("tool_renamed")
+        elif event == "tool_unknown":
+            self._note("🤔",
+                       f"“{data.get('tool', '')}” is not a tool here — nothing ran; the "
+                       f"model got the real list back and continues. /tools shows the names",
+                       f"«{data.get('tool', '')}» — не инструмент, ничего не запустилось; "
+                       f"модель получила настоящий список и продолжает. Имена — в /tools")
+            self._count("tool_unknown")
+        elif event == "nudged":
+            self._note("🐝",
+                       f"the model promised a step but sent no tool call, so nothing ran: "
+                       f"“{self._snippet(self._sent_buf)}”. It has been told to act — the "
+                       f"next answer is the same question re-asked",
+                       f"модель пообещала шаг и не вызвала инструмент — ничего не "
+                       f"запустилось: «{self._snippet(self._sent_buf)}». Ей сказали "
+                       f"действовать — следующий ответ это тот же вопрос заново")
+            self._count("nudged")
         elif event == "queued_sent":
             items = data.get("items") or []
             if items:
-                self.chatlog.write(Text(f"  📨 доставлено из очереди: {len(items)}", style="dim"))
+                self._note("📨", f"{len(items)} queued message(s) went out with this step",
+                           f"{len(items)} сообщ. из очереди ушло с этим шагом")
         elif event == "stopped":
             # The worker ends the loop at the next turn; the partial text is
             # dropped rather than passed off as an answer.
             self._stream_buf = ""
             self.stream.update("")
-            self.chatlog.write(Text(
-                f"  🛑 остановлено тобой после {data.get('turn', 0)} шаг(ов) — "
-                "сессия и /tasks на месте", style="dim"))
+            self._note("🛑",
+                       f"stopped by you after {data.get('turn', 0)} step(s) — "
+                       "the session and /tasks are intact",
+                       f"остановлено тобой после {data.get('turn', 0)} шаг(ов) — "
+                       "сессия и /tasks на месте")
         elif event == "retry":
-            self.chatlog.write(Text(f"  🔁 повтор попытки ({data.get('attempt')}/3)", style="dim"))
+            self._note("🔁", f"the bee is retrying (attempt {data.get('attempt')}/3)",
+                       f"пчела повторяет попытку ({data.get('attempt')}/3)")
         elif event == "done":
             text = self._stream_buf
             self._stream_buf = ""
             self.stream.update("")
             if self._think_buf.strip():
-                self.chatlog.write(Text("💭 как я думал", style="bold #ffcc00"))
+                self.chatlog.write(Text(L("💭 what I thought", "💭 как я думал"),
+                                        style="bold #ffcc00"))
                 self.chatlog.write(Text(self._think_buf.strip(), style="dim italic"))
                 self._think_buf = ""
             if text.strip():
                 self.chatlog.write(Text("🐝 BeeCode", style="bold green"))
                 self.chatlog.write(Markdown(text))
             else:
-                self.chatlog.write(Text("  ⚠ пустой ответ — попробуй ещё раз или смени модель (/models)", style="#ffcc00"))
+                self.chatlog.write(Text(
+                    L("  ⚠ empty answer — try again or switch model (/models)",
+                      "  ⚠ пустой ответ — попробуй ещё раз или смени модель (/models)"),
+                    style="#ffcc00"))
         elif event == "tool_start":
             self._stream_buf = ""
             self.stream.update("")
@@ -628,23 +743,141 @@ class BeeCodeApp(App):
                 # should see the same picture without opening an SVG.
                 self.chatlog.write(Text(out, style="#8fbf6f"))
         elif event == "tool_error":
-            self.chatlog.write(Text(f"  ⚠ {data.get('tool')}: {data.get('message')}", style="bold red"))
+            self._note("⚠", f"tool '{data.get('tool')}' failed: {data.get('message')}",
+                       f"инструмент '{data.get('tool')}' упал: {data.get('message')}",
+                       style="bold red")
+            self._count("tool_error")
         elif event == "tool_denied":
             tool = data.get("tool", "")
-            self.chatlog.write(Text(f"  ⛔ {tool} — заблокировано, разрешить: /allow {tool}",
-                                    style="bold red"))
+            self._note("⛔", f"{tool} did not run — you have not allowed it; /allow {tool} does",
+                       f"{tool} не запущено — ты его не разрешал; /allow {tool} разрешит",
+                       style="bold red")
+            self._count("tool_denied")
         elif event == "provider_fallback":
-            note = ("  🐝 g4f недоступен на этой системе — отвечаем через пул" if data.get("seat")
-                    else "  🐝 g4f недоступен — возьми место в пуле: /pool enroll")
-            self.chatlog.write(Text(note, style="#ffcc00"))
+            if data.get("seat"):
+                self._note("🐝", "no g4f on this machine — answering through the pool instead",
+                           "g4f на этой машине не ставится — отвечаем через пул",
+                           style="#ffcc00")
+            else:
+                self._note("🐝", "no g4f on this machine — take a seat in the pool:"
+                                 " /pool enroll",
+                           "g4f на этой машине не ставится — возьми место в пуле:"
+                           " /pool enroll", style="#ffcc00")
         elif event == "model_switched":
-            self.chatlog.write(Text(f"  🔄 {data.get('from')} → {data.get('to')}", style="#ffcc00"))
+            self._note("🔄", f"this provider has no “{data.get('from')}” — answering "
+                             f"with “{data.get('to')}”",
+                       f"у этого провайдера нет «{data.get('from')}» — отвечаем "
+                       f"«{data.get('to')}»", style="#ffcc00")
         elif event == "economy_hit":
-            self.chatlog.write(Text("  💾 cache hit", style="bold green"))
+            self._note("💾", "the answer came from the cache, not from the model",
+                       "ответ взялся из кэша, а не от модели", style="bold green")
         elif event == "error":
             self._stream_buf = ""
             self.stream.update("")
             self.chatlog.write(Text(f"error: {data.get('message')}", style="bold red"))
+        else:
+            # An event no branch caught is an event the user would never have
+            # heard. Better one honest line than a silent turn.
+            if event not in self._seen_unknown:
+                self._seen_unknown.add(event)
+                self._note("❓", f"unhandled agent event “{event}”: {data}",
+                           f"неизвестное событие «{event}»: {data}", style="bold red")
+
+    # --- monitoring --------------------------------------------------------
+
+    def _note(self, icon: str, english: str, russian: str, style: str = "dim") -> None:
+        """One line in the chat log, in the language the user reads in.
+
+        The same shape as the classic REPL's `_note`: both languages are written
+        at the call site and `L()` picks one, so a note cannot ship in a single
+        language — and cannot be forgotten in the other one either.
+        """
+        self.chatlog.write(Text.assemble(f"  {icon} ", Text(L(english, russian), style=style)))
+
+    def _count(self, kind: str, amount: int = 1) -> None:
+        """Remember that something the user did not ask for happened this turn."""
+        self._turn_flags[kind] = self._turn_flags.get(kind, 0) + amount
+
+    @staticmethod
+    def _snippet(text: str, limit: int = 140) -> str:
+        """The model's bytes as one readable line: newlines folded, tail cut."""
+        flat = " ".join((text or "").split())
+        if not flat:
+            return L("(nothing arrived but whitespace)", "(дошли только пробелы)")
+        return flat[:limit] + ("…" if len(flat) > limit else "")
+
+    def _raw_call(self) -> str:
+        """What the model actually sent for its tool call, from this turn's text."""
+        text = self._sent_buf
+        at = text.lower().find('"tool"')
+        if at < 0:
+            return self._snippet(text)
+        start = text.rfind("{", 0, at)
+        return self._snippet(text[start if start >= 0 else at:])
+
+    def _trim_detail(self, dropped: int) -> str:
+        """How much fell out of the request: how many, of how many, how much text.
+
+        The event carries only a count, and `_window` drops from the oldest end,
+        so the oldest `n` messages are named here — with their size and roles,
+        because "the task stays in view" was never what the user needed to know.
+        """
+        messages = (self.ctx.session.messages if self.ctx.session is not None else []) or []
+        count = max(0, min(int(dropped or 0), len(messages)))
+        if not count:
+            return L("nothing", "ничего")
+        lost = messages[:count]
+        chars = sum(len(str(m.content or "")) for m in lost)
+        roles: dict[str, int] = {}
+        for msg in lost:
+            roles[msg.role] = roles.get(msg.role, 0) + 1
+        who = ", ".join(f"{role} x{num}" for role, num in sorted(roles.items()))
+        return L(f"{count} of {len(messages)} message(s) ({chars} characters: {who})",
+                 f"{count} из {len(messages)} сообщ. ({chars} симв.: {who})")
+
+    def _turn_incidents(self) -> list[str]:
+        """Every way this turn was not the clean one the user asked for."""
+        flags = self._turn_flags
+        parts = []
+        if flags.get("context_trimmed"):
+            parts.append(L(f"{flags['context_trimmed']} msg(s) summarised away",
+                           f"{flags['context_trimmed']} сообщ. сжато"))
+        if flags.get("tool_repaired"):
+            parts.append(L(f"{flags['tool_repaired']} call(s) repaired",
+                           f"{flags['tool_repaired']} вызов(ов) починено"))
+        if flags.get("tool_dropped"):
+            parts.append(L(f"{flags['tool_dropped']} call(s) NOT run",
+                           f"{flags['tool_dropped']} вызов(ов) не запущено"))
+        if flags.get("tool_renamed"):
+            parts.append(L(f"{flags['tool_renamed']} name(s) corrected",
+                           f"{flags['tool_renamed']} имени поправлено"))
+        if flags.get("tool_unknown"):
+            parts.append(L(f"{flags['tool_unknown']} unknown tool(s)",
+                           f"{flags['tool_unknown']} неизвестных инструмента(ов)"))
+        if flags.get("tool_error"):
+            parts.append(L(f"{flags['tool_error']} tool(s) failed",
+                           f"{flags['tool_error']} инструмент(ов) упало"))
+        if flags.get("tool_denied"):
+            parts.append(L(f"{flags['tool_denied']} tool(s) denied",
+                           f"{flags['tool_denied']} инструмент(ов) запрещено"))
+        if flags.get("stream_reset"):
+            parts.append(L(f"{flags['stream_reset']} partial answer(s) thrown away",
+                           f"{flags['stream_reset']} неполный(ых) ответ(ов) выброшено"))
+        if flags.get("nudged"):
+            parts.append(L(f"{flags['nudged']} nudge(s) to act",
+                           f"{flags['nudged']} пинка(ов) к действию"))
+        if flags.get("waiting"):
+            parts.append(L(f"{flags['waiting']} wait(s) on the endpoint",
+                           f"{flags['waiting']} раз(а) ждали эндпоинт"))
+        return parts
+
+    def _finish_turn(self) -> None:
+        """Close the turn in the log too: the status line can be off-screen."""
+        incidents = self._turn_incidents()
+        if incidents:
+            self._note("📋", "this turn: " + ", ".join(incidents),
+                       "этот ход: " + ", ".join(incidents), style="bold yellow")
+        self._update_status()
 
     # --- chrome -----------------------------------------------------------
     def _animate_bee(self) -> None:
@@ -661,8 +894,11 @@ class BeeCodeApp(App):
     def _update_status(self) -> None:
         cfg = self.ctx.config
         n = len(self.ctx.session.messages) if self.ctx.session is not None else 0
+        incidents = self._turn_incidents()
+        tail = (L(" · this turn: ", " · этот ход: ") + ", ".join(incidents)) if incidents else ""
         self.home.query_one("#status", Label).update(
             f"model {cfg.model} · provider {cfg.provider} · mode {cfg.mode} · msgs {n}"
+            + tail
         )
 
     def _welcome(self) -> None:

@@ -963,3 +963,338 @@ def test_an_ambiguous_market_name_is_refused_not_guessed(pool, monkeypatch, tmp_
         answer = client.get(pool.base + "/v1/market/skill-creator")
     assert answer.status_code == 409, answer.text
     assert sorted(answer.json()["ids"]) == ["anthropics--skill-creator", "openai--skill-creator"]
+
+
+# --- what the pool owes its own arithmetic ------------------------------------
+#
+# Each case below came out of a measurement run against a temp SQLite file with
+# three fake keys and a stub upstream, not out of reading the code and hoping. The
+# shape of every one of them is the same: a number written as if it were a gauge
+# and read as if it were a total, or a promise printed by one route and never
+# compared by the route that spends.
+
+def free_the_keys(pool):
+    """Stand the keys back up without the test waiting out a real lease.
+
+    `release_key` leaves one second of rest on the account and these tests step
+    through a day, so a test has to be able to say "some time passed" without
+    sleeping for all of it.
+    """
+    pool.db.execute("UPDATE keys SET cooldown_until=0")
+    pool.db.commit()
+
+
+def limits_of(pool):
+    return [r["daily_limit"] for r in
+            pool.db.execute("SELECT daily_limit FROM keys ORDER BY id").fetchall()]
+
+
+STREAM_FRAMES = ['data: {"choices":[{"delta":{"content":"раз"}}]}',
+                 'data: {"choices":[{"delta":{"content":"два"}}]}',
+                 'data: {"usage":{"prompt_tokens":1000,"completion_tokens":998999,'
+                 '"total_tokens":999999}}',
+                 'data: [DONE]']
+
+
+def stream_upstream(lines):
+    """A provider that answers a stream, shaped exactly like `_drain` reads one.
+
+    Every line comes back to the pool; only the ones framed as `data:` are forwarded
+    to the seat. That asymmetry is the whole bug measured below.
+    """
+    def call(provider, api_key, body, begin=None, on_chunk=None):
+        if begin:
+            begin(200)
+        if on_chunk:
+            for line in lines:
+                if line.startswith("data:"):
+                    on_chunk(line)
+        return 200, "".join(line + "\n" for line in lines)
+
+    return call
+
+
+def test_a_new_day_starts_a_keys_counter_at_zero(pool, monkeypatch):
+    """`used_tokens` is one day's spend, so a new day has to begin at zero.
+
+    It began at yesterday: the release stamped `day=today` on top of the old balance
+    and the ceiling filter let the row through for exactly one request, after which
+    it was "spent today" with yesterday's number still in it.
+    """
+    key = pool_server.take_key("groq")
+    pool_server.release_key(key["id"], spent=500)
+    monkeypatch.setattr(pool_server, "today", lambda: "2000-01-02")
+    free_the_keys(pool)
+    again = pool_server.take_key("groq")
+    assert again["id"] == key["id"] and again["used_tokens"] == 500, "yesterday's balance"
+    pool_server.release_key(again["id"], spent=40)
+    row = pool.db.execute("SELECT used_tokens, day FROM keys WHERE id=?", (key["id"],)).fetchone()
+    assert row["day"] == "2000-01-02"
+    assert row["used_tokens"] == 40, \
+        f"yesterday's 500 followed the key into today: {row['used_tokens']}"
+
+
+def test_a_key_that_blew_its_ceiling_yesterday_serves_the_day_after(pool, monkeypatch):
+    """The headline: `429 daily_limit` while every account sits idle.
+
+    Three requests of the new day is the shortest honest probe — the first two pass
+    even when the counter never resets, because each key gets one free request
+    before it locks itself out again.
+    """
+    monkeypatch.setattr(pool_server, "today", lambda: "2000-01-01")
+    pool.answers[:] = [(200, json.dumps({"choices": [{"message": {"content": "да"}}],
+                                         "usage": {"total_tokens": 500}}))]
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        token = enroll(client, pool.base)
+        client.post(pool.base + "/v1/admin/key_ceiling", json={"provider": "groq", "tokens": 600},
+                    headers={"X-Admin": "admin-secret"})
+        while True:                             # spend yesterday, on both accounts
+            free_the_keys(pool)
+            answer = complete(client, pool.base, token)
+            if answer.status_code == 429:
+                break
+            assert answer.status_code == 200, answer.text
+        assert answer.json().get("daily_limit") is True, "yesterday is genuinely finished"
+
+        monkeypatch.setattr(pool_server, "today", lambda: "2000-01-02")
+        free_the_keys(pool)
+        assert pool_server.at_today_ceiling("groq") is False, "a new day is an unspent day"
+        for request in (1, 2, 3):
+            free_the_keys(pool)
+            answer = complete(client, pool.base, token)
+            assert answer.status_code == 200, \
+                f"day two, request {request}, keys idle: {answer.text}"
+        rows = pool.db.execute(
+            "SELECT used_tokens FROM keys WHERE provider='groq' ORDER BY id").fetchall()
+    assert sorted(r["used_tokens"] for r in rows) == [500, 1000], \
+        f"three turns of 500 today, not three turns plus yesterday: {rows}"
+
+
+def test_releasing_the_same_lease_twice_charges_it_once(pool):
+    """A `finally` around the upstream call makes a second release reachable, and a
+    plain `used_tokens = used_tokens + spent` would then bill every turn twice."""
+    key = pool_server.take_key("groq")
+    assert key["lease"] > 0, "the lease travels with the key, or a double release is invisible"
+    pool_server.release_key(key["id"], spent=500, lease=key["lease"])
+    pool_server.release_key(key["id"], spent=500, lease=key["lease"])
+    row = pool.db.execute("SELECT used_tokens FROM keys WHERE id=?", (key["id"],)).fetchone()
+    assert row["used_tokens"] == 500, f"one turn charged as {row['used_tokens']}"
+
+
+def test_a_key_is_handed_back_when_the_upstream_dies_mid_request(pool, monkeypatch):
+    """One account, and a provider that closes the socket without answering.
+
+    The release used to sit after the call, so the exception jumped over it and the
+    key stayed leased for the whole 120 s. The seat that came next had nothing to
+    take and was told to wait 119 seconds for a key nobody was holding.
+    """
+    monkeypatch.setitem(pool_server._state, "keys", {"groq": ["gsk_first_secret"]})
+    pool.db.execute("DELETE FROM keys WHERE api_key=?", ("gsk_second_secret",))
+    pool.db.commit()
+    seen = {"n": 0}
+
+    def flaky(provider, api_key, body, begin=None, on_chunk=None):
+        seen["n"] += 1
+        if seen["n"] == 1:
+            raise ConnectionError("Remote end closed connection without response")
+        return 200, json.dumps({"choices": [{"message": {"content": "да"}}]})
+
+    monkeypatch.setattr(pool_server, "call_upstream", flaky)
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        token = enroll(client, pool.base)
+        first = complete(client, pool.base, token)
+        assert first.status_code == 502, "the seat is told the truth about the dead turn"
+        dead = pool.db.execute("SELECT cooldown_until, used_tokens FROM keys WHERE id=1").fetchone()
+        left = dead["cooldown_until"] - time.time()
+        assert dead["used_tokens"] == 0, "a request that never happened costs nothing"
+        assert left < 10, f"the key is still leased for {left:.0f} s of LEASE_SECONDS"
+        free_the_keys(pool)                       # the one-second rest, without sleeping
+        second = complete(client, pool.base, token)
+        assert second.status_code == 200, f"the next seat paid for the crash: {second.text}"
+
+
+def test_a_stream_pays_for_the_tokens_it_declared(pool, monkeypatch):
+    """`usage` is in the stream; the estimate was built from `{}` because of it.
+
+    Measured: an answer declaring 999 999 tokens charged the 214 bytes that carried
+    it, and the ceiling never moved.
+    """
+    monkeypatch.setattr(pool_server, "call_upstream", stream_upstream(STREAM_FRAMES))
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        token = enroll(client, pool.base)
+        answer = complete(client, pool.base, token, stream=True)
+        assert answer.status_code == 200, answer.text
+        row = pool.db.execute("SELECT used_tokens FROM keys ORDER BY id LIMIT 1").fetchone()
+    assert row["used_tokens"] >= 999999, \
+        f"the stream declared 999999 and the key was charged {row['used_tokens']}"
+
+
+def test_a_stream_framed_weirdly_still_pays(pool, monkeypatch):
+    """The same answer with no `data:` prefix on any line.
+
+    The frames we forward are the only thing the old estimate saw, so an upstream
+    that frames its chunks differently — including one a seat aims at on purpose
+    with `pool_provider` — billed a whole long turn as nothing at all.
+    """
+    unframed = [line[6:] if line.startswith("data: ") else line for line in STREAM_FRAMES]
+    monkeypatch.setattr(pool_server, "call_upstream", stream_upstream(unframed))
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        token = enroll(client, pool.base)
+        answer = complete(client, pool.base, token, stream=True)
+        assert answer.status_code == 200, answer.text
+        row = pool.db.execute("SELECT used_tokens FROM keys ORDER BY id LIMIT 1").fetchone()
+    assert row["used_tokens"] >= 999999, \
+        f"the framing hid the answer: charged {row['used_tokens']} of 999999"
+
+
+def test_a_forwarded_stream_separates_its_events(pool, monkeypatch):
+    """An SSE event is a `data:` line AND a blank line.
+
+    The pool used to write the line and one newline, so every frame of the answer
+    arrived to the reader as one event — `}{` where one object was expected — and a
+    client that follows the spec (which the BeeCode client now does) reported a torn
+    stream instead of an answer.
+    """
+    monkeypatch.setattr(pool_server, "call_upstream", stream_upstream(STREAM_FRAMES))
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        token = enroll(client, pool.base)
+        answer = complete(client, pool.base, token, stream=True)
+    assert answer.status_code == 200, answer.text
+    events = [event for event in answer.text.split("\n\n") if event.strip()]
+    assert events == STREAM_FRAMES, answer.text
+    first = json.loads(events[0][len("data: "):])
+    assert first["choices"][0]["delta"]["content"] == "раз"
+
+
+def test_a_stream_that_names_only_its_parts_still_bills_them():
+    """Providers omit `total_tokens` far more often than they omit its halves, and
+    prompt plus completion is what the account was billed for."""
+    payload, said = pool_server.stream_accounting(
+        'data: {"choices":[{"delta":{"content":"раз"}}]}\n\n'
+        'data: {"usage":{"prompt_tokens":4000,"completion_tokens":6000}}\n\n'
+        'data: [DONE]\n\n')
+    assert said == "раз"
+    assert payload["usage"]["total_tokens"] == 10000
+    assert pool_server.estimate_tokens(payload, said) == 10000
+
+
+def test_a_seat_cannot_spend_past_its_own_token_budget(pool):
+    """`tokens_limit` was printed by `/v1/seat` and never read by the path that
+    spends it, so a seat walked 30M tokens against a 400k limit without a word."""
+    pool.answers[:] = [(200, json.dumps({"choices": [{"message": {"content": "да"}}],
+                                         "usage": {"total_tokens": 5_000_000}}))]
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        token = enroll(client, pool.base)
+        assert complete(client, pool.base, token).status_code == 200
+        over = complete(client, pool.base, token)
+        assert over.status_code == 429, \
+            f"the seat blew its budget and nothing said so: {over.text}"
+        body = over.json()
+        report = client.get(pool.base + "/v1/seat",
+                            headers={"Authorization": f"Bearer {token}"}).json()
+    assert "token" in body["error"] and "budget" in body["error"], body
+    assert body["resets_in_seconds"] > 60, "the wait is until midnight, not a retry"
+    assert int(over.headers.get("Retry-After", 0)) > 60
+    assert len(pool.calls) == 1, "an over-budget seat must not knock on the provider again"
+    assert report["tokens"] >= report["tokens_limit"], "the number the seat can already see"
+
+
+def test_a_lowered_ceiling_is_applied_to_every_key(pool, monkeypatch):
+    """The one edit an operator makes in a hurry is the number going down, because a
+    key is burning. It used to do nothing: the UPDATE filled only rows at zero."""
+    monkeypatch.setenv("BEECODE_POOL_KEY_CEILING", "400000")
+    pool_server.sync_keys()
+    assert limits_of(pool) == [400000, 400000]
+    monkeypatch.setenv("BEECODE_POOL_KEY_CEILING", "100000")
+    pool_server.sync_keys()
+    assert limits_of(pool) == [100000, 100000], "the configured value is the authority"
+
+
+def test_a_ceiling_typed_the_human_way_does_not_stop_the_box(pool, monkeypatch):
+    """"400 000" is one number a person means, and `int()` of it killed the start
+    thread: measured against a real boot, that value means "pool did not start"."""
+    for typed, meant in (("400 000", 400000), ("400,000", 400000), ("400_000", 400000),
+                         (" 400000 ", 400000)):
+        monkeypatch.setenv("BEECODE_POOL_KEY_CEILING", typed)
+        pool_server.sync_keys()
+        assert limits_of(pool) == [meant, meant], typed
+        assert not any("WARNING" in note
+                       for note in pool_server.ceiling_config_notes()), typed
+
+
+def test_a_ceiling_that_is_not_a_number_at_all_is_refused_loudly(pool, monkeypatch):
+    """No ceiling in disguise: the value is named, ignored, and the box still boots."""
+    monkeypatch.setenv("BEECODE_POOL_KEY_CEILING", "много")
+    pool_server.sync_keys()                       # must not raise, then or at boot
+    assert limits_of(pool) == [0, 0], "a nonsense value does not become a nonsense ceiling"
+    notes = pool_server.ceiling_config_notes()
+    assert any("WARNING" in note and "IGNORED" in note for note in notes), notes
+    assert not any("много" in note for note in notes), "not echoed where the console is cp1251"
+    logged = pool.db.execute("SELECT note FROM events WHERE kind='ceiling-refused'").fetchall()
+    assert logged, "the operator's log says what the terminal said"
+
+
+def test_the_startup_banner_says_what_the_ceiling_really_is(pool, monkeypatch):
+    """A pool with no ceiling is a pool that loses a key to the provider's own wall,
+    and every operator believed theirs had one because the deploy file names 400000.
+    Both directions have to be on the terminal before the port opens."""
+    monkeypatch.setenv("BEECODE_POOL_KEY_CEILING", "400000")
+    notes = pool_server.startup_notes()
+    assert any("400000" in note and "ceiling" in note for note in notes), notes
+    for unset in (None, "", "0"):
+        if unset is None:
+            monkeypatch.delenv("BEECODE_POOL_KEY_CEILING", raising=False)
+        else:
+            monkeypatch.setenv("BEECODE_POOL_KEY_CEILING", unset)
+        notes = pool_server.startup_notes()
+        assert any("NONE" in note and "ceiling" in note for note in notes), (unset, notes)
+    assert notes[0] == pool_server.admin_config_notes()[0], "the operator gate is still first"
+
+
+def test_an_unapproved_seat_gets_neither_the_catalogue_nor_the_report(pool, monkeypatch):
+    """`/v1/models` and `/v1/seat` answer on a seat token alone, and that is a choice
+    (see `_bearer_seat`) — but it cannot mean a seat the owner has not said yes to
+    reads the pool's inventory and its own remaining budget to plan with."""
+    monkeypatch.setenv("BEECODE_POOL_APPROVAL", "1")
+    monkeypatch.setattr(pool_server, "list_upstream_models", lambda p, k: ["llama-3.3-70b"])
+    for name, value in (("at", 0.0), ("ids", []), ("note", "")):
+        monkeypatch.setitem(pool_server._models_cache, name, value)
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        token = enroll(client, pool.base)
+        headers = {"Authorization": f"Bearer {token}"}
+        assert client.get(pool.base + "/v1/models", headers=headers).status_code == 403
+        assert client.get(pool.base + "/v1/seat", headers=headers).status_code == 403
+        client.post(pool.base + "/v1/admin/approve", json={"token": token},
+                    headers={"X-Admin": "admin-secret"})
+        assert client.get(pool.base + "/v1/models", headers=headers).status_code == 200
+        assert client.get(pool.base + "/v1/seat", headers=headers).status_code == 200
+
+
+def test_a_seat_token_alone_cannot_make_the_pool_dial_the_accounts(pool, monkeypatch):
+    """The list route is the one place an unsigned caller made this box knock on the
+    operator's accounts: a provider that would not list left the cache cold forever
+    and every retry dialled every key again, with a 20 s timeout each. Genuinely
+    harmless means it can be hammered: one dial, nothing leased, nothing spent."""
+    dials = []
+
+    def silent(provider, api_key):
+        dials.append(provider)
+        return []
+
+    monkeypatch.setattr(pool_server, "list_upstream_models", silent)
+    for name, value in (("at", 0.0), ("ids", []), ("note", "")):
+        monkeypatch.setitem(pool_server._models_cache, name, value)
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        token = enroll(client, pool.base)
+        headers = {"Authorization": f"Bearer {token}"}
+        answers = [client.get(pool.base + "/v1/models", headers=headers) for _ in range(5)]
+        seats = [client.get(pool.base + "/v1/seat", headers=headers) for _ in range(5)]
+        assert all(a.status_code == 502 for a in answers), [a.status_code for a in answers]
+        assert all(s.status_code == 200 for s in seats)
+        seat = client.get(pool.base + "/v1/seat", headers=headers).json()
+        keys = pool.db.execute("SELECT used_tokens, cooldown_until FROM keys").fetchall()
+    assert len(dials) == 1, f"ten requests dialled the accounts {len(dials)} times"
+    assert all(r["used_tokens"] == 0 and r["cooldown_until"] <= time.time() for r in keys), \
+        "no key leased and no token spent"
+    assert seat["requests"] == 0 and seat["tokens"] == 0, "the seat's own budget untouched"
+    assert "gsk_" not in json.dumps([a.json() for a in answers] + [s.json() for s in seats])

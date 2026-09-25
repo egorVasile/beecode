@@ -1008,6 +1008,11 @@ def _cmd_stats(ctx, args):
     table = Table(title=bee_title("Stats"), box=box.ROUNDED, border_style=BORDER, expand=False)
     table.add_column("Metric", style="bold #ffcc00")
     table.add_column("Value")
+    # Which session these numbers belong to: a cache ratio and a pruned count say
+    # nothing without the model, its provider and the window it was sized to.
+    table.add_row("model", str(ctx.config.model))
+    table.add_row("provider", str(ctx.config.provider))
+    table.add_row("window", str(ctx.agent.context.window))
     for k, v in s.items():
         table.add_row(str(k), str(v))
     return CommandResult(output=table)
@@ -1851,3 +1856,13 @@ def dispatch(ctx: ReplContext, line: str) -> CommandResult:
         # is only saved when the REPL loop ends, and a traceback ends it.
         return _err(L(f"/{name} failed: {e.__class__.__name__}: {e}",
                       f"/{name} упал: {e.__class__.__name__}: {e}"))
+
+
+# `/trust` lives in core/trust.py because the gate and the command answer with the
+# same words, but it is a core command: registered here, at import, so a plain
+# `from beeagent.ui.commands import COMMANDS` sees the same registry the README is
+# built from. It used to appear only once a PluginLoader happened to be built,
+# which made the command list depend on import order.
+from beeagent.core import trust as _trust  # noqa: E402  (bottom: trust imports us lazily)
+
+_trust.register_command()

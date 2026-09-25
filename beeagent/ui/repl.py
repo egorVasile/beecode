@@ -144,11 +144,17 @@ def handle_callback(event: str, data: dict):
               f"сессия и /tasks на месте")
 
     elif event == "context_trimmed":
+        # No promise that the task "stays in view": a clipped message stays in
+        # view and is still missing its middle, which is what the user reads as
+        # being lied to. Say which part fell out and where the real text is.
         _note("✂",
-              f"history did not fit the context: compressed {data.get('dropped')} messages into "
-              f"a summary in the system prompt, big outputs are clipped — the task stays in view",
-              f"история не влезла в контекст: сжал {data.get('dropped')} сообщений в конспект "
-              f"в системном промпте, большие выводы обрезаю — задачу держу")
+              f"history did not fit the context: {data.get('dropped')} oldest message(s) are "
+              f"now only a digest line in the system prompt — the model does not read them "
+              f"and may contradict them; long outputs are clipped too. /history shows the "
+              f"full text",
+              f"история не влезла в контекст: {data.get('dropped')} старых сообщений теперь — "
+              f"лишь строка конспекта в системном промпте, модель их не читает и может им "
+              f"противоречить; большие выводы ещё и обрезаются. Полный текст — в /history")
 
     elif event == "tool_start":
         stream.on_tool_start()
@@ -216,6 +222,13 @@ def handle_callback(event: str, data: dict):
               f"пчела повторяет попытку ({data.get('attempt')}/3)...")
 
     elif event == "stream_reset":
+        # The buffers go, and the user hears it go: a fragment already printed
+        # cannot be unprinted, so the retry has to be announced or the next
+        # answer reads as a duplicate.
+        _note("🗑", "the unfinished answer was thrown away, not appended — the next try "
+                    "starts on a clean line",
+              "недописанный ответ выброшен, а не дописан — следующая попытка начнётся "
+              "с чистой строки")
         stream.on_reset()
 
     elif event == "error":

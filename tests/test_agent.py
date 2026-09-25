@@ -488,18 +488,25 @@ def test_a_promising_answer_is_nudged_once_and_the_push_stays_out_of_history(tmp
 
 
 def test_a_small_window_still_leaves_a_summary_of_what_was_dropped():
-    """digest_room() returned 0 under a tight budget and the history vanished."""
+    """digest_room() returned 0 under a tight budget and the history vanished.
+
+    The history is deliberately too big to fit: an earlier version of this test
+    used short turns that a corrected, conservative budget now keeps whole, so it
+    asserted a cut that no longer had to happen and proved nothing about the
+    digest when it did.
+    """
     from beeagent.core import windows
     from beeagent.core.context import ContextManager
 
     windows.remember("gpt-4", 2048)
     manager = ContextManager(model="gpt-4")
     messages = [{"role": "user" if i % 2 == 0 else "assistant",
-                 "content": f"шаг {i}: " + "текст " * 12} for i in range(60)]
+                 "content": f"шаг {i}: " + "текст " * 120} for i in range(60)]
 
     built = manager.build_messages(messages, [])
     system = next(m["content"] for m in built if m["role"] == "system")
 
+    assert manager.window == 2048, "the measured window is what sizes the request"
     assert manager.trimmed > 0, "the conversation had to be cut"
     assert "CONVERSATION SO FAR" in system or "ДИАЛОГ" in system, \
         "dropped turns must be summarised, not discarded"

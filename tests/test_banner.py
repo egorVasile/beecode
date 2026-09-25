@@ -36,5 +36,24 @@ def test_font_glyphs_are_5x5():
         assert all(len(r) == 5 for r in rows)
 
 
-def test_print_banner_does_not_crash():
+def test_print_banner_prints_the_banner(capsys):
+    """`does_not_crash` is not a promise: a print_banner() that printed nothing
+    has never crashed either, and the version line is the only part a user reads
+    to check which build they are on."""
     print_banner()
+    out = capsys.readouterr().out
+
+    assert "█" in out, "the block-art row is the banner; without it there is no banner"
+    assert "BeeCode" in out or "bee" in out.lower(), out
+    from beeagent import __version__
+
+    assert __version__ in out, f"the banner must say which build this is: {out!r}"
+
+
+def test_print_banner_fits_a_narrow_terminal(capsys):
+    """A banner wider than the window wraps into noise on the first screen."""
+    print_banner()
+    out = capsys.readouterr().out
+    longest = max((len(line.rstrip()) for line in out.splitlines() if line.strip()), default=0)
+    assert longest > 0
+    assert longest <= 80, f"the banner is {longest} columns wide; 80 is the floor"

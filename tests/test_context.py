@@ -33,7 +33,13 @@ def test_huge_tool_result_is_clipped_not_evicting():
     text = "\n".join(m["content"] for m in built)
     assert "проанализируй" in text          # the task must never disappear
     assert "обрезано" in text               # the dump came in clipped
-    assert cm.trimmed == 0                  # nothing had to be dropped
+    assert cm.dropped == 0                  # nothing had to be evicted...
+    # ...but the clip threw most of the dump away, and that is counted. It used
+    # to be `trimmed == 0` here: the counter reported nothing while a 400 KB
+    # read left the request at 2 KB, so the interface stayed silent about it.
+    assert cm.clipped == 1
+    assert cm.trimmed == 1
+    assert cm.trimmed_tokens > 40_000
 
 
 def test_one_oversized_message_does_not_erase_the_conversation():
@@ -48,7 +54,9 @@ def test_one_oversized_message_does_not_erase_the_conversation():
     bodies = [m["content"] for m in built]
     assert any("разбери проект" in b for b in bodies)
     assert sum("шаг" in b for b in bodies) >= 5
-    if cm.trimmed:
+    if cm.dropped:
+        # The summary is what covers an eviction. A clip is not one, so the
+        # claim is only checked when something was actually dropped.
         assert any("CONVERSATION SO FAR" in b for b in bodies)
 
 
@@ -224,6 +232,15 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
     tools are counted separately and against the window, not the 3000: a user who
     connects a large MCP server is making their own trade-off, and failing this
     test on their behalf would report a defect that is not in the code.
+
+    The strict number moved to 3400 on 2026-09-24 and both halves of it are
+    measured, not guessed: the `<bee-data>` rule that tells the model a tool
+    result is data and not an instruction costs 76 tokens (1613 -> 1689), and
+    the tool catalog grew from 1227 to 1507 the same day. 3000 was always a
+    wish, though, not a guarantee; the guarantee is the second half of this
+    test, and it is why the number can be a little wrong without the user's
+    question being clipped: whatever the header costs, it is shed before the
+    live turn is, at every window down to 1024 tokens.
     """
     from beeagent.config.schema import BeeConfig
     from beeagent.core.agent import Agent
@@ -237,12 +254,25 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
 
     header = count_tokens(SYSTEM_PROMPT + "\n" + CommandParser().format_tool_prompt(own),
                           "gpt-4")
-    assert header < 3000, f"BeeCode's own prompt header costs {header} tokens"
+    assert header < 3400, f"BeeCode's own prompt header costs {header} tokens"
 
     everything = count_tokens(SYSTEM_PROMPT + "\n"
                               + CommandParser().format_tool_prompt(schemas), "gpt-4")
     assert everything < ContextManager(model="glm-4-9b-32k").max_tokens // 2, (
         f"with {len(mcp)} MCP tools attached the header is {everything} tokens")
+
+    question = ("Почини падение тестов в beeagent/core/context.py и объясни, почему "
+                "бюджет истории мог стать отрицательным")
+    for cap in (1024, 2048, 4096, 8192):
+        manager = ContextManager(model="gpt-4", window=cap)
+        built = manager.build_messages([{"role": "user", "content": question}], own)
+        sent = sum(count_tokens(str(m["content"]), "gpt-4") for m in built)
+        assert sent <= manager.max_tokens, f"{cap}: {sent} tokens into a {cap} window"
+        # A 45-token question must arrive entire at any window, and it is the
+        # header that pays for it: `shed` says which parts went, so this cannot
+        # be quietly bought back by clipping the user.
+        assert question in built[-1]["content"], f"{cap}: the question was clipped"
+        assert manager.dropped == 0 and manager.clipped == 0, f"{cap}: history was trimmed"
 
 
 def test_the_pool_models_carry_the_windows_their_owner_states():

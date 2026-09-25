@@ -47,11 +47,16 @@ PROVIDER = "fakeprovider"
 MODEL = "fake-model"
 TODO_PATH = TODO_FILE
 
-# What the TUI writes on a `stopped` event is Russian-only (beeagent/ui/tui.py:560
-# -564); the word below is its third character run, "stopped".
-RU_STOPPED = "\u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043e"
-DONE_MARK = "\u2714"        # the /tasks cell for a finished step
-OPEN_MARK = "\u2026"        # the /tasks cell for a step still open
+# The TUI's `stopped` note used to be Russian-only, so these tests had to pin a
+# Russian word while the interface was English. It is bilingual now, which is
+# what the helper below asserts instead.
+def stopped_word() -> str:
+    from beeagent.i18n import get_lang
+    return "остановлено" if get_lang() == "ru" else "stopped"
+
+
+DONE_MARK = "✔"        # the /tasks cell for a finished step
+OPEN_MARK = "…"        # the /tasks cell for a step still open
 
 PARTIAL = "half-written answer that never became a reply"
 
@@ -416,7 +421,11 @@ def test_stop_command_says_nothing_is_running_and_still_returns_the_action():
 
     assert result.action == "stop", "Ctrl+C and /stop take the same path"
     assert "nothing is running" in result.output.plain
-    assert agent.stop_requested is True, "the flag is how the loop learns about it"
+    # Corrected with the arming-on-idle fix: this assertion used to pin the bug.
+    # A flag set while nothing runs is not "how the loop learns about it" -- it is
+    # a stop waiting there to eat the next question and leave its user row
+    # unanswered, so an idle /stop now leaves the agent exactly as it found it.
+    assert agent.stop_requested is False, "nothing was running, so nothing is armed"
 
 
 def test_stop_command_without_an_agent_is_still_a_stop():
@@ -600,7 +609,7 @@ def test_typing_stop_in_the_running_tui_interrupts_the_answer():
             await _type(pilot, "/stop")
             assert await _wait_until(pilot, lambda: not app.agent.is_busy), \
                 "the busy flag is stuck and the prompt is locked"
-            await _wait_until(pilot, lambda: RU_STOPPED in _log(app))
+            await _wait_until(pilot, lambda: stopped_word() in _log(app))
             await pilot.pause(0.3)
             assert len(asked) == 1, "the loop asked the model once and then stopped"
             # The stream line is wiped, not handed to the log as a finished reply.
@@ -619,7 +628,7 @@ def test_typing_stop_in_the_running_tui_interrupts_the_answer():
 
     assert "/stop" in log, "what the user typed is shown back to them"
     assert _says(log, "stopping after this step"), log
-    assert RU_STOPPED in log, "the note on the `stopped` event never reached the log"
+    assert stopped_word() in log, "the note on the `stopped` event never reached the log"
     assert PARTIAL not in stopped_view, "a truncated answer must not be passed off as a reply"
     assert app.agent.stop_requested is False
     assert app.agent.is_busy is False
@@ -639,7 +648,9 @@ def test_typing_stop_when_nothing_runs_tells_the_user_so():
             return _log(app)
 
     log = asyncio.run(scenario())
-    assert app.agent.stop_requested is True
+    # Corrected with the arming-on-idle fix: the flag used to stay armed here, which
+    # is precisely what made the next question come back "Stopped by you".
+    assert app.agent.stop_requested is False, "an idle /stop must arm nothing"
     assert _says(log, "nothing is running"), log
 
 
@@ -685,7 +696,7 @@ def test_the_stopped_plan_is_visible_in_the_same_session():
             assert await _wait_until(pilot, lambda: app.agent.is_busy)
             await _type(pilot, "/stop")
             assert await _wait_until(pilot, lambda: not app.agent.is_busy)
-            await _wait_until(pilot, lambda: RU_STOPPED in _log(app))
+            await _wait_until(pilot, lambda: stopped_word() in _log(app))
             await _type(pilot, "/tasks")
             await pilot.pause(0.2)
             return _log(app)
@@ -693,7 +704,7 @@ def test_the_stopped_plan_is_visible_in_the_same_session():
     log = asyncio.run(scenario())
 
     assert _says(log[log.rindex("/tasks"):], "left unfinished"), log
-    assert log.count(RU_STOPPED) == 1, "one stop, one note"
+    assert log.count(stopped_word()) == 1, "one stop, one note"
     assert len(asked) == 1
 
 
@@ -719,7 +730,7 @@ def test_a_stop_arriving_while_the_final_answer_lands_lets_it_through():
 
     log = asyncio.run(scenario())
     assert _says(log, "the answer was already on its way"), log
-    assert RU_STOPPED not in log, "nothing was left to stop, so nothing claims it stopped"
+    assert stopped_word() not in log, "nothing was left to stop, so nothing claims it stopped"
     assert len(asked) == 1
 
 

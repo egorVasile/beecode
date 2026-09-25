@@ -294,11 +294,17 @@ def test_update_command_reaches_the_updater(tmp_path, monkeypatch):
 
 
 def test_stop_command_reaches_the_agent(tmp_path):
+    """`/stop` while a turn is running arms the flag; while idle it must not."""
     async def go():
         async with running(tmp_path) as (app, pilot):
             before = app.agent.stop_requested
             await type_line(pilot, app, "/stop")
-            return before, app.agent.stop_requested
+            idle = app.agent.stop_requested
+            app.agent.is_busy = True            # a turn exists, as far as the UI knows
+            await type_line(pilot, app, "/stop")
+            return before, idle, app.agent.stop_requested
 
-    before, after = asyncio.run(go())
-    assert before is False and after is True
+    before, idle, armed = asyncio.run(go())
+    assert before is False and idle is False, (
+        "an idle /stop armed the flag and the NEXT question was never asked")
+    assert armed is True, "with a turn running, /stop reaches the loop"

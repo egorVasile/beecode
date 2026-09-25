@@ -63,7 +63,11 @@ def test_unknown_command_no_completion():
 
 
 @pytest.fixture
-def ctx():
+def ctx(tmp_path, monkeypatch):
+    # Commands that change settings write `beeagent.json` where the process
+    # stands, not where the config object points; without this a suite run leaves
+    # a fake config in the checkout and the next developer reads it as theirs.
+    monkeypatch.chdir(tmp_path)
     return ReplContext(agent=None, config=BeeConfig(), session=Session())
 
 
@@ -243,7 +247,7 @@ def test_a_freshly_enrolled_seat_reaches_the_running_provider():
     assert live.url == "https://pool.example"
 
 
-def test_switching_provider_back_to_g4f_moves_the_model_with_it():
+def test_switching_provider_back_to_g4f_moves_the_model_with_it(tmp_path, monkeypatch):
     """The reset used to happen only when leaving g4f.
 
     `/provider pool` then `/provider g4f` left the session asking g4f for a crax
@@ -251,6 +255,7 @@ def test_switching_provider_back_to_g4f_moves_the_model_with_it():
     """
     from beeagent.core.agent import Agent
 
+    monkeypatch.chdir(tmp_path)
     config = BeeConfig(provider="pool", pool_url="https://pool.example", pool_token="t")
     agent = Agent(config=config)
     ctx = ReplContext(agent=agent, config=config, session=Session())
@@ -295,7 +300,10 @@ def test_stop_reaches_the_agent_and_reports_whether_it_was_running():
 
     result = dispatch(ctx, "/stop")
     assert result.action == "stop"
-    assert agent.stop_requested is True, "the flag is how a worker thread is stopped"
+    # The flag is how a worker thread is stopped, but arming it while nothing runs
+    # used to break the NEXT question: run() saw a stop it never asked for and
+    # answered "Stopped by you" with zero requests sent.
+    assert agent.stop_requested is False, "an idle /stop must not arm the next turn"
     assert "nothing is running" in str(result.output.plain).lower() or \
            "ничего не выполняется" in str(result.output.plain)
 
