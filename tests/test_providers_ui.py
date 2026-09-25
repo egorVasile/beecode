@@ -60,9 +60,12 @@ def test_agent_registers_only_providers_with_keys():
     assert keyed.ready_presets == ["groq"]
 
 
-def test_api_keys_survive_a_config_round_trip():
-    save_config(BeeConfig(api_keys={"groq": "gsk_x"}), ".")
-    assert load_config(".").api_keys == {"groq": "gsk_x"}
+def test_api_keys_survive_a_config_round_trip(tmp_path):
+    # This wrote into "." — the process's own working directory — so every suite
+    # run overwrote the checkout's beeagent.json with test keys. A developer then
+    # reads a `pool_url` of "https://pool.example" and believes it is the real one.
+    save_config(BeeConfig(api_keys={"groq": "gsk_x"}), str(tmp_path))
+    assert load_config(str(tmp_path)).api_keys == {"groq": "gsk_x"}
 
 
 # --- commands --------------------------------------------------------------

@@ -21,11 +21,23 @@ from typing import AsyncIterator, Callable, Optional
 
 import httpx
 
-from .base import BaseProvider
+from .base import (LIST_REFUSED, LIST_SEAT_REFUSED, LIST_SHIPPED, LIST_UNREACHABLE,
+                   BaseProvider, ModelCatalog, ProviderStreamError, body_reason,
+                   check_error_frame, default_idle_timeout, read_answer_stream,
+                   transport_error)
 
 BASE_URL = "https://gpt.crax.lol/v1"
 CONNECT_TIMEOUT = 10.0
 KEY_COOLDOWN = 90.0           # a spent-for-the-day account is not retried this hour
+LABEL = "crax-gpt"
+# A key that answered a streamed request with a 200 and no text is not asked again
+# this minute — it answers the same way, and every one of those answers is billed to
+# somebody's account. One extra ask per turn, then the honest failure.
+EMPTY_STREAM_EXTRA_TRIES = 1
+EMPTY_STREAM_COOLDOWN = 20.0
+# A catalogue read while a person looks at the picker: short, because the shipped
+# list is there to answer instead of it.
+MODELS_WAIT = 15.0
 
 # The same list the pool server keeps. An endpoint that also sells image, video
 # and audio generation will answer for those models, and a coding agent has no
@@ -80,6 +92,18 @@ def classify(status: int, body: dict, retry_after: int, raw: str = "") -> CraxEr
     return CraxError("other", detail or f"crax-gpt answered {status}", retry_after=retry_after)
 
 
+class _AskAnotherKey(Exception):
+    """This key's turn is over; the provider decided who to ask next.
+
+    An internal signal rather than a return value: the answer is streamed, so
+    there is nothing to hand back to the loop but an exception.
+    """
+
+    def __init__(self, same_key: bool = False):
+        super().__init__("ask another key")
+        self.same_key = same_key     # a per-IP wait is not cured by another account
+
+
 class CraxProvider(BaseProvider):
     name = "crax"
     # The catalogue is read from the endpoint on demand (`/pool models`, /models);
@@ -91,20 +115,28 @@ class CraxProvider(BaseProvider):
     # the default below is a code model that answered in 8 s and not the one this
     # list used to lead with. `kimi-k2-7-code` answered but took 62 s, so it is
     # last rather than hidden.
-    models = ("qwen3-coder-480b", "grok-code-fast-1", "deepseek-v4-flash", "gemma-3-12b",
-              "llama-4-maverick", "glm-5.3", "glm-5.3-flash", "grok-4-3", "grok-4-6",
-              "gpt-5-6-luna", "kimi-k2-6", "glm-5.2", "kimi-k2-7-code")
-    label = "crax-gpt"
+    #
+    # What the endpoint answers for changes without a release, so this is the list
+    # shown *until* it is asked: `discover_models()` replaces what `models` reports
+    # (see `ModelCatalog`), and routing asks the endpoint's list rather than this
+    # one — otherwise a model the picker took from the live catalogue is quietly
+    # swapped for the first name written here.
+    models = ModelCatalog(("qwen3-coder-480b", "grok-code-fast-1", "deepseek-v4-flash",
+                           "gemma-3-12b", "llama-4-maverick", "glm-5.3", "glm-5.3-flash",
+                           "grok-4-3", "grok-4-6", "gpt-5-6-luna", "kimi-k2-6", "glm-5.2",
+                           "kimi-k2-7-code"))
+    label = LABEL
+    list_source = (LABEL, LABEL)
     # Verified against the endpoint: it answers `finish_reason: "tool_calls"` and
     # accepts the OpenAI history shape back. So the tool call never has to be
     # written as JSON inside a sentence — which is where every parser bug came from.
     supports_tools = True
 
     def __init__(self, api_key: str = "", base_url: str = BASE_URL,
-                 idle_timeout: float = 90.0, ask: Optional[Callable] = None):
+                 idle_timeout: float | None = None, ask: Optional[Callable] = None):
         self.keys = keys_from(api_key)
         self.base_url = base_url.rstrip("/")
-        self.idle_timeout = idle_timeout
+        self.idle_timeout = float(idle_timeout) if idle_timeout else default_idle_timeout()
         self.spent: dict[int, float] = {}      # key index -> retry not before
         # The REPL installs this: it is the only place allowed to ask a question.
         self.ask = ask
@@ -337,51 +369,123 @@ class CraxProvider(BaseProvider):
             await self._handle_limit(index, error)
         raise CraxError("other", "crax-gpt refused every configured key")
 
+    def _next_key(self, tried: list[int]) -> Optional[tuple[int, str]]:
+        """The first key that is neither cooling down nor already asked this turn."""
+        for index, key in self._usable():
+            if index not in tried:
+                return index, key
+        return None
+
     async def chat_stream(self, messages: list[dict], model: str = "") -> AsyncIterator:
+        """The answer, or the reason there is none — and never the same key twice.
+
+        A 200 that streamed nothing is worth exactly one more ask, and it is asked
+        of a *different* key: the one that answered with silence answers with
+        silence again. Measured before this was bounded, one user message with
+        three configured keys cost 9 upstream POSTs, all of them billed to the
+        first key.
+        """
         self._require_key()
-        attempts = 0
-        while attempts < max(1, len(self.keys)):
-            usable = self._usable()
-            if not usable:
-                raise CraxError("daily", "every configured key is cooling down")
-            index, key = usable[0]
-            attempts += 1
-            got_any = False
-            pieces: list[str] = []
+        tried: list[int] = []
+        empties = 0
+        asks = 0
+        last_error: Optional[Exception] = None
+        while asks < max(1, len(self.keys)) + EMPTY_STREAM_EXTRA_TRIES:
+            choice = self._next_key(tried)
+            if choice is None:
+                break
+            index, key = choice
+            asks += 1
+            flowed = 0
             try:
-                async with httpx.AsyncClient(timeout=self._timeout()) as client:
-                    async with client.stream("POST", self.base_url + "/chat/completions",
-                                             json=self._payload(messages, model, True),
-                                             headers=self._headers(key)) as response:
-                        if response.status_code != 200:
-                            await response.aread()
-                            error = classify(response.status_code,
-                                             _json_or_empty(response.text), _retry_after(response))
-                            await self._handle_limit(index, error)
-                            continue
-                        async for line in response.aiter_lines():
-                            if _is_done(line):
-                                break
-                            piece = _chunk(line)
-                            if piece is None:
-                                continue
-                            kind, text = piece
-                            if not text:
-                                continue
-                            got_any = True
-                            pieces.append(text)
-                            yield kind, text
+                async for pair in self._stream(messages, model, key, index):
+                    flowed += len(pair[1])
+                    yield pair
+                return
+            except _AskAnotherKey as step:
+                if not step.same_key:
+                    tried.append(index)
+                continue
+            except ProviderStreamError as failure:
+                tried.append(index)
+                last_error = failure
+                if getattr(failure, "code", "") != "empty":
+                    # Either the endpoint named a reason or the answer was cut in
+                    # the middle: both are told to the user as they stand, and
+                    # neither is a cue to bill another account.
+                    raise
+                self._cool(index, EMPTY_STREAM_COOLDOWN)
+                empties += 1
+                if empties > EMPTY_STREAM_EXTRA_TRIES:
+                    raise
+                continue
             except httpx.HTTPError as e:
-                if got_any:
+                if flowed:
                     # The answer stopped mid-sentence. Handing it back as if it
                     # were finished is how a half-written file gets reported as
                     # written — the caller retries, and only the retry knows.
                     raise CraxError("network",
-                                    f"crax-gpt stopped after {len(''.join(pieces))} characters: {e}")
-                raise CraxError("network", f"crax-gpt is not reachable: {e}")
-            if got_any:
-                return
-        raise CraxError("other", "crax-gpt streamed nothing")
+                                    f"crax-gpt stopped after {flowed} characters: {e}") from e
+                raise CraxError("network", f"crax-gpt is not reachable: {e}") from e
+        if last_error is not None:
+            raise last_error
+        from beeagent.i18n import L
+        raise CraxError("other", L("crax-gpt has no key left to ask this turn — every "
+                                   "configured key is cooling down",
+                                   "у crax-gpt не осталось ключей на этот ход — все "
+                                   "настроенные ключи остывают"))
+
+    async def _stream(self, messages: list[dict], model: str, key: str,
+                      index: int) -> AsyncIterator:
+        """One ask of one key, read through the shared SSE reader.
+
+        The frames are OpenAI-shaped and `_pieces` says what each carries; the
+        reading of them is not this provider's business. Reading `aiter_lines()`
+        line by line here is what dropped a split event and left a truncated
+        answer on screen as if it had finished.
+        """
+        async with httpx.AsyncClient(timeout=self._timeout()) as client:
+            async with client.stream("POST", self.base_url + "/chat/completions",
+                                     json=self._payload(messages, model, True),
+                                     headers=self._headers(key)) as response:
+                if response.status_code != 200:
+                    await response.aread()
+                    error = classify(response.status_code, _json_or_empty(response.text),
+                                     _retry_after(response), response.text)
+                    await self._handle_limit(index, error)
+                    # `_handle_limit` raising means the user was told. Getting past
+                    # it means it chose to go on: another account for a spent day,
+                    # or this one again after the wait an IP limit named.
+                    raise _AskAnotherKey(same_key=error.kind == "ip")
+                async for piece in read_answer_stream(response.aiter_lines(), self._pieces,
+                                                      source=self.label):
+                    yield piece
+
+    @staticmethod
+    def _pieces(event: dict) -> list[tuple[str, str]]:
+        """The text pieces one OpenAI-shaped frame of crax's stream carries.
+
+        An `error` frame is crax explaining itself mid-answer; keeping the
+        truncated text and dropping the reason is how "this model is overloaded"
+        reached the user as a finished reply.
+        """
+        check_error_frame(event, LABEL)
+        choices = event.get("choices")
+        first = choices[0] if isinstance(choices, list) and choices else None
+        if not isinstance(first, dict):
+            return []
+        delta = first.get("delta")
+        if not isinstance(delta, dict):
+            return []
+        out: list[tuple[str, str]] = []
+        content = delta.get("content")
+        if isinstance(content, str) and content:
+            out.append(("content", content))
+        for field in ("reasoning", "reasoning_content", "thinking"):
+            value = delta.get(field)
+            if isinstance(value, str) and value:
+                out.append(("reasoning", value))
+        return out
 
     def _timeout(self) -> httpx.Timeout:
         return httpx.Timeout(self.idle_timeout, connect=CONNECT_TIMEOUT)
@@ -391,19 +495,46 @@ class CraxProvider(BaseProvider):
 
         Filtered to chat: the endpoint lists its image and video models here, and
         an agent that offers them spends requests on answers it cannot use.
+
+        The shipped list answers when this fails — crax's Cloudflare answers error
+        1010 to some networks, and the client cannot ask the endpoint at all there.
+        That is a fallback, and it is recorded as one, because an offline list
+        shown without a word reads as "this is what the endpoint serves today".
         """
+        from beeagent.i18n import L
+
         if not self.keys:
+            self.report_model_list_failure(LIST_SHIPPED,
+                                           L("no crax-gpt key configured",
+                                             "ключ crax-gpt не настроен"))
             return list(self.models)
         try:
-            with httpx.Client(timeout=15.0) as client:
-                response = client.get(self.base_url + "/models", headers=self._headers(self.keys[0]))
-            body = response.json()
-        except Exception:
+            with httpx.Client(timeout=MODELS_WAIT) as client:
+                response = client.get(self.base_url + "/models",
+                                      headers=self._headers(self.keys[0]))
+        except httpx.HTTPError as e:
+            self.report_model_list_failure(LIST_UNREACHABLE,
+                                           str(transport_error(e, LABEL)))
             return list(self.models)
-        found = []
-        for item in body.get("data") or body.get("models") or []:
-            if isinstance(item, dict) and item.get("id") and is_chat_model(str(item["id"])):
-                found.append(str(item["id"]))
+        if response.status_code != 200:
+            reason = body_reason(response.text) or f"HTTP {response.status_code}"
+            self.report_model_list_failure(
+                LIST_SEAT_REFUSED if response.status_code in (401, 403) else LIST_REFUSED,
+                reason)
+            return list(self.models)
+        try:
+            body = response.json()
+        except ValueError:
+            self.report_model_list_failure(LIST_REFUSED,
+                                           body_reason(response.text) or "not JSON")
+            return list(self.models)
+        found = self.remember_live_models([
+            item.get("id") for item in body.get("data") or body.get("models") or []
+            if isinstance(item, dict) and item.get("id") and is_chat_model(str(item["id"]))])
+        if not found:
+            self.report_model_list_failure(LIST_UNREACHABLE,
+                                           L("crax-gpt listed no chat model",
+                                             "crax-gpt не назвал ни одной чат-модели"))
         return found or list(self.models)
 
 
@@ -428,10 +559,6 @@ def _retry_after(response) -> int:
         return 0
 
 
-def _is_done(line: str) -> bool:
-    return (line or "").strip() in ("data: [DONE]", "data:[DONE]")
-
-
 def _json_or_empty(text: str) -> dict:
     import json
 
@@ -440,33 +567,6 @@ def _json_or_empty(text: str) -> dict:
     except ValueError:
         return {}
     return body if isinstance(body, dict) else {}
-
-
-def _chunk(line: str):
-    line = (line or "").strip()
-    if not line.startswith("data:"):
-        return None
-    payload = line[5:].strip()
-    if not payload or payload == "[DONE]":
-        return None
-    import json
-
-    try:
-        event = json.loads(payload)
-    except ValueError:
-        return None
-    choices = event.get("choices") or []
-    if not choices:
-        return None
-    delta = choices[0].get("delta") or {}
-    content = delta.get("content")
-    if isinstance(content, str) and content:
-        return "content", content
-    for field in ("reasoning", "reasoning_content", "thinking"):
-        value = delta.get(field)
-        if isinstance(value, str) and value:
-            return "reasoning", value
-    return None
 
 
 async def _sleep(seconds: float) -> None:

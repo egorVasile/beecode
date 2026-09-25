@@ -28,11 +28,23 @@ from .base import BaseProvider
 # to api.binjie.fun with spoofed browser origin/referer/UA headers, an
 # undocumented relay whose upstream model provenance nobody states.
 #
-# The previous list also named Free2GPT, Blackbox and DDG — none of which exist
-# in this g4f any more — so the "keyless fallback" had quietly shrunk to two
-# providers before auto-routing took over and picked upstreams that demand a
-# key. tests/test_providers.py fails if a name here stops resolving.
-KEYLESS_PROVIDERS = ("LLM7", "CohereForAI_C4AI_Command")
+# "KiloCode" joined on 2026-09-24 after reading its own source, not just its
+# label: g4f/Provider/__init__.py:335 builds it through
+# client/factory.py:create_custom_provider, which is `OpenaiTemplate` with
+# base_url https://api.kilo.ai/api/gateway, `api_key = None`, `needs_auth =
+# False` and headers of exactly {"Content-Type": "application/json"}. That
+# template posts with g4f's aiohttp StreamSession and `impersonate=None`
+# (Provider/template/OpenaiTemplate.py:249-252), so the Chrome UA/`sec-ch-ua`
+# set in requests/defaults.py is never applied — no browser fingerprint, no
+# cookie, no Turnstile, no proof-of-work, and curl_cffi/playwright/nodriver are
+# not imported by the path a request takes. It is a plain HTTPS call.
+#
+# The list has rotted before: it once named Free2GPT, Blackbox and DDG, none of
+# which exist in this g4f any more, so the "keyless fallback" had quietly
+# shrunk to two providers before auto-routing took over and picked upstreams
+# that demand a key. tests/test_providers.py fails if a name here stops
+# resolving, which is the only reason the rot was ever noticed.
+KEYLESS_PROVIDERS = ("LLM7", "CohereForAI_C4AI_Command", "KiloCode")
 
 
 def _keyless_providers() -> list:
@@ -52,19 +64,86 @@ def _keyless_providers() -> list:
     return providers
 
 
+# KiloCode's own catalogue is 394 ids and it is a paid storefront: 353 of them
+# answer `401 PAID_MODEL_AUTH_REQUIRED` to a keyless request, one states a daily
+# limit that only money lifts, and one is a classifier that never repeats a
+# prompt back. Advertising that list would put hundreds of dead names in the
+# picker, so what BeeCode pins is exactly the ids below -- each one answered a
+# real request of ours, named this provider explicitly, with `api_key=None`
+# forced in the call, and read back a code word buried in a 2048-token filler.
+# Measured 2026-09-24 against g4f 8.5.7 (artifacts: C:\tmp\g4add\*.json). Three
+# columns per id: "tiny" is the seconds a two-word prompt took, "needle" the
+# seconds of the same request wrapped in a 2048-token filler whose buried code
+# word came back, and "window" the largest prompt it repeated the code word from
+# (`beeagent.core.windows.probe`, ceiling 131072 — 131072 there is where the
+# climb stopped, not a refusal, and 32768/65536 are the numbers the endpoint
+# itself wrote when it refused).
+#
+# Four ids needed a second pass after a throttle — glm-5.2 (429), laguna-xs
+# (429), nemotron-3-nano-omni (upstream 502) and laguna-s (an empty completion
+# at 2048 tokens that answered 7.5 s later) — and are listed at the time they
+# finally took.
+#
+# The mechanism is deliberately not "read the provider's own list": g4f fills
+# KiloCode.models by an HTTP GET of that 394-id storefront, so a pin here is the
+# only way `/models` stays offline while a name nobody measured cannot appear.
+# If g4f drops or un-marks the class, `_keyless_providers()` stops returning it
+# and these ids disappear from the catalogue with it — the honest result, rather
+# than a menu of names that now reach nothing.
+KILOCODE_MEASURED = (
+    "kilo-auto/free",                             # 7.1s · 2.9s · 131072
+    "kilo-auto/small",                            # 1.4s · 28.0s · 131072
+    "nvidia/nemotron-3-super-120b-a12b:free",     # 1.0s · 1.6s · 131072
+    "cohere/north-mini-code:free",                # 0.6s · 1.8s · 24576
+    "z-ai/glm-5.2:free",                          # 1.4s · 3.1s · 32768
+    "poolside/laguna-s-2.1:free",                 # 4.9s · 7.5s · 131072
+    "poolside/laguna-xs-2.1:free",                # 1.2s · 4.0s · 131072
+    "nex-agi/nex-n2.5-pro:free",                  # 6.3s · 38.3s · 131072
+    "nex-agi/nex-n2.5-mini:free",                 # 1.2s · 0.7s · 131072
+    "inclusionai/ling-3.0-flash-fin:free",        # 1.2s · 1.7s · 131072
+    "inclusionai/ling-3.0-flash-sante:free",      # 1.3s · 1.8s · 131072
+    "dots-studio/dots-3-note-preview:free",       # 2.2s · 3.0s · 131072
+    "liquid/lfm-2.5-2.6b:free",                   # 1.0s · 1.3s · 65536
+    "stepfun/step-3.7-flash:free",                # 2.3s · 3.0s · 131072
+    "nvidia/nemotron-3-ultra-550b-a55b:free",     # 1.1s · 1.6s · 131072
+    "nvidia/nemotron-3.5-lightning:free",         # 5.6s · 14.4s · 131072
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",  # 1.9s · 2.2s · 131072
+)
+
+#: provider class name -> the ids we measured on it, used when the provider
+#: ships no static list of its own (see `_provider_models`).
+PINNED_MEASURED_MODELS = {"KiloCode": KILOCODE_MEASURED}
+
+
+def _provider_models(cls) -> list[str]:
+    """The ids a pinned provider may be asked for, without touching the network.
+
+    LLM7 and CohereForAI carry their lists as class attributes, so the installed
+    package is the source and needs no measuring. KiloCode ships `models = []`
+    and fills it only by fetching 394 ids over HTTP, most of which it will not
+    serve for free, so its entry comes from `PINNED_MEASURED_MODELS`.
+    """
+    pinned = PINNED_MEASURED_MODELS.get(getattr(cls, "__name__", ""))
+    if pinned is not None:
+        return [model for model in pinned if isinstance(model, str)]
+    return [model for model in (getattr(cls, "models", None) or [])
+            if isinstance(model, str)]
+
+
 def _pinned_models() -> list[str]:
     """The model ids the pinned providers advertise, read off the installed package.
 
-    Offline and instant — provider classes carry their lists as attributes — and
-    the only catalogue BeeCode may claim, since a request now goes nowhere else.
-    A name outside it is refused before it leaves the machine ("Model x not
-    found" from CohereForAI) or answered 400 by LLM7 ("model_unavailable"):
+    Offline and instant — the provider classes carry their lists as attributes,
+    and the one provider that does not is pinned to what we measured by hand —
+    and the only catalogue BeeCode may claim, since a request now goes nowhere
+    else. A name outside it is refused before it leaves the machine ("Model x
+    not found" from CohereForAI) or answered 400 by LLM7 ("model_unavailable"):
     measured 2026-09-23, LLM7 rejected all 31 curated ids but its own `default`.
     """
     found: list[str] = []
     for cls in _keyless_providers():
-        for model in getattr(cls, "models", None) or []:
-            if isinstance(model, str) and model not in found:
+        for model in _provider_models(cls):
+            if model not in found:
                 found.append(model)
     return found
 
@@ -72,9 +151,56 @@ def _pinned_models() -> list[str]:
 # g4f's lists overstate what the endpoint behind them answers. Measured
 # 2026-09-23 against CohereForAI's Hugging Face space, twice each: `command-r`
 # and `command-r-plus` came back with an empty completion and
-# `command-r7b-arabic-02-2025` stayed silent for 95 s. They are advertised, so
-# they are excluded by name rather than left to be rediscovered as failures.
+# `command-r7b-arabic-02-2025` stayed silent for 95 s. Re-measured 2026-09-24
+# (g4f 8.5.7): the two empties came back empty again in 7.7 s and 9.0 s, and the
+# arabic route was still unanswered at 60 s. They are advertised, so they are
+# excluded by name rather than left to be rediscovered as failures.
 MEASURED_SILENT = ("command-r", "command-r-plus", "command-r7b-arabic-02-2025")
+
+
+# What a keyless route means for the user when it says "not now". Measured
+# 2026-09-24: of KiloCode's 20 candidate ids, 5 did not answer the first two-word
+# prompt (`429 Provider returned error` on glm-5.2, qwen3.8-27b, laguna-xs and
+# inkling-small, an upstream `502 ResourceExhausted` on nemotron-3-nano-omni) and
+# answered in 1-2 s once the minute turned over. Two never did:
+# `qwen/qwen3.8-27b:free` said 429 to eleven of thirteen requests and answered
+# the other two only after refusing the long prompt with a token count twelve
+# times the one we sent, and `thinkingmachines/inkling-small:free` says "Daily
+# limit reached ... Credit" — money, not a minute. Neither is listed.
+#
+# A throttle is not a dead model, and it must not be retried in a loop here: the
+# request that failed already cost the user a turn, and hammering is how a free
+# endpoint gets switched off for the whole address. The pool states the same
+# thing for its 429 (`providers/pool.py`, `_MESSAGE_FOR`), so this is the
+# client-side twin of that hint — wait a minute, or pick another id, once.
+def _rate_limited(text: str) -> bool:
+    lowered = (text or "").lower()
+    return ("429" in lowered or "rate limit" in lowered or "limit reached" in lowered
+            or "too many" in lowered)
+
+
+def _retry_hint(model: str, last_error: str) -> str:
+    """The instruction that belongs on a throttled answer: wait, or pick again."""
+    if not _rate_limited(last_error):
+        return ""
+    return (f" — '{model}' is on a free tier that limits requests per minute. "
+            "Wait about a minute and ask again, or pick another id with /models; "
+            "BeeCode will not retry this in a loop.")
+
+
+def _providers_for(model: str) -> list:
+    """The pinned providers, with whoever advertises `model` moved to the front.
+
+    Nothing is dropped: every pin is still tried in turn, so a provider that
+    answers a name it never advertised keeps working and no request is ever
+    sent without a provider. Only the order changes, because asking LLM7 for a
+    KiloCode id costs a `400 model_unavailable` round trip before the route
+    that actually has it, and a throttled minute is worth the saved second.
+    """
+    ordered = _keyless_providers()
+    serving = set(G4fProvider.upstream_map().get(model) or ())
+    return ([cls for cls in ordered if getattr(cls, "__name__", "") in serving]
+            + [cls for cls in ordered if getattr(cls, "__name__", "") not in serving])
 
 
 def _reasoning_text(delta) -> str:
@@ -112,6 +238,11 @@ class G4fProvider(BaseProvider):
     # holding a 32k prompt and the config default, the next three answer on the
     # same keyless Cohere space, and `default` is LLM7's only id — it will not
     # say which model is behind it, which is why it comes last.
+    #
+    # This is the short list `/model` offers first, not the whole menu: the
+    # seventeen KiloCode ids measured on 2026-09-24 join it in
+    # `discover_models()`, which is what `/models`, the picker and completion
+    # read. Nothing is added there that has not answered a request of ours.
     models = [
         "command-a-03-2025",
         "command-r-plus-08-2024",
@@ -127,10 +258,11 @@ class G4fProvider(BaseProvider):
     def discover_models(cls) -> list[str]:
         """Every model a pinned provider advertises and actually answers.
 
-        There is nothing else to discover: a request goes to LLM7 or
-        CohereForAI or nowhere, so scanning all of `g4f.Provider.__providers__`
-        listed hundreds of names this provider cannot serve. Still offline and
-        instant — the two classes carry their lists as attributes — and still
+        There is nothing else to discover: a request goes to LLM7, CohereForAI
+        or KiloCode, and nowhere else, so scanning all of
+        `g4f.Provider.__providers__` would list hundreds of names this provider
+        cannot serve. Still offline and instant — two classes carry their lists
+        as attributes and the third is pinned to the ids we measured — and still
         excludes `MEASURED_SILENT`, the ids they advertise but answer with an
         empty completion or with silence.
         """
@@ -195,16 +327,16 @@ class G4fProvider(BaseProvider):
 
         The `/models` table prints this under "served by", so scanning all of
         g4f here credited BlackboxPro, Cloudflare and the rest with serving
-        models this provider can never ask them for. Only the two pinned
-        classes answer, so only they are named.
+        models this provider can never ask them for. Only the pinned classes
+        answer, so only they are named — and for KiloCode, which ships no list
+        of its own, the ids are the ones measured on it.
         """
         if cls._upstream_map is not None:
             return cls._upstream_map
         mapping: dict[str, list[str]] = {}
         for pr in _keyless_providers():
-            for model in getattr(pr, "models", None) or []:
-                if isinstance(model, str):
-                    mapping.setdefault(model, []).append(pr.__name__)
+            for model in _provider_models(pr):
+                mapping.setdefault(model, []).append(pr.__name__)
         cls._upstream_map = mapping
         return mapping
 
@@ -265,10 +397,15 @@ class G4fProvider(BaseProvider):
         from g4f.client import AsyncClient
 
         messages = self._sanitize_messages(messages)
-        provider_classes = _keyless_providers()
-        last_error = None
+        provider_classes = _providers_for(model)
+        # Which provider said what. Overwriting one `last_error` in the loop made
+        # the message describe whoever was tried last: with KiloCode in the list
+        # that turned a quiet Hugging Face space into "You need to sign in to use
+        # this model" on the face of a product whose whole promise is no sign-in.
+        failed: list[str] = []
 
         for cls in provider_classes:
+            name = getattr(cls, "__name__", "auto")
             client = AsyncClient(provider=cls)
             try:
                 response = await _await_or_keep(client.chat.completions.create(
@@ -294,21 +431,28 @@ class G4fProvider(BaseProvider):
                         raise ValueError("model returned reasoning only")
                 if text and text.strip():
                     return text
-                last_error = "empty response"
+                failed.append(f"{name}: empty response")
             except Exception as e:
-                last_error = str(e)
+                failed.append(f"{name}: {' '.join(str(e).split())[:160]}")
 
-        raise RuntimeError(f"g4f failed on all providers: {last_error}")
+        last_error = "; ".join(failed) or "no provider answered"
+        raise RuntimeError(f"g4f failed on all providers: {last_error}"
+                           f"{_retry_hint(model, last_error)}")
 
     async def chat_stream(self, messages: list[dict], model: str = "gpt-4") -> AsyncIterator:
         from g4f.client import AsyncClient
 
         messages = self._sanitize_messages(messages)
-        provider_classes = _keyless_providers()
+        provider_classes = _providers_for(model)
         last_error = None
 
         for cls in provider_classes:
             client = AsyncClient(provider=cls)
+            # Bound before the request: a provider that refuses at create() —
+            # which is what a KiloCode 429 does — used to die here on
+            # `UnboundLocalError: got_any`, and the user read that instead of
+            # the rate limit that actually happened.
+            got_any = False
             try:
                 stream = await _await_or_keep(client.chat.completions.create(
                     model=model,
@@ -342,4 +486,5 @@ class G4fProvider(BaseProvider):
                 # the real cause (rate limit, dead endpoint) went unsaid.
                 last_error = f"{getattr(cls, '__name__', 'auto')}: {e}"
 
-        raise RuntimeError(f"g4f streamed nothing for '{model}': {last_error}")
+        raise RuntimeError(f"g4f streamed nothing for '{model}': {last_error}"
+                           f"{_retry_hint(model, str(last_error))}")
