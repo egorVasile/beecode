@@ -274,10 +274,11 @@ You see it happen, and `/token` shows the window it was fitted to:
 
 ### Mistakes are recovered, not fatal
 
-* `list_files`, `read_directory`, `read_files`, `list_dir` — invented names for
-  `list_directory`, accepted as aliases (`aliases` on `ListDirectoryTool`). Only
-  `ToolRegistry.get()` takes them, so `/tools` keeps advertising one canonical
-  name: `🔧 tool name corrected: read_directory → list_directory`
+* `list_files`, `read_directory`, `read_files`, `list_dir`, `webfetch`, `fetch`,
+  `read_url`, `open_url` — invented names for `list_directory` and `web_fetch`,
+  accepted as aliases (`aliases` on those tools). Only `ToolRegistry.get()` takes
+  them, so `/tools` keeps advertising one canonical name:
+  `🔧 tool name corrected: read_directory → list_directory`
   (`tool_renamed` in `beeagent/ui/repl.py`)
 * Near-miss typos (`reaid` → `read`) are repaired; anything else is refused with the
   real tool list handed back to the model, so it corrects itself.
@@ -301,6 +302,7 @@ plugins and MCP servers):
 | `grep` | Search file contents with a regex; skips `.git`, `node_modules`, `__pycache__`, `.venv`, `.beeagent`, `build`, `dist` |
 | `git` | Run git (`status`, `diff`, `log`, `commit`…) — the argv is parsed and guarded, so this is not a shell wearing a git hat |
 | `web_search` | Search the web. **Needs `/allow`** even in `ask` mode: the query leaves the machine, and read-then-search is an exfiltration pair (`WebSearchTool.is_safe`) |
+| `web_fetch` | Read one http(s) page as text: title kept, scripts and styles dropped, size capped out loud. A 404, a binary file, an internal address or a non-http scheme are named and refused rather than returned empty. **Needs `/allow`**, like `web_search` (`WebFetchTool.is_safe`) |
 | `todo` | Keep a task list while working — and it writes it, to `.beeagent/todo.json` |
 | `skill` | Load the full instructions of an installed skill. Registered by the built-in skill loader (`SkillTool` in `beeagent/plugins/loader.py`), not by the core tool loop, so `/extensions` does not list it as a plugin |
 | `diagram` | Draw boxes and arrows, and **return the picture as text**, so the model reads back what it drew and fixes the overlaps itself; the same lines go to an `.svg` beside it — a plain name inside the working directory, `diagram.svg` by default |
@@ -714,13 +716,15 @@ what is allowed — you do.** A reply from a free endpoint is a guess; guessing
 | `auto` | Everything | `/permissions auto` |
 | `readonly` | Only the readers — `todo` and `diagram` are refused here too, and so is any tool you granted | `/permissions readonly` |
 
-`web_search` is in none of those lists: `is_safe()` returns `False` for it on
-purpose, because the query leaves the machine and a tool that can read any file
-plus a tool that can send text out is an exfiltration pair. Grant it with
-`/allow web_search` when you want it.
+`web_search` and `web_fetch` are in none of those lists: `is_safe()` returns
+`False` for them on purpose, because the request leaves the machine and a tool
+that can read any file plus a tool that can send text out is an exfiltration
+pair. Grant them with `/allow web_search` and `/allow web_fetch` when you want
+them — a model that has not been granted one says so instead of quietly
+inventing an answer.
 
 In `ask` mode a tool that changes the machine — `write`, `edit`, `bash`, `git`,
-`web_search`, and anything a plugin or MCP server adds — is refused, and you see why:
+`web_search`, `web_fetch`, and anything a plugin or MCP server adds — is refused, and you see why:
 
 ```
 ⛔ bash command='pytest -q'  blocked — no permission
