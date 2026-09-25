@@ -212,6 +212,36 @@ def test_a_surface_late_three_times_is_taken_away_and_said(isolated):
     assert "4 times" in skins.surfaces()["dropped"]["status"]
 
 
+def test_a_skin_that_recovers_between_frames_keeps_its_surface(isolated):
+    """Overruns have to be *consecutive*: this box compiles while a skin draws.
+
+    Measured here on 2026-09-26: an `on_hud` that does nothing at all spiked past
+    8 ms on the same machine that runs the agent, so a counter that never reset
+    would take the status line away from a working skin an hour into a session —
+    a failure nobody could reproduce, and no notice that made sense of. A skin
+    that is really late has no good frames to reset on, so it still loses it.
+    """
+    skins.configure(frame_budget_ms=1.0, event_budget_ms=1.0, hard_cap_factor=500.0)
+    use("""
+SURFACES = ("status",)
+CALLS = 0
+
+
+def on_status(default):
+    global CALLS
+    CALLS += 1
+    if CALLS % 2:
+        total = 0
+        for i in range(400000):
+            total += i % 7
+    return "spent"
+""")
+    for _ in range(12):
+        assert skins.status_text("mine") == "spent", "lost between late frames"
+    assert skins.owns("status") is True
+    assert skins.surfaces()["dropped"] == {}, skins.surfaces()
+
+
 def test_a_single_very_late_call_stops_the_skin_entirely(isolated):
     """Once per token far past the ceiling is a hang, and a hang is not a style choice."""
     skins.configure(frame_budget_ms=1.0, event_budget_ms=1.0, hard_cap_factor=2.0)

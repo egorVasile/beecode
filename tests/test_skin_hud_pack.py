@@ -26,6 +26,7 @@ import io
 import json
 import re
 import shutil
+import statistics
 import sys
 import time
 
@@ -330,22 +331,31 @@ def test_an_old_painter_still_gets_a_row(host, english):
     assert any("writing" in text for text in old.text), old.text
 
 
-def test_a_frame_stays_inside_the_budget_the_host_demotes_at(host, english):
+def test_a_typical_hud_frame_costs_far_less_than_the_budget(host, english):
+    """The median is the pack's cost; the worst frame on this box is the machine's.
+
+    Measured 2026-09-26 on the machine this was written on: an `on_hud` that does
+    nothing spikes past 8 ms there too, with the agent, a test run and an indexer
+    sharing the cores — so a test on the worst single frame would fail for a reason
+    no skin author can act on. The median is the number this pack owns.
+    """
     install()
     grid, painter = painter_for(120)
     skins.post("tool_start", {"tool": "bash"})
     budget = skins.budget()["frame_ms"]
-    worst = 0.0
-    for _ in range(20):
+    frames = []
+    for _ in range(60):
         skins.frame(painter, 0.08)
         started = time.perf_counter()
         skins.hud_frame(painter, 0.08)
-        worst = max(worst, (time.perf_counter() - started) * 1000.0)
+        frames.append((time.perf_counter() - started) * 1000.0)
+    typical = statistics.median(frames)
     record = skins.stats(NAME)
-    assert worst < budget, "worst HUD frame %.2f ms against a %.0f ms budget" % (
-        worst, budget)
+    assert typical < budget / 4, "median HUD frame %.2f ms against a %.0f ms budget" % (
+        typical, budget)
     assert not record["demoted"], record["reason"]
-    assert not record["dropped"], record["dropped"]
+    assert not record["dropped"], "%s (worst frame %.2f ms)" % (record["dropped"],
+                                                                max(frames))
     assert not painter.frame_warnings, painter.frame_warnings
 
 

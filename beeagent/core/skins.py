@@ -1126,10 +1126,17 @@ def ask(surface: str, default: str = "", *args) -> str:
         if entry.surface_overruns[word] > SURFACE_GRACE_CALLS:
             _drop_surface(entry, word, L(
                 f"{SURFACES[word]} went over {int(_BUDGET['event_ms'])} ms "
-                f"{entry.surface_overruns[word]} times",
+                f"{entry.surface_overruns[word]} times in a row",
                 f"{SURFACES[word]} превысил {int(_BUDGET['event_ms'])} мс "
-                f"{entry.surface_overruns[word]} раз"))
+                f"{entry.surface_overruns[word]} раз подряд"))
             return default
+    else:
+        # A frame that came back under budget ends the streak. The machine this
+        # program runs on also compiles, indexes and searches while a skin is
+        # drawing, and a counter that never reset would take the status line away
+        # from a working skin an hour in, on a busy box, for no reason anybody
+        # could see. A skin that really hangs never gets the reset.
+        entry.surface_overruns[word] = 0
     if answer is None:
         return default
     if not isinstance(answer, str):
@@ -1184,8 +1191,14 @@ def hud_frame(painter=None, dt: float = 0.0) -> bool:
     if elapsed > _BUDGET["frame_ms"]:
         entry.surface_overruns["hud"] = entry.surface_overruns.get("hud", 0) + 1
         if entry.surface_overruns["hud"] >= SURFACE_GRACE_CALLS:
-            _drop_surface(entry, "hud", L(f"on_hud took {elapsed:.1f} ms repeatedly",
-                                          f"on_hud брал {elapsed:.1f} мс снова и снова"))
+            _drop_surface(entry, "hud", L(f"on_hud took {elapsed:.1f} ms in a row "
+                                          f"{entry.surface_overruns['hud']} times",
+                                          f"on_hud брал {elapsed:.1f} мс "
+                                          f"{entry.surface_overruns['hud']} раз подряд"))
+    else:
+        # Consecutive, not cumulative: see the note in `ask()`. A strip that
+        # recovers on the next frame is a strip worth keeping.
+        entry.surface_overruns["hud"] = 0
     return True
 
 
