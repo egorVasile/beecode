@@ -291,7 +291,8 @@ def test_skins_are_shipped_in_the_catalog():
     assert {"plain", "skin-terminal", "skin-hive", "skin-work"} <= names
 
 
-def test_setup_api_is_called_when_a_plugin_loads(tmp_path):
+def test_setup_api_is_called_when_a_plugin_loads(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)     # the loader writes plugins.json to the cwd
     from beeagent.core.agent import Agent
     from beeagent.plugins.loader import PluginLoader
 
@@ -317,8 +318,9 @@ def test_setup_api_is_called_when_a_plugin_loads(tmp_path):
     assert out.output == "привет!"
 
 
-def test_a_reload_does_not_double_what_a_plugin_added(tmp_path):
+def test_a_reload_does_not_double_what_a_plugin_added(tmp_path, monkeypatch):
     """Installing one plugin reloads them all, so setup() runs a second time."""
+    monkeypatch.chdir(tmp_path)     # the loader writes plugins.json to the cwd
     from beeagent.core.agent import Agent
     from beeagent.plugins.loader import PluginLoader
 

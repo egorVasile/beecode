@@ -199,22 +199,154 @@ from beeagent.tools.git import GitTool
 from beeagent.tools.todo import TodoTool
 from beeagent.tools.list_dir import ListDirectoryTool
 
-def test_web_search():
-    tool = WebSearchTool()
-    result = tool.execute(query="python tutorial")
-    assert result.error is False
-    assert len(result.output) > 0
+def test_web_search_answers_from_the_page_it_was_given(monkeypatch):
+    """The parsing is the tool; the fetch is not.
 
-def test_git_status():
-    import os
+    This test used to call `WebSearchTool().execute()` for real, which reached
+    `https://html.duckduckgo.com/html/` over the network on every run and passed
+    only because the box had internet and DuckDuckGo felt like answering.  With
+    the suite-wide socket guard it fails as "the search never answered: BLOCKED:
+    ... socket.create_connection".  A canned page tests what the code decides.
+    """
+    from beeagent.tools import web_search as ws
+
+    page = (
+        '<html><div class="results">'
+        '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fa.example%2Fx">First result</a>'
+        '<a class="result__a" href="https://b.example/y">Second result</a>'
+        '<a class="result__a" href="https://c.example/z">   </a>'    # blank titles dropped
+        "</div></html>"
+    )
+
+    called = []
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        called.append((url, params, headers, timeout))
+        return _SearchResponse(200, page)
+
+    monkeypatch.setattr(ws.httpx, "get", fake_get)
+    result = WebSearchTool().execute(query="python tutorial")
+
+    assert result.error is False
+    assert "First result" in result.output and "https://a.example/x" in result.output, \
+        "the wrapped uddg= has to come back as the page it really opens"
+    assert "Second result" in result.output
+    assert "   https://c.example/z" not in result.output, "a titleless link is not a result"
+    assert called[0][0] == ws.ENDPOINT
+    assert called[0][1] == {"q": "python tutorial"}
+    assert called[0][3] == 10, "a search that hangs must not hang the loop"
+
+
+class _SearchResponse:
+    """The three attributes `WebSearchTool.execute` actually reads."""
+
+    def __init__(self, status_code, text, reason_phrase=""):
+        self.status_code = status_code
+        self.text = text
+        self.reason_phrase = reason_phrase
+
+
+def test_web_search_reports_a_refusal_as_a_refusal_not_as_an_empty_web(monkeypatch):
+    """HTTP 202 with a page of its own used to come back "No results found", error=False.
+
+    A tool that lies about the world is worse than a tool that errors.
+    """
+    from beeagent.tools import web_search as ws
+
+    monkeypatch.setattr(ws.httpx, "get",
+                        lambda *a, **k: _SearchResponse(202, "<html>challenge</html>",
+                                                        "Accepted"))
+    result = WebSearchTool().execute(query="python")
+    assert result.error is True, "a refusal may not be reported as a searched-and-empty answer"
+    assert "202" in result.output and "refused" in result.output.lower()
+
+
+def test_web_search_says_so_when_a_200_holds_no_results(monkeypatch):
+    from beeagent.tools import web_search as ws
+
+    monkeypatch.setattr(ws.httpx, "get",
+                        lambda *a, **k: _SearchResponse(200, "<html><body></body></html>"))
+    result = WebSearchTool().execute(query="nothing")
+    assert result.error is False
+    assert "no result links" in result.output
+
+
+def test_web_search_reports_a_refused_fetch_as_an_error(monkeypatch):
+    from beeagent.tools import web_search as ws
+
+    def boom(*a, **k):
+        raise OSError("no route to host")
+
+    monkeypatch.setattr(ws.httpx, "get", boom)
+    result = WebSearchTool().execute(query="python")
+    assert result.error is True
+    assert "no route to host" in result.output
+
+
+def test_an_empty_query_is_refused_before_the_network_is_touched(monkeypatch):
+    from beeagent.tools import web_search as ws
+
+    def never(*a, **k):
+        raise AssertionError("an empty query must not cost a request")
+
+    monkeypatch.setattr(ws.httpx, "get", never)
+    result = WebSearchTool().execute(query="   ")
+    assert result.error is True
+
+
+def test_web_search_leaves_the_machine_so_must_not_be_safe():
+    """read + search is a working exfiltration pair; the gate has to stay shut."""
+    assert WebSearchTool().is_safe() is False
+
+
+def test_git_status_runs_in_a_real_repository(tmp_path, monkeypatch):
+    """`git status` in a directory that is not a repository is not a pass.
+
+    This used to `os.chdir("C:\\\\agent")` -- a path that exists on exactly one
+    machine, so every other clone got either a FileNotFoundError or, worse, a
+    green test that had quietly stopped checking anything.  The checkout is found
+    by asking where the tests live, and `monkeypatch.chdir` puts the cwd back.
+    """
+    from pathlib import Path
+
+    checkout = Path(__file__).resolve().parent.parent
     tool = GitTool()
-    old_cwd = os.getcwd()
-    os.chdir("C:\\agent")
-    try:
-        result = tool.execute(command="status")
-        assert result.error is False
-    finally:
-        os.chdir(old_cwd)
+
+    monkeypatch.chdir(checkout)
+    assert (checkout / ".git").exists(), "this test only means something in a clone"
+    result = tool.execute(command="status")
+    assert result.error is False, result.output
+    head = ("On branch" in result.output or "HEAD detached" in result.output
+            or "Not currently on any branch" in result.output)
+    assert head, result.output[:200]
+
+    # the negative case the hardcoded path never checked: outside a repository
+    # git must report a failure rather than an empty success
+    monkeypatch.chdir(tmp_path)
+    outside = tool.execute(command="status")
+    assert outside.error is True or "not a git repository" in outside.output, outside.output
+
+
+def test_git_tool_refuses_a_guess_at_a_shell(tmp_path, monkeypatch):
+    """The tool's own promise, tested where the other git test lives.
+
+    None of these strings may reach a process: each is refused by naming the
+    token, and the refusal tells the model what to run instead.
+    """
+    tool = GitTool()
+    monkeypatch.chdir(tmp_path)
+    for command, token in (("-c alias.pwn='!python pwn.py' pwn", "-c"),
+                           ("reset --hard HEAD~1", "--hard"),
+                           ("clean -fdx", "-f"),
+                           ("config user.email a@b", "user.email"),
+                           ("push --force", "--force"),
+                           ("checkout -- .", "."),
+                           ("--git-dir ../other/.git status", "--git-dir")):
+        result = tool.execute(command=command)
+        assert result.error is True, command
+        assert result.output.startswith("refused:"), result.output
+        assert token in result.output.split("—")[0], result.output
+
 
 def test_todo_add_and_list(tmp_path, monkeypatch):
     import beeagent.tools.todo as todo_mod
@@ -233,9 +365,14 @@ def test_todo_add_needs_text_and_ids_must_exist(tmp_path, monkeypatch):
     assert tool.execute(action="done", id=99).error is True  # no fake success
     assert tool.execute(action="remove", id=99).error is True
     assert tool.execute(action="nope").error is True
-    # a corrupt list file must not raise out of the tool
+    # a corrupt list file must not raise out of the tool, and must not read as an
+    # empty plan: "No tasks" used to be the answer, and the next `add` then wrote
+    # over the user's plan with a single line.
     (tmp_path / "todo.json").write_text("{not json", encoding="utf-8")
-    assert tool.execute(action="list").output == "No tasks"
+    result = tool.execute(action="list")
+    assert result.error is True
+    assert "No tasks" not in result.output
+    assert "todo.json" in result.output, "the user needs to know which file is broken"
 
 
 def test_list_directory_shows_dirs_and_sizes(tmp_path):
@@ -356,12 +493,21 @@ def test_bash_survives_the_timeouts_models_send(tmp_path):
         assert "ok" in result.output, f"timeout={value!r} broke the call"
 
 
-def test_bash_timeout_actually_stops_the_process_tree():
-    """subprocess.run kills the child but waits on pipes the grandchildren hold."""
+def test_bash_timeout_actually_stops_the_process_tree(tmp_path, monkeypatch):
+    """subprocess.run kills the child but waits on pipes the grandchildren hold.
+
+    `monkeypatch.chdir` is not decoration here.  The redirect below is a *shell*
+    redirect, so the file is created by bash in the process cwd -- not the
+    `workdir` handed to BeeCode anywhere -- and `nul` is a plain filename under
+    bash while it is a device under cmd.  Without the chdir this test dropped a
+    file named `nul` into the repository root of every clone that ran the suite,
+    next to the `big.svg`/`diagram.svg`/`out.svg` family of the same bug.
+    """
     import time
 
     from beeagent.tools.bash import BashTool
 
+    monkeypatch.chdir(tmp_path)
     started = time.time()
     result = BashTool().execute(command="ping -n 6 127.0.0.1 > nul", timeout=1)
     took = time.time() - started

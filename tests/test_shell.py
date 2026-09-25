@@ -1,9 +1,15 @@
 """Shell tool output: UTF-8 decoding and POSIX syntax on Windows."""
+import time
+
 import pytest
 
 from beeagent.tools.bash import BashTool
 from beeagent.tools.git import GitTool
-from beeagent.tools.shell import decode, run_text, shell_command
+from beeagent.tools.shell import decode, run_argv_text, run_text, shell_command
+
+
+def _has_posix_shell():
+    return shell_command("true")[0].lower().endswith(("bash", "bash.exe", "sh"))
 
 
 def test_decode_reads_utf8():
@@ -52,6 +58,67 @@ def test_bash_tool_reports_failure():
 def test_bash_tool_times_out():
     result = BashTool().execute("sleep 5", timeout=1)
     assert result.error and "timed out" in result.output
+
+
+def test_bash_timeout_kills_the_whole_process_tree(tmp_path):
+    """Pinned: "timed out" must mean the program stopped, not that we stopped waiting.
+
+    `subprocess.run(timeout=…)` kills only the direct child and then waits on the
+    pipes the grandchildren still hold, which is how a one-second timeout came
+    back after four and left the model's `cargo build` running — and writing
+    files — for another minute. The audit measured the tree really dying here;
+    this is the test that keeps it that way.
+    """
+    if not _has_posix_shell():
+        pytest.skip("needs a POSIX shell to background a child")
+    log = tmp_path / "grandchild.log"
+    ticker = tmp_path / "tick.py"
+    ticker.write_text("import sys, time\n"
+                      "while True:\n"
+                      "    with open(sys.argv[1], 'a') as fh:\n"
+                      "        fh.write('tick\\n')\n"
+                      "    time.sleep(0.1)\n", encoding="utf-8")
+    command = f"python '{ticker.as_posix()}' '{log.as_posix()}' & sleep 30"
+
+    started = time.time()
+    result = BashTool().execute(command, timeout=2)
+    assert result.error and "timed out" in result.output
+    assert time.time() - started < 12, "the wait was held open by a survivor"
+
+    first = log.read_text(encoding="utf-8").count("tick")
+    assert first >= 2, f"the grandchild never ran ({first} lines): the test proves nothing"
+    time.sleep(3)
+    assert log.read_text(encoding="utf-8").count("tick") == first, \
+        "an orphan kept writing after the timeout"
+
+
+def test_a_backgrounded_child_holding_the_redirect_does_not_freeze_the_tool(tmp_path):
+    """The redirect is a file, so no pipe is left for a survivor to hold open."""
+    if not _has_posix_shell():
+        pytest.skip("needs a POSIX shell to background a child")
+    started = time.time()
+    result = BashTool().execute("sleep 30 & sleep 30", timeout=2)
+    took = time.time() - started
+    assert result.error and "timed out" in result.output
+    assert took < 10, f"the tool waited {took:.1f}s on a child it had killed"
+
+
+def test_run_argv_env_reaches_the_child():
+    """What `git` relies on to promise `--no-pager` without a shell of its own."""
+    code = "import os; print(os.environ.get('BEECODE_PROBE'))"
+    out, err, code_ = run_argv_text(["python", "-c", code],
+                                    env={"BEECODE_PROBE": "layered over os.environ"})
+    assert code_ == 0, err
+    assert out.strip() == "layered over os.environ"
+
+
+def test_run_argv_env_cannot_be_beaten_by_the_inherited_one(monkeypatch):
+    monkeypatch.setenv("BEECODE_PROBE", "inherited")
+    code = "import os; print(os.environ.get('BEECODE_PROBE'))"
+    out, err, returncode = run_argv_text(["python", "-c", code],
+                                         env={"BEECODE_PROBE": "tool's own"})
+    assert returncode == 0, err
+    assert out.strip() == "tool's own"
 
 
 def test_run_text_returns_streams_separately():

@@ -2,6 +2,8 @@ import os
 from dataclasses import dataclass, field
 from inspect import signature
 
+from beeagent.i18n import L
+
 
 @dataclass
 class ToolResult:
@@ -22,23 +24,85 @@ def read_text_preserving(path) -> str:
         return handle.read()
 
 
+def reject_symlink_target(target: str) -> str:
+    """Stop a write that would replace a symlink with a plain file.
+
+    `os.replace` renames over the *link itself*, not over what it points at. So a
+    "write config.json" on a link into a shared directory would delete that link,
+    leave a regular file in its place and leave the real file holding the old
+    bytes — while the tool announced a clean write. The user then edits a file
+    that nothing else reads, and every other path still linked to the shared one
+    disagrees with it. Nothing in the result says the shape of the tree changed.
+
+    Following the link instead was considered and rejected: `write` on a name
+    inside the project would then rewrite a file the permission check never saw
+    (the diagram tool's linked SVG is exactly this escape), and an atomic rename
+    onto the real file needs a temporary inside a directory the caller never
+    named and may not own. Refusing costs one turn and names the path to use;
+    either success would be a surprise written to disk.
+
+    A caller that wants the link followed — `write` resolves its path before it
+    arrives here, and confines the result to the working directory — hands over a
+    name that is not a link, so this stays a backstop for every other user of the
+    helper: `todo`, plugins, scripts and whatever calls it next.
+
+    Returns the path unchanged when there is nothing to refuse, and raises OSError
+    naming the real file when the target is a link.
+    """
+    if not os.path.islink(target):
+        return target
+    real = os.path.realpath(target)
+    raise OSError(L(
+        f"{target} is a symlink to {real}. Writing it would delete the link and "
+        f"leave a plain file behind, so {real} would keep the old bytes while the "
+        f"result claimed otherwise. Write to {real} instead if the shared file "
+        "really is the target — and expect that to affect everything linked to it.",
+        f"{target} — символьная ссылка на {real}. Запись удалит саму ссылку и "
+        f"оставит обычный файл: {real} сохранил бы старые байты, а результат "
+        f"заявил бы об обратном. Если нужен именно общий файл, пишите напрямую в "
+        f"{real} — и помните, что на него указывают и другие пути."
+    ))
+
+
 def write_text_preserving(path, text: str) -> int:
-    """Write UTF-8 text verbatim through a temporary file; byte count, not char count.
+    """Write UTF-8 text verbatim through a temporary file; the real byte count.
 
     `open(path, "w")` truncates the target before a single byte is verified, so a
     Ctrl+C, a full disk or a killed worker thread turned "edit this file" into
     "delete this file". Writing beside it and renaming is the only sequence where
     the original is still there if we fail.
+
+    The size handed back is measured from the bytes on disk, because the number
+    the model reasons about has to be the number the file really has: a text-mode
+    `handle.write()` returns *characters*, and this function reported that as
+    bytes, so the `write` tool announced "Written 13 bytes" for a 25-byte
+    Cyrillic file.
+
+    Raises OSError for a symlinked target (see `reject_symlink_target`) and for a
+    short write; the target keeps its old bytes in both cases.
     """
     target = str(path)
     tmp = target + ".beecode-tmp"
+    # Encode before anything is created. Text mode writes characters, so a lone
+    # surrogate used to fail halfway and leave half a file on disk — the very
+    # truncate-before-validate this function exists to avoid.
+    payload = text.encode("utf-8")
     try:
-        with open(tmp, "w", encoding="utf-8", newline="") as handle:
-            written = handle.write(text)
+        reject_symlink_target(target)
+        # Binary mode: no newline translation to fight the caller's `newline=""`,
+        # and `written` counts bytes instead of pretending characters are bytes.
+        with open(tmp, "wb") as handle:
+            written = handle.write(payload)
             handle.flush()
-        size = len(text.encode("utf-8")) if written is None else written
+        on_disk = os.path.getsize(tmp)
+        if written != len(payload) or on_disk != len(payload):
+            # A full disk can report a short write without raising. Renaming the
+            # truncated temp file over the target would lose both copies.
+            raise OSError(L(
+                f"incomplete write: {on_disk} of {len(payload)} bytes reached the disk",
+                f"неполная запись: на диске {on_disk} байт из {len(payload)}"))
         os.replace(tmp, target)
-        return size
+        return on_disk
     finally:
         if os.path.exists(tmp):
             try:

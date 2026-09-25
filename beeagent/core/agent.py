@@ -37,6 +37,7 @@ from beeagent.core.session import Session
 from beeagent.core.context import ContextManager
 from beeagent.core.economy import EconomyManager
 from beeagent.core.permissions import Permissions
+from beeagent.core import windows
 from beeagent.core.parser import CommandParser, ParsedCommand, ParsedResponse
 
 
@@ -60,11 +61,62 @@ ACT_NOW = ("[SYSTEM: you described a next step but sent no tool call, so nothing
 
 # Sent back when a call was recognised but could not be read. It goes into the
 # transcript, not just the request: an attempt really was made and refused.
-_RESEND_CALL = ("[BeeCode] Your tool call arrived broken, so nothing was run: {note}. "
+_RESEND_CALL = ("[BeeCode] Your tool call arrived broken, so it was not run: {note}. "
                 "Send it again in one ```json block, with every value on one line — "
                 "write a newline inside a string as \\n, a backslash as \\\\ and a "
                 "quote as \\\". If the content is long, write the first part with "
                 "`write` and add the rest with `edit`.")
+
+# How many turns in a row we re-ask a model whose call keeps arriving cut off.
+# One retry is the model's chance; a second is the loop paying for itself.
+BROKEN_CALL_CHANCES = 2
+
+
+def _gave_up_on_calls() -> str:
+    """What to say when the model's calls keep arriving unreadable."""
+    return L(
+        "Stopping: the model sent a tool call that never arrived complete twice in "
+        "a row and nothing ran, so there is no answer to show. Ask again, or switch "
+        "model (/models).",
+        "Останавливаюсь: модель дважды подряд присылала вызов, который не доехал "
+        "целиком, и ничего не выполнилось — ответа нет. Спроси ещё раз или смени "
+        "модель (/models).")
+
+
+# What a cancelled turn knows about a tool it stopped waiting for. The worker
+# thread runs to completion whatever we do here (asyncio cannot kill it), so the
+# one sentence that is true is that the result was abandoned, not the work.
+_ABANDONED = ("abandoned: the user cancelled this answer, so its result was never "
+              "read. The tool had already started and may still have finished its "
+              "work — check what it changed before doing it again.")
+
+
+def _as_tool_result(raw) -> ToolResult:
+    """Fit whatever an extension returned into the one shape the loop reads.
+
+    A plugin or MCP tool answering with a bare string (the commonest authoring
+    mistake) has still run the call: that is a result in the wrong wrapper, not a
+    crash. Reading `.output` off it outside the try used to end run() with an
+    AttributeError after the assistant row carrying the call was already written,
+    which left the saved transcript ending on a call with no result.
+    """
+    if isinstance(raw, ToolResult):
+        return raw
+    if raw is None:
+        return ToolResult(output="", error=False)
+    if isinstance(raw, str):
+        return ToolResult(output=raw, error=False)
+    output = getattr(raw, "output", None)      # a duck-typed ToolResult of ours
+    if output is not None:
+        return ToolResult(output=str(output), error=bool(getattr(raw, "error", False)))
+    if isinstance(raw, (dict, list, tuple)):
+        return ToolResult(output=json.dumps(raw, ensure_ascii=False), error=False)
+    return ToolResult(output=str(raw), error=False)
+
+
+def _flat(text) -> str:
+    """Whitespace-normalised, lower-cased text: how a copy is compared."""
+    return " ".join(str(text if text is not None else "").split()).lower()
 
 
 def _carries_a_call(parser, text: str) -> bool:
@@ -162,11 +214,15 @@ class Agent:
 
         self.context = ContextManager(
             model=self.config.model, window=self.config.max_context_tokens or None)
+        # A measured window belongs to the endpoint that measured it, and
+        # ContextManager asks for a window by model name alone — so the name the
+        # reads should resolve against is set here and refreshed on every run.
+        windows.note_provider(self.config.provider or "")
         self.parser = CommandParser()
 
         # Skills, plugin tool packs, and MCP servers installed from the catalog.
         from beeagent.plugins.loader import PluginLoader
-        self.plugins = PluginLoader(self)
+        self.plugins = PluginLoader(self, gate_project=True)
         try:
             self.plugins.load_all()
         except Exception:
@@ -184,8 +240,15 @@ class Agent:
 
     def request_stop(self) -> bool:
         """Ask the running turn to end. True if something was actually running."""
+        # Arming an idle agent is NOT the race window: is_busy is the only honest
+        # "a turn exists to stop" — the REPL sets it synchronously before the task
+        # even exists (ui/repl.py:336/353), so busy-then-stop is a real turn already
+        # awaited and must arm, while a False is_busy means there is nothing to stop
+        # and the flag would only wait there to eat the user's next question.
+        if not self.is_busy:
+            return False
         self.stop_requested = True
-        return self.is_busy
+        return True
 
     def sync_config_permissions(self):
         """Mirror the live gate into the config so a save cannot undo it."""
@@ -206,17 +269,45 @@ class Agent:
     # — OpenaiChat in guest mode is the usual culprit. That text is noise on
     # screen and poison in history, so it never counts as an answer.
     ECHO_MARKERS = ("[SYSTEM: You are", "Guest prompt:", "Do NOT say you lack file access")
+    # How much prompt text counts as a recital rather than an answer, and how much
+    # of the reply the copied part has to be for the reply to *be* the copy.
+    ECHO_MIN_CHARS = 60
+    ECHO_SHARE = 0.7
 
     def _is_prompt_echo(self, content: str, messages: list[dict]) -> bool:
-        text = (content or "").strip()
+        """Is this reply the prompt coming back at us, rather than an answer?
+
+        The prompt is the framing we sent: the system header and the rows of the
+        conversation. What a tool read back (`role == "tool"`) is not the prompt —
+        it is the subject the user asked about, and an answer about a file repeats
+        that file almost word for word. Matching the reply against the whole
+        request used to discard those answers as echoes, six paid requests per
+        question, until the user was told "the provider returned an empty answer".
+
+        And a match has to be a copy, not an overlap: one side has to contain the
+        other whole. An answer that opens by restating the question shares text with
+        the prompt and still deserves to be shown.
+        """
+        text = _flat(content)
         if not text:
             return False
-        if any(marker in text for marker in self.ECHO_MARKERS):
+        if any(marker in content for marker in self.ECHO_MARKERS):
             return True
-        if len(text) < 60:
+        if len(text) < self.ECHO_MIN_CHARS:
             return False
-        sent = " ".join(str(m.get("content") or "") for m in messages)
-        return " ".join(text.split()).lower() in " ".join(sent.split()).lower()
+        for message in messages:
+            role = message.get("role")
+            if role == "tool":
+                continue            # what a tool read back is history, not the prompt
+            sent = _flat(message.get("content"))
+            if len(sent) < self.ECHO_MIN_CHARS:
+                continue
+            if text in sent:
+                return True                        # the reply is prompt and nothing else
+            if (role == "system" and sent in text
+                    and len(sent) >= self.ECHO_SHARE * len(text)):
+                return True                        # the reply recites our own framing
+        return False
 
     async def _next_token(self, iterator, idle: int, callback, announce: bool):
         """One streamed chunk, or TimeoutError after `idle` seconds of silence.
@@ -449,15 +540,21 @@ class Agent:
         # was told it was stopping, and the whole answer streamed anyway. The flag
         # is cleared in the finally, when this run is genuinely over.
         self.permissions.denied_this_run.clear()
-        awaiting_result = None
+        # (index in the transcript, tool names) of the assistant row whose calls
+        # still owe a result. Defined before anything can be cancelled, because the
+        # cancel handler below is what reads it.
+        call_row = None
 
         try:
             provider = self._provider_or_pool(callback)
             model = self._model_for(provider, callback)
+            # The context window is measured per endpoint, so reading it back has
+            # to know which endpoint is answering (see core/windows.py).
+            windows.note_provider(getattr(provider, "name", "") or self.config.provider)
             trim_reported = False
             nudged = False
             nudge_pending = False
-            rescued = False
+            broken_streak = 0
 
             # A zero (or a negative, from a hand-edited beeagent.json) used to end
             # the run before the first request and still report "Max turns reached
@@ -561,17 +658,35 @@ class Agent:
                     if callback:
                         callback("tool_repaired", {"notes": parsed.repaired})
 
+                # A call the parser could not read is reported every single time
+                # it happens — to the user, and to the model in the transcript.
+                # It used to be said once, and only when nothing else ran, which
+                # is how "call A plus a cut-off call B" came back as "both notes
+                # are saved".
+                broken_note = ""
+                if parsed.dropped:
+                    broken_streak += 1
+                    broken_note = _RESEND_CALL.format(note="; ".join(parsed.dropped))
+                    if callback:
+                        callback("tool_dropped", {"notes": parsed.dropped})
+                else:
+                    broken_streak = 0
+
                 if not parsed.has_commands:
-                    if parsed.dropped and not rescued:
+                    if broken_note:
                         # The model meant to act and its payload died on the way
                         # out. Ending the turn on "I will create the file now" is
                         # exactly what the user reads as being ignored.
-                        rescued = True
                         session.add_assistant_message(response)
-                        session.add_tool_result(
-                            _RESEND_CALL.format(note="; ".join(parsed.dropped)))
-                        if callback:
-                            callback("tool_dropped", {"notes": parsed.dropped})
+                        session.add_tool_result(broken_note)
+                        if broken_streak >= BROKEN_CALL_CHANCES:
+                            # Re-asked once and it broke again: this is not an
+                            # answer, and handing it to `done` would sell a cut-off
+                            # payload to the user as the final word.
+                            gave_up = _gave_up_on_calls()
+                            if callback:
+                                callback("error", {"message": gave_up})
+                            return gave_up
                         continue
                     session.add_assistant_message(response)
                     if not nudged and _PROMISE_TO_ACT.search(response or ""):
@@ -589,9 +704,14 @@ class Agent:
                         callback("done", {"text": response})
                     return response
 
+                # Every call in this row owes its result from here on, including
+                # a run that ends by cancellation between one call and the next.
+                # What is still owed is read back off the transcript itself, so no
+                # branch of the loop below can forget to account for itself.
                 session.add_assistant_message(response, tool_calls=[
                     {"tool": cmd.tool, "args": cmd.args} for cmd in parsed.commands
                 ])
+                call_row = (len(session.messages), [cmd.tool for cmd in parsed.commands])
 
                 # Execute tool calls one at a time; feed each result back.
                 for cmd in parsed.commands:
@@ -661,12 +781,26 @@ class Agent:
                     try:
                         # Tools are sync (subprocess, MCP, file IO); running them
                         # in a worker thread keeps the prompt and stream alive.
-                        awaiting_result = cmd.tool
-                        result = await asyncio.to_thread(tool.execute, **args)
+                        raw = await asyncio.to_thread(tool.execute, **args)
                     except Exception as e:
-                        result = ToolResult(output=f"ERROR: {e}", error=True)
+                        raw = ToolResult(output=f"ERROR: {e}", error=True)
 
-                    output = result.output if result.output.strip() else "(empty output)"
+                    # All of the bookkeeping is inside one guard, and the result is
+                    # fitted to the ToolResult shape first: an extension that
+                    # answers with a bare string has run its call, and reading
+                    # `.output` off it here used to raise out of run() *after* the
+                    # assistant row carrying the call was written — a transcript
+                    # ending on a call with no result, replayed by every later turn.
+                    try:
+                        result = _as_tool_result(raw)
+                        output = result.output if result.output.strip() else "(empty output)"
+                    except Exception as e:
+                        result = ToolResult(
+                            output=f"ERROR: the tool answered in a shape BeeCode "
+                                   f"could not read: {type(e).__name__}: {e}",
+                            error=True)
+                        output = result.output
+
                     result_text = (
                         f"[tool result] tool={cmd.tool} error={result.error}\n{output}"
                     )
@@ -680,7 +814,6 @@ class Agent:
                               "the closing ```."
                         )
                     session.add_tool_result(result_text)
-                    awaiting_result = None
 
                     if callback:
                         callback("tool_end", {
@@ -690,19 +823,31 @@ class Agent:
                             "error": result.error,
                         })
 
+                if broken_note:
+                    # Some calls ran and one did not: the model still has to hear
+                    # which one it lost, or it answers next turn as if all of them
+                    # went through.
+                    session.add_tool_result(broken_note)
+
             # Max turns reached without a final answer — make it visible.
             if callback:
                 callback("error", {"message": "Max turns reached without a final answer"})
             return "Max turns reached"
         except asyncio.CancelledError:
-            if awaiting_result is not None:
-                # The assistant message carrying this call is already in the
-                # session, and the session is saved and replayed on every later
-                # turn. Left unanswered, one cancelled tool would make a
-                # native-tools provider reject the whole history.
-                session.add_tool_result(
-                    f"[tool result] tool={awaiting_result} error=True\n"
-                    "cancelled by the user before it finished")
+            # Answer every call the last assistant row still owes, not just the one
+            # in flight: a cancel can land between two calls of one turn, and one
+            # unanswered call is enough for a native-tools provider to reject the
+            # whole replayed history.
+            if call_row is not None:
+                row, names = call_row
+                answered = 0
+                for message in session.messages[row:]:
+                    if message.role != "tool":
+                        break
+                    answered += 1
+                for name in names[min(answered, len(names)):]:
+                    session.add_tool_result(
+                        f"[tool result] tool={name} error=True\n{_ABANDONED}")
             raise
         finally:
             self.is_busy = False

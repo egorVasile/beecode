@@ -11,20 +11,45 @@ sees and the agent never does. ASCII in the tool result is the one form both can
 read, and it needs no third-party library, which keeps this installable on
 Termux.
 
+The courtesy is why two rules exist here. The file name is resolved, not
+scrutinised: `..` is easy to spot in a string, but a link or a junction sitting
+under the working directory points anywhere the author of the repo liked, and
+`readme.md:evil.svg` ends in `.svg` while filing its bytes inside another file's
+alternate data stream. And nothing is written for a drawing that was refused --
+the ASCII answer is the deliverable, and a file the picture did not earn is a
+file nobody asked for.
+
 Coordinates are character cells, and the model chooses them. Overlaps and arrows
 that leave the page are reported rather than silently moved: a diagram the agent
 did not choose to change is not its diagram. What is not reported is a bend -- an
 arrow that has to step around someone else's block does so in the text and in the
 SVG alike, off the same route, because a line drawn through a box is a lie in both.
 """
+import os
 from pathlib import Path
 
-from .base import BaseTool, ToolResult
+from .base import BaseTool, ToolResult, write_text_preserving
 
 MIN_BOX_W = 5
 MAX_BOXES = 40
 MAX_EDGES = 80
 CANVAS_LIMIT = 2000        # cells; a wider canvas than this is a mistake, not a drawing
+DEFAULT_FILE = "diagram.svg"
+
+# A label is the caption of a box, not a place to put a file. Live measurement
+# 2026-09-24: `read` takes any path with no grant, and one free model was talked
+# into handing ~/.beecode/pool-key.json to `diagram` as a label -- 18 KB of key
+# that the canvas refused for size while the SVG went to disk anyway. So a label
+# gets a character and a line budget here, and the file a whole-file budget
+# below: enough for a real caption on 40 boxes, and nowhere near enough for a
+# secret to ride through, whatever name it arrives under. The id is budgeted for
+# the same reason: it is written into `data-block` and `data-from` attributes.
+MAX_LABEL_CHARS = 200
+MAX_LABEL_LINES = 6
+MAX_ID_CHARS = 40
+MAX_NAME_CHARS = 120
+MAX_SVG_BYTES = 250_000    # 40 boxes and 80 arrows never reach this; past it the
+                           # drawing is a dump, so it is refused, not written half
 
 
 def _sign(value):
@@ -66,21 +91,70 @@ def _wrap(label: str, width: int) -> list:
     return lines
 
 
+# Characters Windows gives a meaning beyond "a byte in a name". `:` is the one
+# that matters here -- `readme.md:evil.svg` is an alternate data stream filed
+# *inside* readme.md, and it ends in `.svg` so a suffix check never sees it.
+_NT_SPECIAL = set('<>:"|?*')
+
+
+def _odd_name(name: str) -> str:
+    """Why this string is not a plain file name, or "" when it is.
+
+    This is about the shape of the name, not about the working directory: what
+    `readme.md:evil.svg` becomes is the filesystem's doing, and it still ends in
+    `.svg`, so no suffix check can see it. Drive-relative and rooted names are the
+    `_target` rule's, and on POSIX a colon is just a character in a name, which
+    the resolution check there then keeps where it belongs.
+    """
+    if any(ord(ch) < 0x20 or ch == "\x7f" for ch in name):
+        return "holds a control character"
+    if os.name == "nt":
+        if ":" in name:
+            return ("holds a “:” — on Windows that is an alternate data stream filed "
+                    "inside another file, not a new file")
+        odd = sorted(set(name) & _NT_SPECIAL)
+        if odd:
+            return f"holds {odd[0]!r}, which Windows gives another meaning to"
+    return ""
+
+
+def _inside(base, target) -> str:
+    """The path `target` has under `base`, or "" when it is not under it.
+
+    Both sides arrive already resolved, so this compares the paths the filesystem
+    will use, and `normcase` because Windows matches names case-insensitively.
+    """
+    real, here = str(target), str(base).rstrip(os.sep) or os.sep
+    n_real, n_here = os.path.normcase(real), os.path.normcase(here)
+    if not n_real.startswith(n_here + os.sep):
+        return ""
+    return real[len(here) + 1:].replace(os.sep, "/")
+
+
+def _refused(name: str, why: str) -> str:
+    """One sentence telling the model its name earned no file, and what to pass."""
+    return (f"“{name}” {why} — nothing was saved; pass a plain name such as "
+            f"{DEFAULT_FILE}")
+
+
 class DiagramTool(BaseTool):
     name = "diagram"
     description = (
         "Draw boxes with arrows and return the picture as text, so you can see what you "
         "made and fix it. You place the boxes: give each an id, label and cell "
         "coordinates, and each arrow a from/to. Overlaps, unplaceable labels and "
-        "unknown ids are reported. The same lines go into an SVG for the user — any "
-        "name, but it must be an .svg inside the working directory."
+        "unknown ids are reported. The same lines go into an SVG for the user — only "
+        "when there is a picture to save, and only under a plain relative .svg name "
+        "inside the working directory."
     )
     parameters = {
         "type": "object",
         "properties": {
             "blocks": {
                 "type": "array",
-                "description": "Boxes: {id, label, x, y}. x,y are the top-left cell.",
+                "description": "Boxes: {id, label, x, y}. x,y are the top-left cell. "
+                               f"A label is a caption: {MAX_LABEL_CHARS} characters, "
+                               f"{MAX_LABEL_LINES} lines, the rest is not drawn.",
                 "items": {
                     "type": "object",
                     "properties": {
@@ -106,8 +180,11 @@ class DiagramTool(BaseTool):
                 },
             },
             "file": {"type": "string",
-                     "description": "Name for the SVG, default diagram.svg. Must end in "
-                                    ".svg and stay inside the working directory."},
+                     "description": "Name for the SVG, default diagram.svg. A plain "
+                                    "relative name ending in .svg; absolute paths, .., "
+                                    "~, a drive letter and a : are refused, and so is a "
+                                    "name a link or junction under the working directory "
+                                    "leads out of it."},
         },
         "required": ["blocks"],
     }
@@ -123,24 +200,61 @@ class DiagramTool(BaseTool):
     # --- input --------------------------------------------------------------
 
     def _target(self, requested, problems: list):
-        """Where the SVG may land: an .svg name under the working directory.
+        """Where the SVG may land: the real path of a plain relative `.svg`.
 
-        The model supplies this string, so it is checked here rather than
-        trusted: left alone, `file="../../src/app.py"` would have the drawing
-        tool overwrite real source with markup, and no permission grant would
-        have been involved.
+        The model supplies this string, so it is checked here rather than trusted.
+        A lexical check is not a check: it stops `../../src/app.py` and lets a
+        symlinked `diagram.svg`, a junction `out/`, and `readme.md:evil.svg`
+        through, all of which the audited version wrote -- outside the working
+        directory, or inside another file. So the name is resolved to the path the
+        filesystem will use, `Path.resolve` following every link and reparse point
+        in it, and that is what has to sit under the resolved working directory.
+        A `.svg` under a linked directory is therefore *not* inside it, which is
+        the only reading of "inside the working directory" that means anything.
+
+        Returns the resolved path and the name to show the model, or None.
         """
-        name = str(requested or "").strip() or "diagram.svg"
+        name = str(requested or "").strip() or DEFAULT_FILE
+        if len(name) > MAX_NAME_CHARS:
+            # The refusals below quote the name back, and a name the length of a
+            # file would make the refusal one, so it is answered by its first
+            # characters and its real length.
+            problems.append(_refused(name[:32] + "…", f"is {len(name)} characters, which "
+                                                      f"is not a file name"))
+            return None
         candidate = Path(name)
-        if candidate.is_absolute() or ".." in candidate.parts:
-            problems.append(f"“{name}” points outside the working directory — nothing was "
-                            f"saved; pass a plain name such as diagram.svg")
+        # `drive or root` is the anchor: absolute, rooted (`\temp\a.svg`),
+        # drive-relative (`C:escape.svg` follows that drive's own cwd), UNC --
+        # spelled that way because `PurePath.anchor` is 3.12 and this installs on
+        # Termux.
+        if candidate.drive or candidate.root or ".." in candidate.parts:
+            problems.append(_refused(name, "points outside the working directory"))
+            return None
+        if candidate.parts[:1] == ("~",):
+            problems.append(_refused(name, "starts in the home directory, where every "
+                                          "other tool here reads"))
+            return None
+        odd = _odd_name(name)
+        if odd:
+            problems.append(_refused(name, odd))
             return None
         if candidate.suffix.lower() != ".svg":
             problems.append(f"“{name}” is not an .svg — nothing was saved; this tool "
                             f"only writes drawings")
             return None
-        return candidate
+        try:
+            base = Path.cwd().resolve()
+            target = (base / candidate).resolve()
+        except OSError as exc:
+            problems.append(_refused(name, f"cannot be placed (the working directory is "
+                                           f"{exc.strerror or exc})"))
+            return None
+        relative = _inside(base, target)
+        if not relative:
+            problems.append(_refused(name, "points outside the working directory — a link "
+                                           "or junction under it leads elsewhere"))
+            return None
+        return target, relative
 
     def _boxes(self, blocks, problems):
         """Normalised boxes, sized by their own labels."""
@@ -153,13 +267,31 @@ class DiagramTool(BaseTool):
             if not bid:
                 problems.append("a block has no id")
                 continue
+            if len(bid) > MAX_ID_CHARS:
+                # The id is drawn into the file as `data-block`, and every refusal
+                # quotes it back, so it gets a budget of its own. Dropping the box
+                # is the honest half: its arrows then report as naming an unknown
+                # block, which is exactly what they do.
+                problems.append(f"block id {bid[:24]!r}… is {len(bid)} characters, over the "
+                                f"{MAX_ID_CHARS} an id gets — it is drawn into the file, "
+                                f"not just read by it; that block was not drawn")
+                continue
             if bid in boxes:
                 problems.append(f"duplicate block id {bid!r} — the second one was ignored")
                 continue
-            label = str(raw.get("label") or bid)
+            label = " ".join(str(raw.get("label") or bid).split())
+            if len(label) > MAX_LABEL_CHARS:
+                problems.append(f"block {bid!r}: label is {len(label)} characters and was "
+                                f"cut to {MAX_LABEL_CHARS} — a label names a box, it does "
+                                f"not carry a file")
+                label = label[:MAX_LABEL_CHARS].rstrip()
             words = max((len(w) for w in label.split()), default=4)
             width = min(28, max(MIN_BOX_W, min(len(label), words) + 2))
             lines = _wrap(label, width - 2)
+            if len(lines) > MAX_LABEL_LINES:
+                problems.append(f"block {bid!r}: label wraps to {len(lines)} lines and was "
+                                f"cut to {MAX_LABEL_LINES} — fewer words, or a wider box")
+                lines = lines[:MAX_LABEL_LINES]
             try:
                 x, y = int(raw.get("x", 0)), int(raw.get("y", 0))
             except (TypeError, ValueError):
@@ -649,6 +781,42 @@ class DiagramTool(BaseTool):
 
     # --- entry point --------------------------------------------------------
 
+    def _save(self, target, display, boxes, arrows, picture, problems) -> str:
+        """Write the file the picture earned, or say why it has none.
+
+        Two rules, both from the same audit. *No picture, no file:* the canvas
+        refuses a drawing it cannot fit, and the audited version wrote the SVG
+        anyway, so a refused job still left 18 KB of someone's key text sitting in
+        the project. *No partial file:* a drawing over `MAX_SVG_BYTES` is not
+        something to write half of, it is a mistake to report, and a file the model
+        was told nothing about is the worst outcome of the three.
+
+        The bytes go through `write_text_preserving`, which encodes before it
+        creates anything and renames over the target instead of truncating it --
+        so a name that was made into a link after `_target` resolved it is refused
+        rather than followed. The answer is the name to show the model, or "" when
+        nothing was saved.
+        """
+        if not picture:
+            problems.append("nothing could be drawn, so no file was written — fix the "
+                            "layout and call diagram again")
+            return ""
+        svg = self._svg(boxes, arrows)
+        size = len(svg.encode("utf-8", "replace"))
+        if size > MAX_SVG_BYTES:
+            problems.append(f"the SVG would be {size} bytes, over the {MAX_SVG_BYTES} this "
+                            f"tool writes — nothing was saved, not half of it; draw fewer "
+                            f"blocks or shorten the labels")
+            return ""
+        try:
+            # The same arrow list, in the same order, that the ASCII was painted
+            # from: one file cannot hold a connection the other does not show.
+            write_text_preserving(target, svg)
+        except OSError as exc:
+            problems.append(f"the SVG was not written ({exc.strerror or exc})")
+            return ""
+        return display
+
     def execute(self, blocks=None, edges=None, file="") -> ToolResult:
         problems = []
         boxes = self._boxes(blocks, problems)
@@ -662,16 +830,11 @@ class DiagramTool(BaseTool):
         problems.extend(canvas_problems)
 
         picture = "\n".join(row for row in drawn if row.strip())
-        target = self._target(file, problems)
         saved = ""
-        if target is not None:
-            try:
-                # The same arrow list, in the same order, that the ASCII was painted
-                # from: one file cannot hold a connection the other does not show.
-                target.write_text(self._svg(boxes, arrows), encoding="utf-8")
-                saved = str(target)
-            except OSError as exc:
-                problems.append(f"the SVG was not written ({exc.strerror or exc})")
+        placed = self._target(file, problems)
+        if placed is not None:
+            target, display = placed
+            saved = self._save(target, display, boxes, arrows, picture, problems)
 
         report = [f"your diagram, {len(boxes)} blocks and "
                   f"{min(len(edges or []), MAX_EDGES)} arrows:"]

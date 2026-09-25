@@ -1,9 +1,13 @@
 """The diagram tool: what the model sees back has to be true about what it drew."""
+import os
+import subprocess
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import pytest
 
-from beeagent.tools.diagram import DiagramTool, _wrap
+from beeagent.tools.diagram import (DiagramTool, MAX_LABEL_CHARS, MAX_LABEL_LINES,
+                                    MAX_SVG_BYTES, _inside, _odd_name, _wrap)
 
 
 def _root(tmp_path, name):
@@ -59,6 +63,51 @@ def _footprint(rows, rect):
     x1, y1, x2, y2 = rect
     return [[row.ljust(x2 + 1)[x] for x in range(x1, x2 + 1)]
             for row in rows[y1:y2 + 1]]
+
+
+# --- links: the machine decides whether it lets an unprivileged test make one --
+
+def _drop(link):
+    """Remove a link or a junction without touching whatever it points at."""
+    for op in (os.unlink, os.rmdir):
+        try:
+            op(str(link))
+            return
+        except OSError:
+            continue
+
+
+def _link_dir(link, target) -> bool:
+    """Point `link` at a directory `target`: a junction on Windows, a symlink
+    elsewhere. False when this machine will let us make neither, which is the
+    case `test_the_target_is_the_resolved_path` still covers without one."""
+    if os.name == "nt":
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                              capture_output=True)
+        if made.returncode == 0 and link.is_dir():
+            return True
+    try:
+        os.symlink(str(target), str(link), target_is_directory=True)
+        return True
+    except (OSError, NotImplementedError):
+        _drop(link)
+        return False
+
+
+def _link_file(link, target) -> bool:
+    try:
+        os.symlink(str(target), str(link))
+        return True
+    except (OSError, NotImplementedError):
+        _drop(link)
+        return False
+
+
+def _neighbour(tmp_path, label) -> Path:
+    """A directory beside the one the tool may write into, not inside it."""
+    path = tmp_path.parent / f"outside-{label}-{os.getpid()}"
+    path.mkdir(exist_ok=True)
+    return path
 
 
 # Two blocks set diagonally with a third sitting in between them: the plain
@@ -350,3 +399,246 @@ def test_markup_and_unprintable_characters_cannot_break_the_file(tmp_path, monke
         assert ch in joined, f"{ch!r} was deleted from the file instead of escaped"
     assert "\ufffd\ufffd" in joined, "the unprintable pair is still marked as odd"
     assert "\x07" not in joined and "\ud800" not in joined
+
+
+# --- where the SVG may land: the path the filesystem will use, not the string --
+
+def test_a_symlinked_svg_name_does_not_write_through_the_link(tmp_path, monkeypatch):
+    """The audit's first HIGH: a repo that shipped `diagram.svg -> ../victim.py`
+    had that file replaced by markup, with no grant involved. `..` is not the
+    escape; the resolved path is, so that is what has to sit under the cwd."""
+    outside = _neighbour(tmp_path, "symlink")
+    victim = outside / "victim-source.py"
+    victim.write_text("print('real code')\n", encoding="utf-8")
+    work = tmp_path / "repo"
+    work.mkdir()
+    if not _link_file(work / "diagram.svg", victim):
+        pytest.skip("this machine makes no symlinks without extra privilege")
+    monkeypatch.chdir(work)
+    try:
+        result = DiagramTool().execute(blocks=[{"id": "a", "label": "one"}],
+                                       file="diagram.svg")
+        assert victim.read_text(encoding="utf-8") == "print('real code')\n", \
+            "the drawing went through the link"
+        assert result.metadata["file"] == ""
+        assert any("outside the working directory" in p
+                   for p in result.metadata["problems"]), result.metadata
+        assert not (outside / "diagram.svg").exists()
+    finally:
+        _drop(work / "diagram.svg")
+
+
+def test_an_svg_under_a_linked_directory_counts_as_outside(tmp_path, monkeypatch):
+    """A Windows junction `out/` is a plain relative name with no `..` in it, and
+    it led the audited tool's SVG into a directory outside the working one."""
+    outside = _neighbour(tmp_path, "junction")
+    work = tmp_path / "repo"
+    work.mkdir()
+    if not _link_dir(work / "out", outside):
+        pytest.skip("neither a junction nor a symlink directory is allowed here")
+    monkeypatch.chdir(work)
+    try:
+        result = DiagramTool().execute(blocks=[{"id": "a", "label": "one"}],
+                                       file="out/plot.svg")
+        assert not (outside / "plot.svg").exists(), "the drawing landed outside the cwd"
+        assert result.metadata["file"] == ""
+        assert any("outside the working directory" in p
+                   for p in result.metadata["problems"]), result.metadata
+    finally:
+        _drop(work / "out")
+
+
+def test_the_target_rule_is_about_the_resolved_path(tmp_path):
+    """Pinned without a link, so it holds on a machine that will not let us make
+    one -- which is exactly the junction case the audit could not close by hand."""
+    base = tmp_path.resolve()
+    assert _inside(base, base / "a.svg") == "a.svg"
+    assert _inside(base, base / "docs" / "a.svg") == "docs/a.svg"
+    assert _inside(base, base) == "", "a directory is not a file to write"
+    assert _inside(base, (base / ".." / "elsewhere.svg").resolve()) == ""
+    assert _inside(base, Path(str(base) + "s" + os.sep + "a.svg")) == "", \
+        "a sibling whose name merely starts like the cwd is not inside it"
+
+
+def test_a_name_is_judged_by_what_the_filesystem_would_make_of_it():
+    """The suffix check alone passed `readme.md:evil.svg`, because a stream name
+    still ends in `.svg`: the audited tool filed 650 bytes of markup *inside*
+    readme.md. A control character and the other characters Windows reserves are
+    the same class of trick -- the name says one file, the filesystem makes
+    another."""
+    assert _odd_name("diagram.svg") == ""
+    assert _odd_name("docs/arch.svg") == ""
+    assert "control character" in _odd_name("a\x00b.svg")
+    assert "control character" in _odd_name("a\x1fb.svg")
+    if os.name == "nt":
+        assert "alternate data stream" in _odd_name("readme.md:evil.svg")
+        assert _odd_name("C:driveskip.svg")
+        assert _odd_name("notes.txt:diagram.svg")
+    else:
+        assert _odd_name("readme.md:evil.svg") == "", "a POSIX name may hold a colon"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="only Windows files bytes inside a name")
+@pytest.mark.parametrize("name", ["readme.md:evil.svg", "notes.txt:diagram.svg",
+                                  "C:driveskip.svg", "C:\\Windows\\temp\\escape.svg",
+                                  "\\\\server\\share\\a.svg"])
+def test_windows_names_that_leave_the_working_directory_or_the_filesystem(
+        tmp_path, monkeypatch, name):
+    """`readme.md:evil.svg` ends in `.svg` and passed the audited suffix check,
+    writing 650 bytes of markup as an alternate data stream *inside* readme.md.
+    `C:escape.svg` is not absolute either: it follows that drive's own cwd."""
+    monkeypatch.chdir(tmp_path)
+    readme = tmp_path / "readme.md"
+    readme.write_text("# project\n", encoding="utf-8")
+    result = DiagramTool().execute(blocks=[{"id": "a", "label": "one"}], file=name)
+    assert result.metadata["file"] == "", name
+    assert any("outside the working directory" in p or "alternate data stream" in p
+               or "another meaning" in p for p in result.metadata["problems"]), name
+    assert readme.read_text(encoding="utf-8") == "# project\n"
+    listed = subprocess.run(["dir", "/r", str(readme)], capture_output=True, shell=True)
+    assert b":evil" not in listed.stdout and b":diagram" not in listed.stdout
+    if ":" in name:
+        # The control that makes the line above mean something: a stream made by
+        # hand on the same file, which the same probe does see.
+        control = f"{readme}:manual"
+        with open(control, "w", encoding="utf-8") as handle:
+            handle.write("x" * 650)
+        try:
+            shown = subprocess.run(["dir", "/r", str(readme)], capture_output=True,
+                                   shell=True)
+            assert b":manual" in shown.stdout, "the probe cannot see a stream at all"
+        finally:
+            os.remove(control)
+
+
+@pytest.mark.parametrize("name", ["../escape.svg", "../docs/a.svg", "~/pool-key.svg",
+                                  "/tmp/escape.svg", "\x01hidden.svg", "notes.txt",
+                                  "diagram.svg."])
+def test_only_a_plain_relative_svg_name_is_a_target(tmp_path, monkeypatch, name):
+    """Everything the model may pass as `file` has to be one plain relative name
+    ending in .svg: no traversal, no home directory, no absolute path, no control
+    character, no suffix Windows reads differently than it looks."""
+    monkeypatch.chdir(tmp_path)
+    result = DiagramTool().execute(blocks=[{"id": "a", "label": "one"}], file=name)
+    assert result.metadata["file"] == "", name
+    assert not (tmp_path / "diagram.svg").exists(), "a refusal may not fall back"
+    assert any("nothing was saved" in p for p in result.metadata["problems"]), name
+
+
+def test_a_plain_relative_name_in_a_subfolder_still_saves(tmp_path, monkeypatch):
+    """The rule is about escape, not about nesting: a docs/ folder is still the
+    working directory, and the tool is only any use if it keeps drawing there."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "docs").mkdir()
+    result = DiagramTool().execute(
+        blocks=[{"id": "a", "label": "first step", "x": 0, "y": 0},
+                {"id": "b", "label": "second step", "x": 0, "y": 6}],
+        edges=[{"from": "a", "to": "b"}], file="docs/arch.svg")
+    assert result.metadata["file"] == "docs/arch.svg", result.metadata
+    assert (tmp_path / "docs" / "arch.svg").is_file()
+    assert _root(tmp_path / "docs", "arch.svg") is not None
+    assert "file: docs/arch.svg" in result.output
+
+
+# --- no picture, no file -------------------------------------------------------
+
+def test_a_refused_drawing_writes_no_file(tmp_path, monkeypatch):
+    """The audit's second HIGH, and the design error: `read` takes any path with
+    no grant, one free model was talked into passing ~/.beecode/pool-key.json to
+    diagram as a label, and the canvas refused the job while diagram.py wrote the
+    SVG anyway -- 18 KB of key text into architecture.svg, in the project, for the
+    user to commit. No picture means no file, and one honest result."""
+    monkeypatch.chdir(tmp_path)
+    key_text = '{"key": "' + "SECRETRIDER" * 1500 + '"}\n'
+    result = DiagramTool().execute(
+        blocks=[{"id": "api", "label": key_text, "x": 0, "y": 0},
+                {"id": "far", "label": "far", "x": 900, "y": 90}],
+        file="architecture.svg")
+    assert not (tmp_path / "architecture.svg").exists(), "a refused job still wrote"
+    assert not (tmp_path / "diagram.svg").exists()
+    assert result.metadata["file"] == ""
+    assert "(nothing could be drawn)" in result.output
+    assert any("no file was written" in p for p in result.metadata["problems"]), \
+        result.metadata
+    assert not list(tmp_path.rglob("*.svg")), "no SVG of any size survived the refusal"
+
+
+def test_a_file_over_the_size_of_a_drawing_is_refused_whole(tmp_path, monkeypatch):
+    """Too big is a mistake to report, not a reason to write half a file: the SVG
+    on disk is either the picture the model read back or it is not there."""
+    class Oversized(DiagramTool):
+        def _svg(self, boxes, arrows, scale=9):
+            return "<svg xmlns='http://www.w3.org/2000/svg'>" + \
+                   "z" * MAX_SVG_BYTES + "</svg>"
+
+    monkeypatch.chdir(tmp_path)
+    result = Oversized().execute(blocks=[{"id": "a", "label": "one"}], file="huge.svg")
+    assert not (tmp_path / "huge.svg").exists()
+    assert result.metadata["file"] == ""
+    assert any("not half of it" in p for p in result.metadata["problems"]), result.metadata
+
+
+# --- a label is a caption, not a smuggling route -------------------------------
+
+def test_a_label_is_bounded_before_it_sizes_a_box():
+    """18 KB arrived as one label and made a box 195007 cells wide. Both budgets
+    are applied while the box is built, so neither the canvas nor the file is ever
+    sized by the length of a text the tool was handed."""
+    problems = []
+    boxes = DiagramTool()._boxes([{"id": "a", "label": "word " * 3000}], problems)
+    assert len(boxes["a"]["label"]) <= MAX_LABEL_CHARS
+    assert len(boxes["a"]["lines"]) <= MAX_LABEL_LINES
+    assert boxes["a"]["h"] <= MAX_LABEL_LINES + 2
+    assert any("was cut" in p for p in problems), problems
+
+
+def test_an_id_gets_a_budget_too_because_it_is_drawn_into_the_file(
+        tmp_path, monkeypatch):
+    """`data-block="{id}"` is the other door: a box with an empty label takes its
+    id as its caption, and the id itself goes into the markup whatever the label
+    says. It is also quoted back in every refusal, so the result is bounded."""
+    monkeypatch.chdir(tmp_path)
+    secret = "Q" * 5000
+    result = DiagramTool().execute(
+        blocks=[{"id": secret, "label": "", "x": 0, "y": 0},
+                {"id": "ok", "label": "kept", "x": 10, "y": 0}], file="ids.svg")
+    assert any("an id gets" in p for p in result.metadata["problems"]), result.metadata
+    svg = (tmp_path / "ids.svg").read_text(encoding="utf-8")
+    assert "QQQQ" not in svg, "the over-long id reached the file"
+    assert "kept" in svg, "the blocks that were well-formed are still drawn"
+    assert secret[:40] not in result.output, "a refusal quotes a name, not a document"
+
+
+def test_a_file_name_that_long_is_not_a_name(tmp_path, monkeypatch):
+    """Refusals quote the name back, so the name has to be bounded before it is
+    echoed, resolved or written."""
+    monkeypatch.chdir(tmp_path)
+    name = "Q" * 3000 + ".svg"
+    result = DiagramTool().execute(blocks=[{"id": "a", "label": "one"}], file=name)
+    assert result.metadata["file"] == ""
+    assert len(result.output) < 1000, \
+        f"the refusal handed the {len(name)}-character name straight back"
+    assert not list(tmp_path.glob("Q*.svg"))
+
+
+def test_a_long_label_cannot_ride_through_into_the_file(tmp_path, monkeypatch):
+    """What the file may hold of a label is what a caption needs, and no more.
+
+    Counting the marker pairs is the honest measurement: the audited version put
+    all 18 KB of a key into the SVG, and a truncated one that still wrote the
+    surplus would be the same hole with a new number on it.
+    """
+    monkeypatch.chdir(tmp_path)
+    marker = "QZ"
+    secret = marker * 9000
+    result = DiagramTool().execute(
+        blocks=[{"id": "api", "label": secret, "x": 0, "y": 0},
+                {"id": "db", "label": "db", "x": 14, "y": 0}],
+        edges=[{"from": "api", "to": "db"}], file="bounded.svg")
+    svg = (tmp_path / "bounded.svg").read_text(encoding="utf-8")
+    carried = svg.count(marker) * len(marker)
+    assert carried <= MAX_LABEL_CHARS, f"{carried} characters of the label reached the file"
+    assert len(svg) < 4096, f"the file is {len(svg)} bytes, not a dump"
+    assert any("characters and was cut" in p for p in result.metadata["problems"]), \
+        "truncating a label silently would be a lie about the drawing"
+    assert _root(tmp_path, "bounded.svg") is not None

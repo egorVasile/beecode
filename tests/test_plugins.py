@@ -1,5 +1,12 @@
-"""Extension system: catalog, install/remove, loader wiring, MCP round-trip."""
+"""Extension system: catalog, install/remove, loader wiring, MCP round-trip.
+
+Extensions are discovered in `./.beeagent`, so every test here works in a folder
+of its own — and hands the process cwd back itself: conftest checks the cwd at
+teardown, and an autouse fixture that leaves the restoring to `monkeypatch` makes
+every test in the file error after passing.
+"""
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -47,10 +54,20 @@ for line in sys.stdin:
 
 
 @pytest.fixture(autouse=True)
-def isolated_cwd(tmp_path, monkeypatch):
-    """Extensions live in ./.beeagent — keep the repo clean."""
-    monkeypatch.chdir(tmp_path)
-    return tmp_path
+def isolated_cwd(tmp_path):
+    """Extensions live in ./.beeagent — work in a folder of our own, and hand it back.
+
+    The restore is this fixture's own job: conftest's `_restore_cwd` checks the
+    process cwd at teardown, and the undo `monkeypatch.chdir` registers runs after
+    that check, so leaving it to monkeypatch errored every test in this file on a
+    passed assertion.
+    """
+    before = os.getcwd()
+    os.chdir(str(tmp_path))
+    try:
+        yield tmp_path
+    finally:
+        os.chdir(before)
 
 
 @pytest.fixture

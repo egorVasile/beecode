@@ -92,21 +92,28 @@ def kill_process_tree(process) -> None:
             pass
 
 
-def run_argv(argv: list, timeout: int = 60) -> subprocess.CompletedProcess:
+def run_argv(argv: list, timeout: int = 60, env: dict | None = None) -> subprocess.CompletedProcess:
     """Run one argv with bounded output, and really stop it on timeout.
 
     Output goes to temporary files rather than pipes: a pipe has to be drained
     while the child writes or it deadlocks, and draining it means holding all of
     the child's noise in memory. The files also make the size limit honest — we
     read at most MAX_CAPTURE and say so.
+
+    `env` is layered over the inherited environment for the handful of tools
+    that need promises of their own — `git` switches off the pager, the system
+    config and terminal prompts — and it is applied last, so a tool's guarantee
+    cannot be argued out of existence by a value already sitting in the
+    environment.
     """
-    env = dict(os.environ)
+    env_overrides = {key: str(value) for key, value in (env or {}).items()}
+    base = {**os.environ, **env_overrides}
     # Child processes (python, git, pip) must speak UTF-8 too, or Russian text
     # comes back as mangled cp866 bytes.
-    env["PYTHONIOENCODING"] = "utf-8"
+    base["PYTHONIOENCODING"] = "utf-8"
     if not str(argv[0]).lower().endswith("cmd.exe"):
-        env["LC_ALL"] = env.get("LC_ALL") or "C.UTF-8"
-    popen_kwargs = {"env": env,
+        base["LC_ALL"] = base.get("LC_ALL") or "C.UTF-8"
+    popen_kwargs = {"env": base,
                     # A command that reads stdin must not eat the user's keystrokes.
                     "stdin": subprocess.DEVNULL}
     if os.name == "nt":
@@ -156,9 +163,10 @@ def run_text(command: str, timeout: int = 60) -> tuple[str, str, int]:
     return _capped(result.stdout), _capped(result.stderr), result.returncode
 
 
-def run_argv_text(argv: list, timeout: int = 60) -> tuple[str, str, int]:
+def run_argv_text(argv: list, timeout: int = 60,
+                  env: dict | None = None) -> tuple[str, str, int]:
     """The same, for a command that must never reach a shell."""
-    result = run_argv(argv, timeout=timeout)
+    result = run_argv(argv, timeout=timeout, env=env)
     return _capped(result.stdout), _capped(result.stderr), result.returncode
 
 

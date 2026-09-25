@@ -4,6 +4,10 @@
 - skills (SKILL.md) -> listed in the system prompt, full text via `skill` tool
 - MCP servers (mcp.json) -> each server tool becomes mcp_<server>_<tool>,
   schemas discovered once and cached on disk (npx downloads are slow)
+
+The first two are text the folder supplied; the third is a command it supplied.
+None of them is applied from a folder the user has not agreed to — see
+`beeagent/core/trust.py`, and `withheld` below for what was skipped and why.
 """
 from __future__ import annotations
 
@@ -94,14 +98,30 @@ class McpDynamicTool(BaseTool):
 
 
 class PluginLoader:
-    """Wires installed extensions into one Agent instance."""
+    """Wires installed extensions into one Agent instance.
 
-    def __init__(self, agent):
+    `gate_project=True` is the startup path — `Agent()` passing it says "these
+    extensions came with the folder I was started in", and a folder that came from
+    somewhere else does not get to run its own Python or register its own servers
+    until the user agreed to that folder (core/trust.py). A loader built by hand is
+    an embedding program vouching for the bytes, so it is not gated.
+    """
+
+    def __init__(self, agent, gate_project: bool = False):
         self.agent = agent
         self.manager = PluginManager()
         self.mcp = McpManager()
+        from beeagent.core import trust
+
+        self.trust = trust
+        workdir = self.manager.project_root()
+        self.gate = (trust.for_folder(workdir) if gate_project
+                     else trust.unenforced_gate(workdir))
         self.skills: list[Skill] = []
         self.load_errors: list[str] = []
+        # Extensions the folder asked for and BeeCode did NOT run, in words the
+        # user reads: a skipped plugin is never reported as an active one.
+        self.withheld: list[str] = []
         # Names of the tools this loader added, so a reload can remove them.
         self.tool_names: list[str] = []
         # Configured servers whose schemas are not cached yet.
@@ -123,6 +143,40 @@ class PluginLoader:
         self._load_plugins()
         self._load_skills()
         self._load_mcp_servers()
+        self._announce()
+
+    def _announce(self) -> None:
+        """Register the one command that answers for this folder, then ask.
+
+        Both interfaces go through `commands.dispatch`, and this runs before
+        either of them owns the screen: the classic REPL and the TUI build their
+        UIs after `Agent()`, so this is the moment a question can be put — and the
+        moment `/trust` has to exist for the sidebar and the palette to offer it.
+        """
+        if not self.gate.enforced:
+            return
+        from beeagent.core import trust
+
+        try:
+            trust.register_command()
+        except Exception:
+            # No command is not a reason to load code nobody agreed to; the
+            # withholding already happened and stays in effect.
+            pass
+        try:
+            trust_decision = self.gate.announce()
+        except Exception:
+            trust_decision = None
+        if trust_decision == trust.TRUSTED:
+            # Answered at the prompt: the folder's own code can come in now. Only
+            # the two gated passes run again — a `reset()` here would unregister
+            # the `skill` tool that is already answering the model.
+            self._load_plugins()
+            self._load_mcp_servers()
+            # ...and the gate the folder asked for, which `load_config` had held
+            # back: a "y" here means the same thing `/trust yes` means.
+            for line in trust.apply_grant(self.agent, self.gate):
+                trust.report(line)
 
     def reset(self) -> None:
         """Drop every tool this loader registered (before a re-scan)."""
@@ -131,6 +185,7 @@ class PluginLoader:
         self.tool_names.clear()
         self.skills.clear()
         self.load_errors.clear()
+        self.withheld.clear()
         self.pending_mcp.clear()
         self.extensions.clear()
 
@@ -160,6 +215,13 @@ class PluginLoader:
 
         for plugin_dir in self.manager.installed_plugin_dirs():
             entry = plugin_dir / "plugin.py"
+            digest = self.trust.digest_file(entry)
+            if not self.gate.allow("plugin", plugin_dir.name, digest):
+                # Someone else's `exec_module` is a change to how BeeCode behaves,
+                # and this folder has not been agreed to: not imported, not run,
+                # and said out loud (see `_announce`).
+                self._withhold("plugin", plugin_dir.name, entry)
+                continue
             module_name = f"beeagent_plugin_{plugin_dir.name}"
             try:
                 spec = importlib.util.spec_from_file_location(module_name, entry)
@@ -180,6 +242,13 @@ class PluginLoader:
                                        agent=self.agent, config=self.agent.config))
             except Exception as e:
                 self.load_errors.append(f"plugin '{plugin_dir.name}': {e}")
+
+    def _withhold(self, kind: str, name: str, where) -> None:
+        """Record one extension that was not applied, for the question and `/trust`."""
+        line = self.trust.withheld_line(kind, name, where)
+        if line not in self.withheld:
+            self.withheld.append(line)
+        self.gate.withhold(line)
 
     def _load_skills(self) -> None:
         for skill_dir in self.manager.installed_skill_dirs():
@@ -202,6 +271,12 @@ class PluginLoader:
         """
         for server, cfg in self.manager.mcp_servers().items():
             if not cfg.get("enabled", True):
+                continue
+            digest = self.manager.mcp_digest(server, cfg)
+            if not self.gate.allow("mcp", server, digest):
+                # `mcp.json` names a command BeeCode would spawn: same rule as a
+                # plugin.py, because the folder wrote it, not the user.
+                self._withhold("mcp", server, self.manager.mcp_path)
                 continue
             tools = self.mcp.cached_tools(server)
             if tools is None:

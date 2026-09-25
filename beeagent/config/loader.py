@@ -94,12 +94,79 @@ def load_config(workdir: str = ".") -> BeeConfig:
                 "— при следующем сохранении они исчезнут"))
 
     try:
-        return BeeConfig(**data)
+        config = BeeConfig(**data)
     except ValidationError as e:
         _warn(L(f"⚠ {config_path} has invalid values — starting with defaults\n{e}",
                 f"⚠ в {config_path} неверные значения — беру настройки по умолчанию\n{e}"))
         _set_aside(config_path)
         return BeeConfig()
+    return _respect_project_trust(config, workdir)
+
+
+def _respect_project_trust(config: BeeConfig, workdir) -> BeeConfig:
+    """Take back what an unagreed-to folder wrote into the permission gate.
+
+    `{"permissions":{"mode":"auto"}}` in a repository — and the default-looking
+    `{"mode":"ask","allowed":["bash","write"]}` that names the two most damaging
+    tools — both decide this from files the folder shipped, before the first model
+    call, before `/allow`, before the user sees anything. The answer belongs to the
+    user and lives in their home directory, so a clone cannot grant it to itself
+    (see core/trust.py). What is dropped here is only *not applied*: it is recorded
+    with the folder's gate, so the question and `/trust yes` can put it back.
+
+    A failure of the trust layer is not a licence to trust the folder: on any
+    exception the gate stays at the defaults the program ships with.
+    """
+    from beeagent.core import trust
+
+    try:
+        gate = trust.for_folder(workdir)
+        if gate.trusted:
+            return config
+    except Exception:
+        _warn(L("⚠ BeeCode cannot tell whether this folder is one you agreed to — "
+                "the permission gate stays at its defaults",
+                "⚠ BeeCode не может определить, доверяешь ли ты этой папке — "
+                "уровень допуска остаётся по умолчанию"))
+        defaults = BeeConfig()
+        defaults.economy = config.economy
+        return config
+
+    dropped = []
+    defaults = BeeConfig()
+    if config.permissions.mode != defaults.permissions.mode:
+        dropped.append(L(f"beeagent.json set permissions.mode to "
+                         f"\"{config.permissions.mode}\" — it stayed "
+                         f"\"{defaults.permissions.mode}\", the default",
+                         f"beeagent.json задавал permissions.mode = "
+                         f"\"{config.permissions.mode}\" — оставлен "
+                         f"\"{defaults.permissions.mode}\" по умолчанию"))
+        config.permissions.mode = defaults.permissions.mode
+    if config.permissions.allowed:
+        dropped.append(L(f"beeagent.json pre-granted {len(config.permissions.allowed)} "
+                         f"tool(s) ({', '.join(config.permissions.allowed[:8])}) — none "
+                         f"of them is granted",
+                         f"beeagent.json заранее разрешал инструментов: "
+                         f"{', '.join(config.permissions.allowed[:8])} — ничего не разрешено"))
+        config.permissions.allowed = []
+    if config.vpn_command:
+        dropped.append(L("beeagent.json set vpn_command (it runs through a shell) — "
+                         "it is not set",
+                         "beeagent.json задавал vpn_command (запуск через оболочку) — "
+                         "он снят"))
+        config.vpn_command = ""
+    if dropped:
+        _note_gate(gate, dropped)
+    return config
+
+
+def _note_gate(gate, dropped) -> None:
+    """Hand the dropped grants to the folder's gate, which is what asks about them."""
+    try:
+        for line in dropped:
+            gate.withhold(line)
+    except Exception:
+        pass
 
 
 def save_config(config: BeeConfig, workdir: str = "."):

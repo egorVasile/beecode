@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from datetime import datetime
@@ -27,6 +28,18 @@ from beeagent.tools.shell import decode
 PLUGINS_DIR = Path(".beeagent") / "plugins"
 STATE_PATH = Path(".beeagent") / "plugins.json"
 MCP_CONFIG_PATH = Path(".beeagent") / "mcp.json"
+
+
+def _digest(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _entry_digest(cfg: object) -> str:
+    """A stable hash of one MCP server's config, for the same reason as a file's."""
+    try:
+        return _digest(json.dumps(cfg, sort_keys=True).encode("utf-8"))
+    except (TypeError, ValueError):
+        return ""
 
 
 def _as_market_item(item: CatalogItem) -> MarketItem:
@@ -65,6 +78,24 @@ class PluginManager:
         self.plugins_dir = plugins_dir
         self.state_path = state_path
         self.mcp_path = mcp_path
+
+    # --- which folder this is ------------------------------------------------
+
+    def project_root(self) -> Path:
+        """The folder whose `.beeagent/` these extensions belong to.
+
+        Trust is decided per folder (see core/trust.py), so it has to be decided
+        about the place the files live, not about the process' cwd — which is the
+        same thing while BeeCode runs in the project, and stops being the same
+        thing the moment an embedding program points this manager somewhere else.
+        In that case there is no `.beeagent` above the install root, and the
+        caller vouches for the bytes itself.
+        """
+        try:
+            here = Path(self.plugins_dir).resolve()
+        except OSError:
+            here = Path(self.plugins_dir)
+        return here.parent.parent if here.parent.name == ".beeagent" else Path(os.getcwd())
 
     # --- state ---------------------------------------------------------------
 
@@ -128,9 +159,39 @@ class PluginManager:
             "source": item.source,
         }
         self._save_state(state)
+        self._remember_trust(item)
         # The keys of this report are pinned by tests: a caller that wants
         # provenance reads it off the item or the state it just wrote.
         return {"name": item.name, "type": item.type, "description": item.description}
+
+    def _remember_trust(self, item: CatalogItem) -> None:
+        """Pin the bytes this install put on disk, for the folder it put them in.
+
+        The alternative is to ask about a project plugin on every start, which is
+        how the legit case used to look: a user who ran
+        `/plugin install … --trust` — after reading the code, as that flag asks
+        them to — would be asked again the next morning, and would learn to say
+        yes to whatever appears. An install is the act of trust; running the bytes
+        it wrote is not a new one. It stays a hash, not a name: edit the plugin and
+        the question comes back, because the code you approved is not the code
+        that is about to run.
+        """
+        from beeagent.core import trust
+
+        root = self.project_root()
+        if item.type == "mcp" or item.source.get("kind") == "mcp":
+            cfg = self._mcp_config().get("servers", {}).get(item.name)
+            if cfg is not None:
+                trust.record_install(root, _entry_digest(cfg),
+                                     name=item.name, kind="mcp")
+            return
+        for entry in self._find_marker(item.name, "plugin.py"):
+            path = entry / "plugin.py"
+            try:
+                digest = _digest(path.read_bytes())
+            except OSError:
+                continue
+            trust.record_install(root, digest, name=item.name, kind="plugin")
 
     def _install_builtin(self, item: CatalogItem) -> None:
         src = TEMPLATES_DIR / item.source["path"]
@@ -314,6 +375,19 @@ class PluginManager:
                 servers[name] = merged
         return servers
 
+    def mcp_digest(self, name: str, cfg: dict | None = None) -> str:
+        """What the folder says this server is, as a hash the loader can check.
+
+        Read from `mcp.json` itself when the entry is there, because that is the
+        text the install pinned; the merged view an installed server is handed to
+        the loader is rebuilt from the state file, and rebuilding it here would be
+        a second chance to drift.
+        """
+        entry = self._mcp_config().get("servers", {}).get(name)
+        if entry is None:
+            entry = cfg
+        return _entry_digest(entry)
+
     def add_mcp_server(self, name: str, command: str, args: list[str] | None = None,
                        env: dict | None = None) -> None:
         cfg = self._mcp_config()
@@ -335,3 +409,9 @@ class PluginManager:
             "source": {"kind": "mcp", "command": command, "args": list(args or [])},
         }
         self._save_state(state)
+        # Same rule as a plugin install: the server was added by a user standing in
+        # this folder, so the folder may register it without being asked about it.
+        from beeagent.core import trust
+
+        trust.record_install(self.project_root(), self.mcp_digest(name),
+                             name=name, kind="mcp")
