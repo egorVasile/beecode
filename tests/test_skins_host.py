@@ -1335,6 +1335,12 @@ def test_the_classic_banner_prints_what_the_skin_drew(host, monkeypatch):
     from beeagent.ui import components
 
     monkeypatch.setattr(ui_skin, "_active", dict(ui_skin._DEFAULTS))
+    # Pin the slot's *value*, not just the choice. A pack loaded by an earlier file
+    # in the same process can leave a callable under the name the built-in choice
+    # resolves to, and then `print_banner` hands the opening to that pack and
+    # returns — which is correct behaviour for the interface and meaningless for
+    # this test, whose whole question is whether the skin surface wins.
+    monkeypatch.setitem(ui_skin._VARIANTS["banner"], "shimmer", "shimmer")
     skins.register("logoskin", {
         "SURFACES": ("banner",),
         "on_banner": lambda seconds, width, rows, default: "[#123456]MY LOGO[/]",
