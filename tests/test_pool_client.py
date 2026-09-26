@@ -554,7 +554,7 @@ def test_the_fallback_list_is_still_the_shipped_one_and_is_never_asked_silently(
 
     assert provider.models == list(pool_mod.PoolProvider.models)
     assert provider.model_list_state != "live"
-    assert provider.serves("qwen3-coder-480b") is True
+    assert provider.serves(pool_mod.PoolProvider.models[0]) is True
     assert provider.serves("a-model-this-install-never-heard-of") is False
 
 

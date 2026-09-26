@@ -217,13 +217,37 @@ def write_models_cache(name: str, models: list[str]) -> None:
         pass                                        # the config stays the truth
 
 
+#: How long a live model list stays trustworthy. An endpoint rewrites its catalogue
+#: without telling anyone (crax did, 2026-09-26: twelve of thirteen ids ceased to
+#: exist), and the picker offering names that answer `Unknown model` is the report
+#: "the models do not answer" — so a cached list is a cache, with an expiry, not a
+#: fact. Fourteen days: long enough that a sleeping box does not cost the list on
+#: every start, short enough that one `beecode --update` does not leave a person
+#: choosing a dead model for a month.
+MODELS_CACHE_DAYS = 14
+
+
 def cached_models(name: str) -> list[str]:
-    """The models written for this endpoint before, or []."""
+    """The models written for this endpoint before, or [] when that is stale.
+
+    Stale means "written by another BeeCode", "written before this file knew which
+    BeeCode wrote it", or "older than `MODELS_CACHE_DAYS`".
+    """
+    from beeagent import __version__
+
     try:
         data = json.loads(models_cache_path(name).read_text(encoding="utf-8"))
-        return [str(m) for m in data.get("models", []) if str(m).strip()]
     except (OSError, ValueError):
         return []
+    if str(data.get("version") or "") != __version__:
+        return []
+    try:
+        age = time.time() - float(data.get("saved_at") or 0)
+    except (TypeError, ValueError):
+        return []
+    if age > MODELS_CACHE_DAYS * 86400:
+        return []
+    return [str(m) for m in data.get("models", []) if str(m).strip()]
 
 
 def stored_keys(config, name: str) -> list[str]:

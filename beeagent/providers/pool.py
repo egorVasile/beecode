@@ -229,19 +229,19 @@ class PoolStreamError(ProviderStreamError, PoolError):
 
 class PoolProvider(BaseProvider):
     name = "pool"
-    # What the pool answers for, measured on the box itself 2026-09-24: every crax
-    # account's chat models, ordered by how long a six-word reply took. `/models`
-    # still asks the pool for the live list -- this is what the picker shows when it
-    # cannot be reached, because an empty list reads as "the pool has no models"
-    # and sends a person to change provider when the box was only asleep.
+    # What the pool answers for, measured on the box itself. Re-measured
+    # 2026-09-26: the endpoint crax sits on rewrote its catalogue and twelve of the
+    # thirteen names offered here since 2026-09-24 stopped existing — `glm-5.3`,
+    # `glm-5.3-flash` and `glm-5.2` are what answers a chat now, in that order by
+    # measured latency. `/models` still asks the pool for the live list — this is
+    # what the picker shows when it cannot be reached, because an empty list reads
+    # as "the pool has no models" and sends a person to change provider when the
+    # box was only asleep.
     #
     # Read it as a catalogue and not as a promise: once the seat has asked,
     # `self.models` answers with what the pool itself named (see `ModelCatalog`),
     # and `model_list_state` says which of the two the user is looking at.
-    models = ModelCatalog(["qwen3-coder-480b", "gemma-3-12b", "llama-4-maverick",
-                           "gpt-5-6-luna", "kimi-k2-6", "glm-5.2", "grok-4-3",
-                           "glm-5.3-flash", "deepseek-v4-flash", "kimi-k2-7-code",
-                           "glm-5.3", "grok-4-6"])
+    models = ModelCatalog(["glm-5.3", "glm-5.3-flash", "glm-5.2"])
     list_source = ("the pool", "пул")
 
     def __init__(self, url: str = "", token: str = "", idle_timeout: float | None = None):

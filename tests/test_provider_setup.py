@@ -207,3 +207,40 @@ def test_exists_names_every_kind_of_already():
         name="mine", type="openai_compat", url="https://m.test/v1", model="m")])
     assert ps.exists(config, "mine") and ps.exists(config, "groq") and ps.exists(config, "g4f")
     assert not ps.exists(config, "stranger")
+
+
+def test_a_cached_model_list_expires_with_the_version_that_wrote_it(tmp_path, monkeypatch):
+    """The picker must not outlive the endpoint's catalogue.
+
+    `saved_at` and `version` were written into the cache from the start and read by
+    nobody, so a list saved before `beecode --update` kept being offered after it —
+    and on 2026-09-26, when crax dropped twelve of its thirteen ids, that was the
+    difference between a working install and "the models do not answer".
+    """
+    import json
+    import time
+
+    from beeagent import __version__
+    from beeagent.core import provider_setup
+
+    monkeypatch.chdir(tmp_path)
+    name = "mine"
+
+    def write(models, version=__version__, saved_at=None):
+        path = provider_setup.models_cache_path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "saved_at": saved_at if saved_at is not None else time.time(),
+            "version": version, "models": models}), encoding="utf-8")
+
+    write(["glm-5.3"])
+    assert provider_setup.cached_models(name) == ["glm-5.3"]
+
+    write(["glm-5.3"], version="8.0.0")
+    assert provider_setup.cached_models(name) == [], "a list from another build is not a fact"
+
+    write(["glm-5.3"], version="")
+    assert provider_setup.cached_models(name) == [], "an unattributed list is not either"
+
+    write(["glm-5.3"], saved_at=time.time() - 15 * 86400)
+    assert provider_setup.cached_models(name) == [], "the cache has to expire"

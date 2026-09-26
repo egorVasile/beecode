@@ -109,22 +109,20 @@ class CraxProvider(BaseProvider):
     # The catalogue is read from the endpoint on demand (`/pool models`, /models);
     # asking for it on every start would be a request that is not a chat, and the
     # whole point of these keys is that only chat goes out.
-    # Measured through the pool on 2026-09-23, one short question per model: these
-    # 13 answered. The qwen3.5/3.6/3.7/3.8 max-and-plus family did not — every one
-    # of them hung ~15 s and came back 502 from crax's own gateway, which is why
-    # the default below is a code model that answered in 8 s and not the one this
-    # list used to lead with. `kimi-k2-7-code` answered but took 62 s, so it is
-    # last rather than hidden.
+    # Re-measured 2026-09-26, one short question per model: the endpoint answers
+    # `GET /v1/models` with FOUR ids now — `glm-5.3`, `glm-5.3-flash`, `glm-5.2`
+    # and `seedream-5` — and the last one is an image model. The twelve names this
+    # list carried since 2026-09-23 (`qwen3-coder-480b`, `gemma-3-12b`, both
+    # groks, both kimis, `gpt-5-6-luna`, `llama-4-maverick`, `deepseek-v4-flash`)
+    # return `Unknown model` from the chat endpoint: the catalogue is rewritten
+    # without a release, so a list kept here is a snapshot with a date on it.
     #
     # What the endpoint answers for changes without a release, so this is the list
     # shown *until* it is asked: `discover_models()` replaces what `models` reports
     # (see `ModelCatalog`), and routing asks the endpoint's list rather than this
     # one — otherwise a model the picker took from the live catalogue is quietly
     # swapped for the first name written here.
-    models = ModelCatalog(("qwen3-coder-480b", "grok-code-fast-1", "deepseek-v4-flash",
-                           "gemma-3-12b", "llama-4-maverick", "glm-5.3", "glm-5.3-flash",
-                           "grok-4-3", "grok-4-6", "gpt-5-6-luna", "kimi-k2-6", "glm-5.2",
-                           "kimi-k2-7-code"))
+    models = ModelCatalog(("glm-5.3", "glm-5.3-flash", "glm-5.2"))
     label = LABEL
     list_source = (LABEL, LABEL)
     # Verified against the endpoint: it answers `finish_reason: "tool_calls"` and

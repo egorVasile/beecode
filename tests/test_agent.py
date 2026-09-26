@@ -667,3 +667,24 @@ def test_a_native_call_runs_the_tool_without_the_parser(tmp_path, monkeypatch):
     started = [d for e, d in events if e == "tool_start"]
     assert started and started[0]["tool"] == "read", "the call reached the tool"
     assert "tool_repaired" not in [e for e, _ in events], "data needs no repair"
+
+
+def test_a_model_the_endpoint_stopped_serving_is_changed_at_startup():
+    """crax rewrote its catalogue on 2026-09-26; twelve of its thirteen ids ceased to exist.
+
+    A stale `model` in `beeagent.json` used to survive startup untouched, so the
+    first thing the user did — ask a question — came back as a provider 400 that
+    reads as a broken pool. The provider and the model are both known here, so the
+    pair is reconciled here, and the note is returned for the interface to say: a
+    silent swap is a setting the user thinks he still owns.
+    """
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core.agent import Agent
+
+    agent = Agent(config=BeeConfig(provider="pool", model="qwen3-coder-480b"))
+    assert agent.config.model == agent.providers.get("pool").models[0]
+    assert "qwen3-coder-480b" in agent.startup_notes and "/models" in agent.startup_notes
+
+    kept = Agent(config=BeeConfig(provider="pool",
+                                  model=agent.providers.get("pool").models[-1]))
+    assert kept.startup_notes == "", "a model the endpoint serves is nobody's business"

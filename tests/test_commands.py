@@ -194,18 +194,23 @@ def _pool_ctx(url="https://pool.that.will.not.answer"):
     return ReplContext(agent=Agent(config=config), config=config, session=Session())
 
 
-def test_the_pool_still_offers_its_models_when_the_box_cannot_be_reached():
+def test_the_pool_still_offers_its_models_when_the_box_cannot_be_reached(tmp_path,
+                                                                         monkeypatch):
     """A free instance sleeps; an empty picker reads as "the pool has no models".
 
     That sent a person to change provider while the box was merely waking up. The
-    measured list ships with the client for exactly this case.
+    measured list ships with the client for exactly this case — and the run happens
+    in its own folder, because `.beeagent/models_<name>.json` resolves against the
+    process cwd: a list left in the developer's tree by yesterday's probe is not
+    something a test of the shipped fallback should be reading.
     """
     from beeagent.providers.pool import PoolProvider
 
+    monkeypatch.chdir(tmp_path)
     rows = model_choices(_pool_ctx())
     assert rows, "the picker must not be empty because one request failed"
     assert [r[0] for r in rows] == PoolProvider.models
-    assert "qwen3-coder-480b" in rows[0][1]
+    assert PoolProvider.models[0] in rows[0][1]
 
 
 def test_a_non_g4f_picker_labels_the_window_like_every_other():
@@ -260,9 +265,10 @@ def test_switching_provider_back_to_g4f_moves_the_model_with_it(tmp_path, monkey
     agent = Agent(config=config)
     ctx = ReplContext(agent=agent, config=config, session=Session())
     dispatch(ctx, "/provider pool")
-    assert config.model == "qwen3-coder-480b", config.model
+    shipped = agent.providers.get("pool").models[0]
+    assert config.model == shipped, config.model
     dispatch(ctx, "/provider g4f")
-    assert config.model != "qwen3-coder-480b", "g4f cannot serve a crax model id"
+    assert config.model != shipped, "g4f cannot serve a crax model id"
     assert config.model in available_models(ctx)
 
 

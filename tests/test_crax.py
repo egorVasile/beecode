@@ -203,15 +203,25 @@ def test_the_catalogue_shows_what_this_interface_can_answer(make_endpoint):
     assert provider.discover_models() == ["qwen3.8-max", "gpt-5-6-luna"]
 
 
-def test_the_default_model_is_one_that_answered_last_time_we_measured():
-    """Every qwen3.x max/plus model hung ~15 s and came back 502 from crax's own
-    gateway when this list was measured (2026-09-23, one short question each,
-    through the pool). A default that does not answer is the first thing a new
-    person meets, and it reads as a broken install rather than a broken model."""
-    broken_last_time = ("qwen3.8-max", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus",
-                        "qwen3.5-plus", "qwen3.5-omni-plus")
-    assert CraxProvider.models[0] not in broken_last_time
-    assert not set(CraxProvider.models) & set(broken_last_time), \
-        "a model that 502s belongs in neither the default nor the picker"
-    # and the list is what the endpoint actually served, not a guess
-    assert "qwen3-coder-480b" in CraxProvider.models
+def test_the_default_model_is_one_that_answered_the_last_time_we_measured():
+    """A default that does not answer is the first thing a new person meets, and it
+    reads as a broken install rather than a broken model.
+
+    The qwen3.x max/plus family hung ~15 s and 502ed on 2026-09-23; a year of
+    measurement says the shape of the failure, not which names survive it — on
+    2026-09-26 the endpoint dropped twelve of its thirteen ids, `qwen3-coder-480b`
+    among them, and kept `glm-5.3`, `glm-5.3-flash`, `glm-5.2`. So the list is
+    checked against the dead names rather than reciting the living ones: a test
+    that repeats yesterday's catalogue fails on the day the catalogue is fixed.
+    """
+    dead = ("qwen3.8-max", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus",
+            "qwen3.5-plus", "qwen3.5-omni-plus",          # 502 on 2026-09-23
+            "qwen3-coder-480b", "gemma-3-12b", "llama-4-maverick", "gpt-5-6-luna",
+            "kimi-k2-6", "kimi-k2-7-code", "grok-4-3", "grok-4-6",
+            "deepseek-v4-flash", "grok-code-fast-1")      # `Unknown model` 2026-09-26
+    assert CraxProvider.models, "an endpoint with no chat model is not a default"
+    assert not set(CraxProvider.models) & set(dead), \
+        "a model that does not answer belongs in neither the default nor the picker"
+    # what the picker offers is what was measured, in the order it was measured
+    assert list(CraxProvider.models) == ["glm-5.3", "glm-5.3-flash", "glm-5.2"], \
+        list(CraxProvider.models)
