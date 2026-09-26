@@ -122,6 +122,10 @@ class PluginLoader:
         # Extensions the folder asked for and BeeCode did NOT run, in words the
         # user reads: a skipped plugin is never reported as an active one.
         self.withheld: list[str] = []
+        # The same list as names, for code that has to ask "was it this one?":
+        # `withheld` holds localised sentences, and matching a folder name inside
+        # a translated string is how a report stops being true.
+        self.withheld_names: set[str] = set()
         # Names of the tools this loader added, so a reload can remove them.
         self.tool_names: list[str] = []
         # Configured servers whose schemas are not cached yet.
@@ -206,6 +210,7 @@ class PluginLoader:
         self.skills.clear()
         self.load_errors.clear()
         self.withheld.clear()
+        self.withheld_names.clear()
         self.pending_mcp.clear()
         self.extensions.clear()
 
@@ -268,7 +273,12 @@ class PluginLoader:
         line = self.trust.withheld_line(kind, name, where)
         if line not in self.withheld:
             self.withheld.append(line)
+        self.withheld_names.add(f"{kind}:{name}")
         self.gate.withhold(line)
+
+    def is_withheld(self, kind: str, name: str) -> bool:
+        """Whether this folder's gate stopped that extension from running."""
+        return f"{kind}:{name}" in self.withheld_names
 
     def _load_skills(self) -> None:
         for skill_dir in self.manager.installed_skill_dirs():

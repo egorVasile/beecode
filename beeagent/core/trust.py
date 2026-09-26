@@ -698,6 +698,14 @@ def _grant_and_apply(ctx, gate: ProjectTrust) -> str:
                             f"инструменты: {', '.join(added)}"))
         for line in errors:
             report.append(L(f"a plugin failed: {line}", f"сбой плагина: {line}"))
+        # A folder full of skin packs is the case he trusted it for: say what can
+        # now be worn, rather than let him find `/skins` by guessing.
+        from beeagent.core import skins as _skins
+
+        offered = [name for plugin in plugin_names for name in _skins.for_pack(plugin)]
+        if offered:
+            report.append(L(f"skins to wear: {', '.join(offered)} · /skins {offered[0]}",
+                            f"скины можно надеть: {', '.join(offered)} · /skins {offered[0]}"))
     else:
         report.append(L("no agent here: the plugins load the next time BeeCode starts.",
                         "агента нет: плагины загрузятся при следующем запуске BeeCode."))

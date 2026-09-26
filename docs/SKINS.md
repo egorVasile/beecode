@@ -143,6 +143,12 @@ puts it on right away when nothing else was chosen. A skin that draws nothing in
 interface you are in says so in the same row, and a refused one shows the line and
 the token the gate objected to.
 
+One distinction the install line has to keep: a pack BeeCode ships is our own bytes,
+so it registers and is worn in the same breath. A pack from a git or market source is
+stranger code, and until this folder is trusted its `plugin.py` never runs — which
+the answer says plainly, with `/trust yes` as the command that changes it, rather
+than reporting a skin that is on when nothing was loaded.
+
 One licensing fact, because it surprises people: BeeCode is GPL-3.0, its own
 templates are GPL-3.0-or-later, and the market's client-side licence gate
 (`beeagent/plugins/catalog.py`, `OPEN_LICENSES`) does **not** list GPL. A GPL skin

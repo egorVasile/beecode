@@ -438,6 +438,26 @@ def _default_to(func, position, name, default_value, dest):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_command_registry():
+    """`commands.COMMANDS` and `commands.HANDLERS` hold what plugins contributed.
+
+    A plugin that registers `/wc` is doing its job; the test that loaded it is the
+    one that has to put the shipped registry back. Without this the command list
+    grows in file order, and `test_docs_match_code.py` — which reads the same list
+    to check the README — fails three files later, naming neither the suite that
+    leaked nor the plugin that registered.
+    """
+    from beeagent.ui import commands
+
+    before_commands = list(commands.COMMANDS)
+    before_handlers = dict(commands.HANDLERS)
+    yield
+    commands.COMMANDS[:] = before_commands
+    commands.HANDLERS.clear()
+    commands.HANDLERS.update(before_handlers)
+
+
+@pytest.fixture(autouse=True)
 def _no_orphaned_repl_task(request):
     """``repl._ACTIVE_TASK`` is a module global holding a live asyncio task.
 

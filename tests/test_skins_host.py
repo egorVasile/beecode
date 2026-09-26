@@ -942,6 +942,92 @@ def test_a_slot_pack_that_installs_is_told_as_one(host, tmp_path, monkeypatch):
     assert not config.skin, "a slot pack chose a skin"
 
 
+def test_a_plugin_that_is_not_the_interface_says_nothing_about_skins(host, tmp_path,
+                                                                    monkeypatch):
+    """`/plugin install json-tool` has no business talking about the interface.
+
+    The skin line used to answer for every pack that registered no skin, which told
+    the user of a JSON formatter to go and look at `/skin`. Only a pack that really
+    did touch a slot gets that sentence now.
+    """
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core import trust
+    from beeagent.core.agent import Agent
+    from beeagent.ui.commands import ReplContext, dispatch
+
+    monkeypatch.chdir(tmp_path)
+    trust.for_folder(str(tmp_path)).say_trusted()
+    config = BeeConfig()
+    agent = Agent(config=config, workdir=str(tmp_path))
+    ctx = ReplContext(agent=agent, config=config, session=None)
+    result = dispatch(ctx, "/plugin install json-tool")
+    text = result.output.plain if hasattr(result.output, "plain") else str(result.output)
+    assert "installed" in text, text
+    assert "skin" not in text.lower(), text
+
+
+def test_a_pack_the_folder_gate_stopped_names_the_gate(host):
+    """Installed and never run is a trust fact, not "this pack owns slots"."""
+    from beeagent.config.schema import BeeConfig
+    from beeagent.ui.commands import ReplContext, _wear_pack_skin
+
+    stopped = types.SimpleNamespace(
+        is_withheld=lambda kind, name: True,
+        extensions=types.SimpleNamespace(by_plugin=lambda name: []))
+    ctx = ReplContext(agent=types.SimpleNamespace(plugins=stopped), config=BeeConfig())
+    line = _wear_pack_skin(ctx, "skin-foreign")
+    assert "/trust" in line and "skin on" not in line, line
+    assert "look at /skin" not in line, line
+
+
+def test_trusting_a_folder_names_the_skins_it_just_loaded(host, tmp_path, monkeypatch):
+    """The other half of the complaint: he trusted the folder, and still had to guess.
+
+    A hand-written pack is foreign bytes, so the gate holds it back until the folder
+    is trusted; `/trust yes` reloads it, and the answer has to say what that turned
+    on rather than leave `/skins` to be discovered.
+    """
+    import json
+
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core import trust
+    from beeagent.core.agent import Agent
+    from beeagent.ui.commands import ReplContext, dispatch
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BEECODE_TRUST_FILE", str(tmp_path / "trusted.json"))
+    monkeypatch.setattr(trust, "_STORE", None)
+    pack = tmp_path / ".beeagent" / "plugins" / "skin-foreign"
+    pack.mkdir(parents=True)
+    (pack / "plugin.py").write_text(
+        "def setup(api):\n"
+        "    api.skin_hooks('foreign', {'on_frame': lambda dt, painter: None},\n"
+        "                         description='written by a test')\n", encoding="utf-8")
+    (pack / "plugin.json").write_text(json.dumps(
+        {"name": "skin-foreign", "version": "1.0.0", "type": "plugin",
+         "description": "a skin pack from a stranger", "entry": "plugin.py"}),
+        encoding="utf-8")
+    (tmp_path / ".beeagent" / "plugins.json").write_text(json.dumps({"installed": {
+        "skin-foreign": {"type": "plugin", "category": "plugins",
+                         "description": "a skin pack from a stranger", "enabled": True,
+                         "source": {"kind": "git",
+                                    "url": "https://example.invalid/skin-foreign"}}}}),
+        encoding="utf-8")
+
+    config = BeeConfig()
+    agent = Agent(config=config, workdir=str(tmp_path))    # no answer for it yet
+    ctx = ReplContext(agent=agent, config=config, session=None)
+    assert "foreign" not in skins.names(), "an untrusted folder ran its plugin.py"
+    assert agent.plugins.is_withheld("plugin", "skin-foreign")
+
+    result = dispatch(ctx, "/trust yes")
+    text = result.output.plain if hasattr(result.output, "plain") else str(result.output)
+    assert "foreign" in skins.names(), text
+    assert "skins to wear: foreign" in text, text
+    assert "skin: foreign" in dispatch(ctx, "/skins foreign").output.plain
+    assert skins.active_name() == "foreign"
+
+
 def test_a_slot_pack_named_at_skin_points_at_the_right_command(host, clean_commands):
     """`/skin pulse` and `/skin frame` are both better than a usage line."""
     from beeagent.ui import commands as core

@@ -175,6 +175,10 @@ class ExtensionAPI:
                                    pack=self.plugin)
         except Exception:
             return False
+        if not entry.refused:
+            # Said out loud in `/extensions`, the way a slot variant is: a pack that
+            # owns a whole skin has to be visible next to the packs that own a spinner.
+            self.registry.add("skin", f"{name} (hooks)", self.plugin)
         return not entry.refused
 
 

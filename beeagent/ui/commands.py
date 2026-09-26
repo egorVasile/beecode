@@ -1495,13 +1495,29 @@ def _wear_pack_skin(ctx, pack: str) -> str:
     Someone who installs `skin-pulse` off the shelf did it to *wear* it, so if
     nothing is chosen yet this puts it on and saves the choice. If he already wears
     something, that pick is his, not ours to overwrite: the line names the command
-    instead. A pack that registered no skin of its own is a slot pack, and sending
-    him to `/skins` would be a dead end — he needs `/skin`.
+    instead.
+
+    Three other endings have to be told apart, because "I installed a skin and
+    nothing happened" was reported as all three at once: the pack registered no
+    skin and no slot either (say nothing — it is a tool, not the interface), the
+    folder's gate stopped its `plugin.py` from running (say that, and the command
+    that fixes it), and a pack that really does own only slots (send him to `/skin`,
+    where those live).
     """
     from beeagent.core import skins
 
     found = skins.for_pack(pack)
     if not found:
+        loader = getattr(ctx.agent, "plugins", None) if ctx.agent is not None else None
+        if loader is not None and loader.is_withheld("plugin", pack):
+            return L(f"\n  ⚠ nothing is worn yet: this folder is not trusted, so BeeCode "
+                     f"read “{pack}” but never ran it. /trust yes loads it, and the skin "
+                     f"appears in /skins.",
+                     f"\n  ⚠ скин не надет: папка не доверена, BeeCode прочитал «{pack}», "
+                     f"но не запускал его. /trust yes — и скин появится в /skins.")
+        if loader is not None and not any(
+                c.kind == "skin" for c in loader.extensions.by_plugin(pack)):
+            return ""             # a tool that happens to be a plugin: not the interface
         return L("\n  🎨 this pack owns interface slots, not a skin of its own: "
                  "look at /skin",
                  "\n  🎨 у этого пака своего скина нет, он меняет слоты: смотри /skin")
