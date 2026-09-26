@@ -229,6 +229,9 @@ def test_while_it_arrives_the_answer_is_the_tail_and_nothing_else(english):
     assert len(live.split("\n")) <= mod.LIVE_TAIL + 2, len(live.split("\n"))
     assert "line 3999 - item" in live, "the tail is not the tail"
     assert "line 0 - item" not in live
+    rows = [line for line in str(live).split("\n") if line]
+    assert all(line.startswith(mod.RAIL) for line in rows), \
+        "a line of the live answer reached the screen with no rail:\n%s" % rows[:4]
     finished = printed(mod.on_answer("short answer\n- a\n", True), width=40)
     assert "short answer" in finished
 
@@ -462,6 +465,10 @@ def test_the_manifest_and_the_catalog_row_name_the_same_folder():
 
 def test_the_hud_keeps_its_two_rows_useful_and_survives_an_old_painter(english):
     mod = use_pack()
+    # The first event after a switch is the one a busy machine can make expensive
+    # enough for the host to stop the skin outright, and this test is about what
+    # the strip draws, not about that policy (which test_skin_surfaces.py covers).
+    skins.post("nudged", {})
     grid = renderer.Grid(70, 2)
     painter = renderer.Painter(grid, size=(70, 2), depth="truecolor")
     skins.post("tool_start", {"tool": "read_file"})

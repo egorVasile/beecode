@@ -282,12 +282,14 @@ def lines_of(text: str, phase: int = 0, colour_it: bool = True,
             pass
         elif stripped[:1] in ("-", "*", "+") and stripped[1:2] == " ":
             if colour_it:
+                block.append(RAIL + " ", style=tone(phase + marker))
                 block.append(indent + BULLET + " ",
                              style=across(marker, 24, phase))
                 block.append(stripped[2:] + "\n")
                 marker += 1
                 continue
-        elif stripped.startswith("#") and colour_it:
+        elif stripped.startswith("#") and stripped[1:2] == " " and colour_it:
+            block.append(RAIL + " ", style=tone(phase + marker))
             head = stripped.lstrip("#").strip()
             for position in range(len(head)):
                 block.append(head[position], style=across(position, len(head), phase))
