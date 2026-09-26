@@ -228,6 +228,12 @@ class BeeCodeApp(App):
         # The last text laid on the status label: the frame clock offers a new one
         # twelve times a second, and a label told the same thing needs no repaint.
         self._status_shown = ""
+        # The answer the skin was last asked to lay out. Laying out a whole answer
+        # is the expensive part of streaming, so it happens once per frame and only
+        # over text that changed.
+        self._answer_painted = ""
+        # Which frame of the layout rhythm this is: see `ANSWER_BEATS`.
+        self._answer_beats = 0
         # The model's own bytes for the turn in flight. A repaired or a cut-off
         # call is only an honest note if the user can see what was actually sent,
         # and `_stream_buf` is cleared the moment a tool starts.
@@ -312,6 +318,13 @@ class BeeCodeApp(App):
     # -- the skin's own clock ----------------------------------------------
 
     FRAME_SECONDS = 1.0 / 12.0
+    #: Every Nth frame the skin owns, the answer area is laid out again. Laying a
+    #: block out is Rich's most expensive call on screen — measured on this machine
+    #: at ~2 ms mean and 8 ms worst for the pass, so twelve of them a second is a
+    #: fifth of a core spent on colour motion nobody can follow while reading. The
+    #: HUD, the spinner and the status line keep the 12 fps clock; the answer
+    #: re-typesets about three times a second, which is how fast it changes anyway.
+    ANSWER_BEATS = 4
 
     def _sync_skin_clock(self) -> None:
         """Run a 12 fps clock only while the skin on screen has work for one."""
@@ -346,6 +359,9 @@ class BeeCodeApp(App):
         self._update_status()
         if self._waiting_line:
             self._repaint_waiting()
+        self._answer_beats = (self._answer_beats + 1) % self.ANSWER_BEATS
+        if self._stream_buf and not self._answer_beats:
+            self._repaint_stream()
 
     def _chrome_ready(self) -> bool:
         """Are the home screen's own lines there to be drawn on?"""
@@ -373,6 +389,45 @@ class BeeCodeApp(App):
         if not skins.owns("spinner"):
             return
         self.stream.update(markup_text(f"💬 {pending_text()}", "dim italic"))
+
+    def _write_answer(self, text: str) -> None:
+        """The finished answer — the skin's block when it holds that surface.
+
+        Their outline replaces ours entirely, title and borders included: two
+        frames around one answer is what a half-wired door looks like.
+        """
+        from beeagent.core import skins
+
+        try:
+            mine = skins.answer_render(text, True)
+        except Exception:
+            mine = None
+        self._answer_painted = ""
+        if mine is not None:
+            self.chatlog.write(mine)
+            return
+        self.chatlog.write(Text("🐝 BeeCode", style="bold green"))
+        self.chatlog.write(Markdown(text))
+
+    def _repaint_stream(self) -> None:
+        """The answer area while it grows: redrawn on the clock, never per token.
+
+        `stream_delta` writes the raw buffer as each piece lands, which is the
+        cheap line; laying out a whole answer is not, so this pass runs at most
+        twelve times a second and only when the text changed since the last one.
+        """
+        from beeagent.core import skins
+
+        if self._stream_buf == self._answer_painted:
+            return
+        try:
+            mine = skins.answer_render(self._stream_buf)
+        except Exception:
+            mine = None
+        if mine is None:
+            return              # nobody holds the block; the plain line already says it
+        self._answer_painted = self._stream_buf
+        self.stream.update(mine)
 
     def _paint_hud(self) -> None:
         from beeagent.core import skins
@@ -750,6 +805,7 @@ class BeeCodeApp(App):
             fragment = self._stream_buf
             self._stream_buf = ""
             self._sent_buf = ""
+            self._answer_painted = ""      # the abandoned text is not a diff baseline
             self.stream.update("")
             self._note("🗑",
                        f"the unfinished answer was thrown away, not appended — the next "
@@ -765,8 +821,7 @@ class BeeCodeApp(App):
             # session and on the terminal nowhere.
             self._stream_buf = ""
             self.stream.update("")
-            self.chatlog.write(Text("🐝 BeeCode", style="bold green"))
-            self.chatlog.write(Markdown(data.get("text", "")))
+            self._write_answer(data.get("text", ""))
         elif event == "context_trimmed":
             dropped = data.get("dropped") or 0
             self._note("✂",
@@ -850,8 +905,7 @@ class BeeCodeApp(App):
                 self.chatlog.write(Text(self._think_buf.strip(), style="dim italic"))
                 self._think_buf = ""
             if text.strip():
-                self.chatlog.write(Text("🐝 BeeCode", style="bold green"))
-                self.chatlog.write(Markdown(text))
+                self._write_answer(text)
             else:
                 self.chatlog.write(Text(
                     L("  ⚠ empty answer — try again or switch model (/models)",

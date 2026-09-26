@@ -373,7 +373,21 @@ def _render_bash_output(output: str):
     console.print(panel)
 
 def render_response(text: str):
+    """One finished answer — the streamed kind prints itself, this is the block."""
     text = strip_terminal(text)
+    try:
+        from beeagent.core import skins
+
+        mine = skins.answer_render(text, True)
+    except Exception:
+        mine = None
+    if mine is not None:
+        # The skin draws its own outline, title and lists; adding our frame on top
+        # of theirs would be two borders around one answer.
+        console.print()
+        console.print(mine)
+        console.print()
+        return
     console.print()
     # hyperlinks=False: OSC 8 makes a target the model chose clickable,
     # with the display text it also chose sitting on top of it.
