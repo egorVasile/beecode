@@ -765,6 +765,33 @@ def test_a_refusal_names_the_model_that_refused(pool):
     assert body["model"] == "qwen3.8-max"
 
 
+def test_a_refusal_carries_the_reason_the_provider_gave(pool):
+    """The account says why — and the pool used to throw the sentence away.
+
+    Diagnosing a dead pool from the outside means reading a note that said "the
+    account answered, and not with an answer": true of a wrong model name, of a
+    revoked key and of a provider mid-deploy, and useless for telling them apart.
+    The provider's own message now travels to the seat and into the event — with
+    any credential it happens to echo cut out, because a key pasted into an error
+    body is a key in the log.
+    """
+    pool.answers[:] = [(400, '{"error":{"message":"invalid api key '
+                             'sk-abcdefghij0123456789 for this account"}}')]
+    with httpx.Client() as client:
+        token = enroll(client, pool.base)
+        answer = complete(client, pool.base, token, model="gemma-3-12b")
+        body = answer.json()
+    assert answer.status_code == 502
+    assert "invalid api key" in body["error"], body
+    assert "invalid api key" in body["upstream_detail"], body
+    assert "sk-abcdefghij0123456789" not in json.dumps(body), "the key reached the seat"
+    logged = pool.db.execute(
+        "SELECT note FROM events WHERE kind='provider-refused'").fetchall()
+    notes = [row[0] if not isinstance(row, dict) else row["note"] for row in logged]
+    assert any("invalid api key" in str(n) for n in notes), notes
+    assert all("sk-abcdefghij0123456789" not in str(n) for n in notes), notes
+
+
 class InterfaceError(Exception):
     """Named like pg8000's, which is how store.py recognises a dead socket."""
 
@@ -897,8 +924,11 @@ def test_the_measured_list_survives_a_provider_that_will_not_answer(pool, monkey
     """A seat should not lose the catalogue because the listing call failed.
 
     crax blocks some networks outright, so `list_upstream_models` returning []
-    means "could not ask", not "has nothing" -- and the measured ids are the
-    answer either way.
+    means "could not ask", not "has nothing" — and the measured ids are the answer
+    either way. Asserted against `MEASURED_CHAT` rather than named ids on purpose:
+    the endpoint rewrites its catalogue without asking (2026-09-26: twelve of the
+    thirteen names carried here stopped existing), and a test that recites the old
+    list is a test that fails on the day the fix works.
     """
     monkeypatch.setattr(pool_server, "list_upstream_models", lambda p, k: [])
     monkeypatch.setitem(pool_server._state, "keys", {"crax": ["crk_live_test"]})
@@ -908,10 +938,8 @@ def test_the_measured_list_survives_a_provider_that_will_not_answer(pool, monkey
     ids, note = pool_server.cached_models()
 
     assert note == ""
-    assert ids, "the measured list must come through"
-    assert "qwen3-coder-480b" in ids
+    assert ids == list(pool_server.MEASURED_CHAT["crax"]), ids
     assert "seedream-5" not in ids, "an image model never belongs in a chat list"
-    assert "grok-code-fast-1" not in ids, "measured at 23.7s, too slow to offer"
 
 
 def test_an_offered_model_stays_on_the_account_that_was_measured_on_it():
