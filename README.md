@@ -599,6 +599,7 @@ when its dependency is not there instead of failing quietly:
 | `skin-pulse` | a status line that breathes at 12 fps and counts the wait | — |
 | `skin-pet` | a bee that blinks, hides on an error and shivers on a refusal | — |
 | `skin-hud` | takes the lines over: its own wording on the status and waiting lines, and a strip above them with the running tool, a bar for how long this turn has taken, and the token count | — |
+| `skin-shimmer` | draws the **answer**: a honey→leaf outline on all four edges, list markers and headings that walk the ramp, a railed streaming answer, heavy borders on every panel | the classic REPL gets the frame, banner and rail; the answer block and the HUD work in both |
 
 `/skins` lists them, switches between them and shows why a skin was refused or
 demoted; the format a skin implements is in [docs/SKINS.md](docs/SKINS.md).

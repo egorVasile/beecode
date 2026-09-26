@@ -520,6 +520,20 @@
       }
     },
     {
+      "id": "skin-shimmer",
+      "name": "skin-shimmer",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "Answer skin: a honey-to-leaf outline around the reply, list markers and headings that walk the ramp, a railed streaming answer, and a two-row HUD",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/skin-shimmer",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/skin-shimmer"
+      }
+    },
+    {
       "id": "doctor",
       "name": "doctor",
       "type": "plugin",
