@@ -1047,6 +1047,29 @@ def _resolve_claims(entry) -> None:
         entry.notice = entry.notice or f"{word}: {why}"
 
 
+def visible_note(name: str = "") -> str:
+    """One line about what this skin will actually change on the screen.
+
+    The 8.0.0 complaint has one shape: a pack installed, `switch` answered with an
+    empty string, the skin was "active" — and the interface did not move, because
+    nothing asked it anything. A skin that only paints a grid is still legitimate
+    (the classic loop emits that grid), so the answer is to say what is held rather
+    than to refuse the skin.
+    """
+    entry = _REGISTRY.get(name or "") if name else _active_entry()
+    if entry is None or entry.name == BASELINE:
+        return ""
+    held = sorted(word for word in entry.claims if word not in entry.dropped)
+    if held:
+        return L(f"redraws {', '.join(held)}", f"рисует {', '.join(held)}")
+    if _hook(entry.skin, "on_frame") is not None:
+        return L("takes no line of the interface: it paints a grid, and nothing "
+                 "emits that grid in the full-screen interface — expect no change",
+                 "ни одну строку интерфейса не берёт: рисует сетку, которую в "
+                 "полноэкранном интерфейсе никто не выводит — изменений не жди")
+    return L("colours and slots only", "только цвета и слоты")
+
+
 def needs_tick() -> bool:
     """Whether the skin on screen has anything to do on a timer.
 
@@ -1823,8 +1846,10 @@ def _cmd_skins(ctx, args):
         if reason:
             return CommandResult(output=Text(reason, style="bold red"))
         _remember(ctx, "" if active_name() == BASELINE else active_name())
-        return CommandResult(output=Text(
-            L(f"skin: {active_name()}", f"скин: {active_name()}"), style="bold"))
+        line = L(f"skin: {active_name()}", f"скин: {active_name()}")
+        note = visible_note(active_name())
+        return CommandResult(output=Text(line + (f"\n{note}" if note else ""),
+                                         style="bold"))
     return CommandResult(output=Text(listing()))
 
 
@@ -1885,15 +1910,16 @@ def listing() -> str:
             else:
                 note = hooks
                 held = [word for word in entry.claims if word not in entry.dropped]
-                if held:
+                addition = visible_note(entry.name)
+                if addition:
                     # The line a skin is responsible for is the interesting part of
                     # a skin that draws nothing but text: without it, /skins says
                     # "four hooks" and the user cannot tell a colour theme from a
-                    # skin that redrew the answer.
-                    note = L(f"{note} · draws {', '.join(held)}"
-                             + (f" (+{entry.hud_rows} hud rows)" if "hud" in held else ""),
-                             f"{note} · рисует {', '.join(held)}"
-                             + (f" (+{entry.hud_rows} строк hud)" if "hud" in held else ""))
+                    # skin that redrew the answer — or a skin that redraws nothing.
+                    note = f"{note} · {addition}"
+                    if "hud" in held:
+                        note += L(f" (+{entry.hud_rows} hud rows)",
+                                  f" (+{entry.hud_rows} строк hud)")
                 lost = ", ".join(f"{word}: {why}" for word, why in entry.dropped.items())
                 if lost:
                     note = f"{note} · {L('lost', 'потеряно')} {lost}"

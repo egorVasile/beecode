@@ -828,6 +828,29 @@ def test_a_skin_that_is_not_installed_says_so_and_keeps_the_baseline(host, tmp_p
     assert skins.active_name() == skins.BASELINE
 
 
+def test_a_skin_that_takes_no_line_says_so_instead_of_looking_broken(host, clean_commands):
+    """The 8.0.0 complaint, answered: "active" and nothing moved.
+
+    A frame-only skin is legitimate — the classic loop emits its grid — so the fix
+    is not to refuse it but to say, at the moment he switches, that this interface
+    will not change.
+    """
+    assert skins.register_command() is True
+    skins.register("rec", Recorder())                    # on_frame, no claims
+    out = _run(clean_commands, "/skins rec").output.plain
+    assert "skin: rec" in out, out
+    assert "no change" in out or "expect no change" in out, out
+    row = [line for line in _run(clean_commands, "/skins").output.plain.splitlines()
+           if "rec" in line][0]
+    assert "grid" in row, row
+
+    skins.install_source("taker", "SURFACES = ('status',)\n\n\n"
+                                   "def on_status(default):\n    return 'x'\n")
+    held = _run(clean_commands, "/skins taker").output.plain
+    assert "redraws status" in held, held
+    assert _run(clean_commands, "/skins off").output.plain.count("no change") == 0
+
+
 def test_skins_reads_in_both_languages(host, tmp_path, clean_commands):
     """Bilingual wording, checked in UTF-8 files: the console here is cp1251."""
     skins.register("rec", Recorder())
