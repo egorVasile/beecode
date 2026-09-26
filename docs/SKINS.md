@@ -543,6 +543,11 @@ then switch to it:
 ```
 
 `/skins <name>` is a *switch*, and it is the only thing that calls your `on_init`.
+It is also a setting: the name goes into `beeagent.json` as `skin`, and the next
+start puts it back on after the packs have registered it — before them there would
+be no name to switch to. `off` writes an empty value, which means BeeCode's own
+interface. A name nothing registered (a pack uninstalled from this folder) is
+reported by `/extensions` and the baseline stays.
 If it answers with anything other than `skin: <name>`, that sentence is your error:
 `no skin "…" — /skins lists what there is`, a refusal with a line and a token, or
 `skin "…" is stopped: <reason>`.

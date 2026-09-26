@@ -1809,7 +1809,12 @@ def register_command() -> bool:
 
 
 def _cmd_skins(ctx, args):
-    """`/skins` lists, `/skins <name>` switches, `/skins off` takes the baseline back."""
+    """`/skins` lists, `/skins <name>` switches, `/skins off` takes the baseline back.
+
+    The switch is *remembered* on the config, because a skin you chose at 11 pm and
+    lost by lunchtime is a setting nobody can use. Written for any successful
+    switch, and cleared by `off`, so the file always says what is on the screen.
+    """
     from beeagent.ui.commands import CommandResult
     from rich.text import Text
 
@@ -1817,9 +1822,30 @@ def _cmd_skins(ctx, args):
         reason = switch(args[0])
         if reason:
             return CommandResult(output=Text(reason, style="bold red"))
+        _remember(ctx, "" if active_name() == BASELINE else active_name())
         return CommandResult(output=Text(
             L(f"skin: {active_name()}", f"скин: {active_name()}"), style="bold"))
     return CommandResult(output=Text(listing()))
+
+
+def _remember(ctx, name: str) -> None:
+    """Put the chosen skin on the config and save it. Quiet when there is no config.
+
+    Saving is the whole point and the whole risk: a folder where BeeCode cannot
+    write must not turn a working switch into an error message, so a failure here
+    is dropped rather than reported — the skin is on the screen either way.
+    """
+    config = getattr(ctx, "config", None)
+    if config is None or not hasattr(config, "skin"):
+        return
+    try:
+        from beeagent.config.loader import save_config
+
+        if config.skin != name:
+            config.skin = name
+            save_config(config, getattr(getattr(ctx, "agent", None), "workdir", ".") or ".")
+    except Exception:
+        pass
 
 
 def listing() -> str:

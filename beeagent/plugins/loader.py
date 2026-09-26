@@ -143,7 +143,27 @@ class PluginLoader:
         self._load_plugins()
         self._load_skills()
         self._load_mcp_servers()
+        self._wear_skin()
         self._announce()
+
+    def _wear_skin(self) -> None:
+        """Switch to the skin the user chose, once the packs have registered it.
+
+        After the plugins, because a skin is usually contributed by a pack: switched
+        to before them, the name would not exist yet and the choice would look like
+        a broken setting. A name that is still unknown is said once, quietly — the
+        skin may belong to a pack he has not installed in this folder.
+        """
+        from beeagent.core import skins
+
+        wanted = str(getattr(self.agent.config, "skin", "") or "").strip()
+        if not wanted or wanted == skins.BASELINE:
+            return
+        reason = skins.switch(wanted)
+        if reason:
+            # The same list `/extensions` prints for a pack that failed: a setting
+            # that quietly did nothing is the thing people then go reinstalling.
+            self.load_errors.append(reason)
 
     def _announce(self) -> None:
         """Register the one command that answers for this folder, then ask.

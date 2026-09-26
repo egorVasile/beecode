@@ -759,6 +759,75 @@ def test_skins_switches_by_argument_and_says_the_refusal_aloud(host, clean_comma
     assert skins.active_name() == skins.BASELINE
 
 
+def test_a_chosen_skin_comes_back_after_the_restart(host, tmp_path, clean_commands,
+                                                    monkeypatch):
+    """`/skins <name>` is a setting. A skin you put on and lost by lunchtime is not.
+
+    Three things are checked together, because the bug lives between them: the
+    command writing the choice, the file holding it, and the loader wearing it
+    *after* the packs registered it — a switch before them would not find the name,
+    which is why the second half installs a real pack folder rather than registering
+    a skin by hand in this process.
+    """
+    import json
+    import shutil
+
+    from beeagent.config.loader import load_config
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core.agent import Agent
+    from beeagent.ui.commands import ReplContext, dispatch
+
+    assert skins.register_command() is True
+    skins.register("rec", Recorder())
+    config = BeeConfig()
+    ctx = ReplContext(agent=Agent(config=config, workdir=str(tmp_path)),
+                      config=config, session=None)
+    assert "skin: rec" in dispatch(ctx, "/skins rec").output.plain
+    assert config.skin == "rec"
+    saved = json.loads((tmp_path / "beeagent.json").read_text(encoding="utf-8"))
+    assert saved["skin"] == "rec", saved
+
+    # A fresh process, a folder with the pack that owns the name.
+    pack = tmp_path / ".beeagent" / "plugins" / "worn"
+    pack.mkdir(parents=True)
+    (pack / "plugin.py").write_text(
+        "def setup(api):\n"
+        "    api.skin_hooks('rec', {'on_frame': lambda dt, painter: None})\n",
+        encoding="utf-8")
+    (tmp_path / ".beeagent" / "plugins.json").write_text(
+        json.dumps({"installed": {"worn": {"type": "plugin", "enabled": True}}}),
+        encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    from beeagent.core import trust
+
+    trust.for_folder(str(tmp_path)).say_trusted()   # the folder's own answer, as `/trust` gives it
+    skins.reset()
+    assert skins.active_name() == skins.BASELINE
+    second = Agent(config=load_config(str(tmp_path)), workdir=str(tmp_path))
+    assert not second.plugins.load_errors, second.plugins.load_errors
+    assert skins.active_name() == "rec", skins.names()
+
+    # `off` is a choice too, and it has to clear the file rather than leave a name
+    # that would put the skin back on at the next start.
+    dispatch(ctx, "/skins off")
+    cleared = json.loads((tmp_path / "beeagent.json").read_text(encoding="utf-8"))
+    assert not cleared.get("skin"), cleared
+    shutil.rmtree(pack, ignore_errors=True)
+
+
+def test_a_skin_that_is_not_installed_says_so_and_keeps_the_baseline(host, tmp_path):
+    """A folder can name a skin whose pack was uninstalled; that is a report, not a crash."""
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core.agent import Agent
+
+    config = BeeConfig()
+    config.skin = "left-the-building"
+    agent = Agent(config=config, workdir=str(tmp_path))
+    assert agent.plugins.load_errors, "a missing skin was accepted silently"
+    assert "left-the-building" in agent.plugins.load_errors[0]
+    assert skins.active_name() == skins.BASELINE
+
+
 def test_skins_reads_in_both_languages(host, tmp_path, clean_commands):
     """Bilingual wording, checked in UTF-8 files: the console here is cp1251."""
     skins.register("rec", Recorder())

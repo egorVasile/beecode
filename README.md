@@ -719,6 +719,7 @@ the retry wait attached.
 | `permissions.mode` | `ask` | `ask` · `auto` · `readonly` — see [Permissions](#permissions) |
 | `permissions.allowed` | `[]` | Tools pre-approved for every session, e.g. `["bash", "write"]` |
 | `ui` | `{}` | Interface slots: `frame`, `banner`, `spinner`, `stream` — see `/skin` |
+| `skin` | `""` | The code skin to wear from the first frame — `/skins <name>` writes it, `/skins off` clears it |
 | `extensions` | `{}` | Settings owned by plugins, keyed by plugin name |
 | `economy.cache_enabled` | `true` | Turn answer caching off even in economy mode |
 | `economy.cache_dir` | `.beeagent/cache` | Where cached answers live — sessions sit beside it in `.beeagent/sessions/` |

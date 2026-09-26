@@ -73,5 +73,9 @@ class BeeConfig(Model):
     # Interface slots: frame / banner / spinner / stream. "none" is a valid
     # choice for any of them — see /skin.
     ui: dict[str, str] = default(dict)
+    # The programmable skin to wear from the first frame (`/skins <name>` writes
+    # it). Empty means BeeCode's own interface, which is also the safe value: a
+    # skin that is not installed is skipped at startup, not an error.
+    skin: str = ""
     # Settings owned by plugins, by plugin name: {"word-count": {"limit": 20}}.
     extensions: dict[str, dict] = default(dict)
