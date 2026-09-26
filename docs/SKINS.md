@@ -845,6 +845,7 @@ something is missing here.
 | `skin-pet` | an ASCII animal: moods from events, bounded state, and a plain terminal that gets one line |
 | `skin-hud` | **surfaces**: claiming four lines, answering for them, drawing a timed strip, and asking only for what the screen can hold |
 | `skin-shimmer` | **the answer**: a ramp-coloured outline, list markers and headings that walk it, a railed streaming line, heavy borders on every panel, and a two-row HUD |
+| `skin-prism` | **the whole screen**: seven surfaces at once — a crest that loops across the logo under a palette that rotates on its own slower clock, border colours that sit at different points of one cycle per panel, an answer that keeps every character the model wrote, and a two-row HUD |
 | `skin-hive` / `skin-work` / `skin-terminal` | legacy slot packs: colours and callables, no `on_frame` at all |
 | `plain` | frameless interface through the slots |
 

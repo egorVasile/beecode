@@ -1,0 +1,7 @@
+{
+    "name": "skin-prism",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Prism skin: a looping logo cycle over the BEECODE wordmark, a per-role colour spectrum on every panel border, an answer painted in travelling light without losing a character, phased status, spinner and thinking lines, and a two-row HUD strip",
+    "entry": "plugin.py"
+}

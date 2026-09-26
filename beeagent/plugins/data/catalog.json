@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-09-25",
+  "updated": "2026-09-26",
   "categories": [
     "skills",
     "mcp",
@@ -531,6 +531,20 @@
       "source": {
         "kind": "builtin",
         "path": "plugins/skin-shimmer"
+      }
+    },
+    {
+      "id": "skin-prism",
+      "name": "skin-prism",
+      "type": "plugin",
+      "category": "plugins",
+      "description": "The whole screen: a colour cycle that loops across the logo, panel borders that drift round the spectrum by role, an answer block with prism rails, and a two-row HUD",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/egorVasile/beecode",
+      "license_note": "Ships in this repository under GPL-3.0-or-later (LICENSE file and pyproject.toml), template dir beeagent/plugins/templates/plugins/skin-prism",
+      "source": {
+        "kind": "builtin",
+        "path": "plugins/skin-prism"
       }
     },
     {
