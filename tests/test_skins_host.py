@@ -334,6 +334,62 @@ def test_a_frame_past_the_hard_ceiling_demotes_at_once(host):
     assert len(host) == 1
 
 
+def test_one_slow_line_loses_the_line_and_keeps_the_skin(host):
+    """A scheduler gap is not a hang, and the difference is what the user keeps.
+
+    The measured shape of this box: a skin whose steady answer is 0.6 ms posted a
+    single 36 ms frame while two compilers were running, and the old rule answered
+    by taking the whole interface back to plain. Losing one line out loud is the
+    right reaction to a line that is late; stopping a working skin is the reaction
+    to a line that never comes back.
+    """
+    class Stalled:
+        SURFACES = ("status", "spinner")
+
+        def __init__(self):
+            self.calls = 0
+
+        def on_status(self, default):
+            self.calls += 1
+            if self.calls == 1:
+                time.sleep(0.03)      # 30 ms: over 4x of a 5 ms budget, under 8x
+            return "still here"
+
+        def on_spinner(self, default, clock):
+            return "working"
+
+    skin = Stalled()
+    skins.configure(frame_budget_ms=5.0, event_budget_ms=5.0, demote_cap_factor=8.0)
+    skins.register("stalled", skin)
+    skins.switch("stalled")
+    # The late answer is thrown away, not printed late: a line that arrives after
+    # the frame it belongs to has already been drawn is worse than the host's own
+    # words, and the next line is the skin's again only until the surface is lost.
+    assert skins.status_text("d") == "d"
+    assert skins.stats("stalled")["demoted"] is False, "the whole skin died for one gap"
+    held = skins.surfaces("stalled")
+    assert "status" not in held["held"], "the slow line was kept, and nothing was said"
+    assert held["dropped"].get("status"), held
+    assert skins.spinner_text("d", 0.0) == "working", "the other line went with it"
+    assert len(host) == 1, host
+
+
+def test_a_line_that_never_returns_still_stops_everything(host):
+    """The other side of the same rule: 8x on a line is a hang, and hangs end."""
+    class Frozen:
+        SURFACES = ("status",)
+
+        def on_status(self, default):
+            time.sleep(0.05)
+            return "never in time"
+
+    skins.configure(frame_budget_ms=5.0, event_budget_ms=5.0, demote_cap_factor=8.0)
+    skins.register("frozen", Frozen())
+    skins.switch("frozen")
+    assert skins.status_text("the host's own words") == "the host's own words"
+    assert skins.active_name() == skins.BASELINE, "a 50 ms line must not stay on screen"
+
+
 def test_a_faster_skin_resets_the_overrun_counter(host):
     """Consecutive means consecutive: a good frame between two late ones restarts it."""
     class Alternating:
@@ -1278,6 +1334,7 @@ def test_the_classic_banner_prints_what_the_skin_drew(host, monkeypatch):
 
     from beeagent.ui import components
 
+    monkeypatch.setattr(ui_skin, "_active", dict(ui_skin._DEFAULTS))
     skins.register("logoskin", {
         "SURFACES": ("banner",),
         "on_banner": lambda seconds, width, rows, default: "[#123456]MY LOGO[/]",

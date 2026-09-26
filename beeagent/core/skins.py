@@ -240,6 +240,13 @@ FRAME_BUDGET_MS = 8.0
 DEMOTE_AFTER_OVERRUNS = 3
 #: One frame this many times over budget demotes at once, skipping the count.
 HARD_CAP_FACTOR = 4.0
+#: ...and one line of the interface this many times over budget loses that line.
+#: The skin itself is only stopped at `DEMOTE_CAP_FACTOR`: a machine running three
+#: compilers and two test suites hands the scheduler a 40 ms gap now and then, and
+#: the answer to one gap is not "your interface is plain from now on" — that is the
+#: 8.0.0 complaint about skins not applying, arriving from the other direction.
+#: A hang this long (64 ms) is not a gap, and still stops everything.
+DEMOTE_CAP_FACTOR = 8.0
 #: The same clock for the two hooks that run on someone else's thread.
 EVENT_BUDGET_MS = 8.0
 
@@ -624,23 +631,26 @@ _UNKNOWN: dict = {}
 _LAST_FRAME = time.monotonic()
 
 _BUDGET = {"frame_ms": FRAME_BUDGET_MS, "overruns": DEMOTE_AFTER_OVERRUNS,
-           "hard_factor": HARD_CAP_FACTOR, "event_ms": EVENT_BUDGET_MS}
+           "hard_factor": HARD_CAP_FACTOR, "event_ms": EVENT_BUDGET_MS,
+           "demote_factor": DEMOTE_CAP_FACTOR}
 
 
 def configure(frame_budget_ms=None, demote_after_overruns=None,
-              hard_cap_factor=None, event_budget_ms=None, **report_names) -> dict:
+              hard_cap_factor=None, event_budget_ms=None,
+              demote_cap_factor=None, **report_names) -> dict:
     """Move the budget, and report what it is. A skin cannot call this: the
     allow-list gives it no route to this module's namespace.
 
     The names `budget()` reports (`frame_ms`, `overruns`, `hard_factor`,
-    `event_ms`) are accepted too, so a number read out of the host can be handed
-    back unchanged — a report that cannot be fed back is half an API, and the
-    tests that move the clock and restore it are the first callers to notice.
+    `event_ms`, `demote_factor`) are accepted too, so a number read out of the host
+    can be handed back unchanged — a report that cannot be fed back is half an API,
+    and the tests that move the clock and restore it are the first callers to notice.
     """
     frame_budget_ms = report_names.pop("frame_ms", frame_budget_ms)
     demote_after_overruns = report_names.pop("overruns", demote_after_overruns)
     hard_cap_factor = report_names.pop("hard_factor", hard_cap_factor)
     event_budget_ms = report_names.pop("event_ms", event_budget_ms)
+    demote_cap_factor = report_names.pop("demote_factor", demote_cap_factor)
     if report_names:
         raise TypeError(f"unknown budget names: {sorted(report_names)}")
     if frame_budget_ms is not None:
@@ -649,6 +659,8 @@ def configure(frame_budget_ms=None, demote_after_overruns=None,
         _BUDGET["overruns"] = max(1, int(demote_after_overruns))
     if hard_cap_factor is not None:
         _BUDGET["hard_factor"] = max(1.0, float(hard_cap_factor))
+    if demote_cap_factor is not None:
+        _BUDGET["demote_factor"] = max(1.0, float(demote_cap_factor))
     if event_budget_ms is not None:
         _BUDGET["event_ms"] = max(0.0, float(event_budget_ms))
     return dict(_BUDGET)
@@ -1261,14 +1273,19 @@ def ask(surface: str, default="", *args, accept=str, offer=None):
         entry.surface_overruns[word] = entry.surface_overruns.get(word, 0) + 1
         _COUNTS["overruns"] += 1
         if elapsed >= _BUDGET["frame_ms"] * _BUDGET["hard_factor"]:
-            # Once per token on a hot path, this is a hang and not a slow frame:
-            # the skin loses the surface and, being wrong about the clock at all,
-            # stops drawing altogether.
+            # The line is lost at once — a hook that cannot answer in time has no
+            # business holding a piece of the screen. The *skin* is only stopped at
+            # `demote_factor`: this box runs compilers and test suites beside the
+            # interface, and a single 40 ms gap from the scheduler is one slow line,
+            # not a hang. Un-skinning the whole interface for it is the "I installed
+            # a skin and nothing applies" complaint arriving from the other side.
             _drop_surface(entry, word, L(f"{SURFACES[word]} took {elapsed:.1f} ms",
                                          f"{SURFACES[word]} занял {elapsed:.1f} мс"))
-            _demote(entry, L(f"{SURFACES[word]} took {elapsed:.1f} ms on the caller's "
-                             f"thread",
-                             f"{SURFACES[word]} занял {elapsed:.1f} мс в нити вызывающего"))
+            if elapsed >= _BUDGET["frame_ms"] * _BUDGET["demote_factor"]:
+                _demote(entry, L(f"{SURFACES[word]} took {elapsed:.1f} ms on the caller's "
+                                 f"thread",
+                                 f"{SURFACES[word]} занял {elapsed:.1f} мс в нити "
+                                 f"вызывающего"))
             return default
         if entry.surface_overruns[word] > SURFACE_GRACE_CALLS:
             _drop_surface(entry, word, L(
@@ -1912,6 +1929,7 @@ def stats(name: str = "") -> dict:
         "budget_ms": _BUDGET["frame_ms"],
         "demote_after": _BUDGET["overruns"],
         "hard_cap_ms": _BUDGET["frame_ms"] * _BUDGET["hard_factor"],
+        "demote_cap_ms": _BUDGET["frame_ms"] * _BUDGET["demote_factor"],
         "unknown_events": unknown_counts(),
         "renderer": renderer_state(),
         "loop": loop_stats(),
@@ -2130,10 +2148,12 @@ def listing() -> str:
         lines.append(f" {mark} {name.ljust(width)}  {note}{tally}")
     numbers = budget()
     footer = L(f"budget {numbers['frame_ms']:g} ms per frame, "
-               f"{numbers['hard_factor']:g}x is a hang, demote after "
+               f"{numbers['hard_factor']:g}x loses that line, "
+               f"{numbers['demote_factor']:g}x is a hang, demote after "
                f"{numbers['overruns']} in a row",
                f"бюджет {numbers['frame_ms']:g} мс на кадр, "
-               f"{numbers['hard_factor']:g}x — это зависание, отключение после "
+               f"{numbers['hard_factor']:g}x — линия теряется, "
+               f"{numbers['demote_factor']:g}x — это зависание, отключение после "
                f"{numbers['overruns']} подряд")
     renderer = renderer_state()
     footer += L(f" · renderer: {'core.renderer' if renderer['available'] else renderer['fallback']}",
