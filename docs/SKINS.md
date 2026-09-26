@@ -172,12 +172,14 @@ registered — a module, an instance, a dict of callables.
 | `on_spinner(default, clock)` | whenever the waiting line is written | the host's phrase, and the monotonic clock | the "working" line before an answer starts. Return markup, or `None` |
 | `on_thinking(line)` | each line of the reasoning block on screen | that line | the reasoning tail. Return **plain text** |
 | `on_stream(piece, done)` | each arriving piece of the answer | the piece, and `True` on the last call | the answer text on its way to the log. Return **plain text** |
+| `on_answer(text, final)` | when the answer block is drawn — once at the end, and about three times a second while it arrives in the TUI | the whole answer text, and whether this is the finished block | the answer's outline, its lists and its headings. Return a **Rich renderable** or markup text |
 | `on_hud(painter, dt)` | once per frame, while you hold the `hud` surface | a painter sized to your reserved rows | the strip above the state line |
 
 A hook may declare fewer parameters than the contract offers and still be called:
 `on_frame(self, dt)` gets `dt` only, `on_event(self)` gets nothing. The host counts
-your required positional parameters and hands you that many (`_accepts()` in
-`core/skins.py`). Declaring `*args` means "give me everything".
+the parameters you *declare* — defaults included — and hands you that many
+(`_accepts()` in `core/skins.py`), so `on_stream(piece, done=False)` really does
+see the flag. Declaring `*args` means "give me everything".
 
 **If a hook is missing, nothing breaks and nothing is announced.** `frame()` returns
 `0.0`, `post()` returns `False`, `emit_output()` returns `False`, and `/skins` lists
@@ -197,7 +199,17 @@ whole contract:
 | `spinner` | `on_spinner(default, clock)` | the waiting line, and how it moves | same |
 | `thinking` | `on_thinking(line)` | how a reasoning line is introduced | same |
 | `stream` | `on_stream(piece, done)` | the answer text as it arrives | same |
+| `answer` | `on_answer(text, final)` | the whole answer block: its outline, its lists, its headings | same |
 | `hud` | `on_hud(painter, dt)` | `HUD_ROWS` rows above the state line, drawn through the painter | same |
+
+`answer` is the only surface that answers with a **block** instead of a line, and
+the only one that may return a Rich renderable — a `Panel`, a `Group`, a
+`Text`, somebody's `Markdown` subclass. It is also the only one the host asks about
+on a rhythm rather than per token: the TUI lays the arriving answer out about three
+times a second (`ANSWER_BEATS`), because a block re-typeset twelve times a second
+is a fifth of a core spent on colour nobody can follow while reading. `final` tells
+you which of the two you are drawing, so the expensive path can be the one that
+happens once per answer.
 
 **You do not get a surface for writing a hook. You get it for claiming it** — with
 `SURFACES = ("status", "hud")` in the module, or with `on_surfaces(ctx)` when the
@@ -216,8 +228,32 @@ The rules on a returned value, in one place:
   `[bold #7cb342]…[/]` is colour and not letters. `thinking` and `stream` are
   **plain text**: they are the model's bytes, and the model writes `[bold]` inside
   code. `beeagent.core.renderer.markup()` escapes a body for you.
+* `answer` is asked about the model's text too, and its answer is drawn, not
+  printed: return a Rich renderable (a pack may import `rich`), or markup as a
+  string (what a skin installed from **source** can do — the gate there will not
+  let it import Rich). Returning `None` keeps BeeCode's own answer panel.
 * Your hook is handed the host's own text as its first argument, so you can keep
   it, wrap it or throw it away without asking the host for its state.
+
+### Which door reaches which interface
+
+The slots in `beeagent/ui/skin.py` (`frame`, `banner`, `spinner`, `stream`) predate
+the skin host and are read only by the classic REPL's components; the surfaces are
+asked by both. That difference decides what a skin can promise:
+
+| what you want to change | the door | classic REPL | the TUI |
+| --- | --- | --- | --- |
+| the state line, the waiting line, the reasoning tail | `status`, `spinner`, `thinking` | yes | yes |
+| the answer text as it arrives | `stream` | yes | yes |
+| the answer block: outline, lists, headings | `answer` | yes | yes |
+| a strip of its own rows above the state line | `hud` | yes | yes |
+| the border every panel and table wears | `frame` slot | yes | no — Textual styles borders in CSS |
+| the opening wordmark | `banner` slot | yes | no — the TUI draws its own header |
+| the whole line printer, not one line of it | `stream` slot (a `ResponseStream` subclass) | yes | no |
+
+`skin-shimmer` in `beeagent/plugins/templates/plugins/` is the pack that uses every
+row of this table at once, and says in its own docstring which half of it the TUI
+cannot see.
 
 Cost is the other half of the contract. A surface line is asked on the caller's
 thread — per token for `stream` — so the event budget applies: three calls over it
@@ -562,14 +598,15 @@ so the file layout and the install ledger get tested too, not just the code.
 
 This one is the smallest thing that owns part of the interface. It keeps the host's
 words everywhere and adds the one number the user has no other way to see — how
-much has arrived — on the line, on the waiting phrase, and as a bar in its own row.
+much has arrived — on the line, on the waiting phrase, on the answer block and as a
+bar in its own row.
 
 ```python name=surfaces.py
-"""turn-ledger: counts what arrived, on the three lines it takes over."""
+"""turn-ledger: counts what arrived, on the four lines it takes over."""
 import beeagent.core.renderer as R
 
 NAME = "turn-ledger"
-SURFACES = ("status", "spinner", "hud")
+SURFACES = ("status", "spinner", "answer", "hud")
 HUD_ROWS = 1
 HONEY, LEAF = "#ffcc00", "#7cb342"
 
@@ -590,13 +627,21 @@ def on_spinner(default, clock):
     return R.ramp_markup(default or "working", HONEY, LEAF)
 
 
+def on_answer(text, final=False):
+    # A source skin cannot import Rich, so markup is how it draws a block: this
+    # one puts a counted line above the answer and leaves the text itself alone.
+    return R.markup("%d tok" % tokens, LEAF, style="bold") + "\n" + text.replace(
+        "[", "\\[")
+
+
 def on_hud(painter, dt):
     painter.draw_bar(0, 0, painter.cols, min(1.0, tokens / 200.0), color=LEAF)
 
 
 def hooks():
     return {"SURFACES": SURFACES, "HUD_ROWS": HUD_ROWS, "on_event": on_event,
-            "on_status": on_status, "on_spinner": on_spinner, "on_hud": on_hud}
+            "on_status": on_status, "on_spinner": on_spinner,
+            "on_answer": on_answer, "on_hud": on_hud}
 
 
 def setup(api):
@@ -613,6 +658,10 @@ What to notice:
   provider and what went wrong this turn.
 * `on_spinner` gets the host's phrase and the monotonic clock, and `ramp_markup`
   turns the phrase into a wave. Returning `None` would have left the joke alone.
+* `on_answer` escapes the brackets in the answer before returning it as markup:
+  the text is the model's, and a `[bold]` inside a quoted piece of code is data.
+  A pack that may `import rich` would return a renderable here instead and get an
+  outline, its own list markers and its own headings — see `skin-shimmer`.
 * `on_hud` is handed a painter whose grid is exactly `HUD_ROWS` rows tall — the
   strip, not the screen. `painter.cols` is the width you have, and it is 30 columns
   on somebody's terminal.
@@ -621,7 +670,8 @@ What to notice:
   the right one.
 
 `tests/test_skin_docs.py` installs this block from source text — so it passes the
-gate before it paints — switches to it, and reads the three lines back.
+gate before it paints — switches to it, and reads the four lines back, including the
+markup answer.
 
 ## 6. Rules that keep a skin cheap
 
@@ -685,9 +735,10 @@ of them to close before the first stranger does.
 Closed since the first draft of this page, so nobody reports them twice: a dict of
 hooks is now read as a lifecycle instead of a colour table; `ExtensionAPI` has a
 `skin_hooks()` door; `Context` carries `language()` and `translate(en, ru)`; the
-painter has `cell()` and the widgets; and `beeagent.core.renderer` has the blend,
+painter has `cell()` and the widgets; `beeagent.core.renderer` has the blend,
 easing and markup helpers, which is why the reference packs stopped copying a colour
-table into every file.
+table into every file; and the answer became a surface (`answer`), so a skin can
+draw the reply itself — outline, lists and all — in both interfaces.
 
 1. **The AST gate never sees a `plugin.py`.** It runs on source text
    (`install_source`, `register(source=…)`), and the loader's `exec_module` path is
@@ -714,12 +765,16 @@ table into every file.
    your grid and prints. `skins.painter_visible()`, or the loop reporting "nobody is
    emitting these frames", would turn the rest of it into a message instead of a
    mystery.
-5. **Four pieces of the interface have no surface.** `status`, `spinner`,
-   `thinking`, `stream` and the `hud` strip are yours to claim; the banner, the
-   answer log itself, the prompt's own prefix and the sidebar are not, and are
-   rewritten only through the legacy `ui/skin.py` slots a skin cannot reach. A skin
-   that wants to redraw the whole answer area — a typewriter, a diff — has nowhere
-   to ask.
+5. **Three pieces of the interface have no surface.** `status`, `spinner`,
+   `thinking`, `stream`, `answer` and the `hud` strip are yours to claim; the
+   banner, the prompt's own prefix and the sidebar are not, and are rewritten only
+   through the legacy `ui/skin.py` slots a skin cannot reach from the TUI. The
+   answer *block* became a surface with `skin-shimmer`; the border a Textual panel
+   wears is still CSS, which no skin has a door to.
+6. **The classic REPL cannot redraw.** It is line-oriented on purpose — the prompt
+   owns the screen under `patch_stdout` — so a `spinner` there answers once per
+   turn and no animation follows a line that already scrolled away. Anything that
+   moves has to live in the TUI or in a strip the host repaints.
 
 ## 8. Reference packs
 
@@ -732,11 +787,12 @@ something is missing here.
 | `skin-pulse` | a token-nudged pulse, a tool progress bar, self-policing against the frame budget |
 | `skin-pet` | an ASCII animal: moods from events, bounded state, and a plain terminal that gets one line |
 | `skin-hud` | **surfaces**: claiming four lines, answering for them, drawing a timed strip, and asking only for what the screen can hold |
+| `skin-shimmer` | **the answer**: a ramp-coloured outline, list markers and headings that walk it, a railed streaming line, heavy borders on every panel, and a two-row HUD |
 | `skin-hive` / `skin-work` / `skin-terminal` | legacy slot packs: colours and callables, no `on_frame` at all |
 | `plain` | frameless interface through the slots |
 
 They are in `beeagent/plugins/templates/plugins/`, and they install with
-`/plugin install skin-hud`. A pack's `setup(api)` hands its lifecycle to the host
-through `api.skin_hooks(name, hooks)`, which is the door this document describes;
-where a build has no such verb, the packs fall back to the event bus rather than
-sit out the turn.
+`/plugin install skin-shimmer`. A pack's `setup(api)` hands its lifecycle to the
+host through `api.skin_hooks(name, hooks)`, which is the door this document
+describes; where a build has no such verb, the packs fall back to the event bus
+rather than sit out the turn.

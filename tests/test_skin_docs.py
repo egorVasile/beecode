@@ -510,12 +510,17 @@ def test_the_surfaces_example_claims_and_answers(host):
     skins.register(SURFACES_NAME, source=source, description="docs example")
     assert skins.switch(SURFACES_NAME) == ""
     report = skins.surfaces()
-    assert sorted(report["held"]) == ["hud", "spinner", "status"], report
+    assert sorted(report["held"]) == ["answer", "hud", "spinner", "status"], report
     assert report["hud_rows"] == 1, report
 
     skins.post("stream_delta", {"text": "x"})
     assert str(Text.from_markup(skins.status_text("model gpt"))) == "1 tok model gpt"
     assert str(Text.from_markup(skins.spinner_text("buzzing...", 0.0))) == "buzzing..."
+
+    # The markup form of the block surface: what a skin the gate will not let
+    # import Rich can still do, and the answer's own brackets have to survive it.
+    block = skins.answer_render("list: [a]\n", True)
+    assert str(block) == "1 tok\nlist: [a]\n", repr(str(block))
 
     grid = renderer.Grid(40, 1)
     painter = renderer.Painter(grid, size=(40, 1))
