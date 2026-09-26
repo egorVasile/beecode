@@ -554,6 +554,40 @@ def test_the_ceiling_rolls_over_with_the_day(pool, monkeypatch):
         assert complete(client, pool.base, token).status_code == 200, "a new day, a usable key"
 
 
+def test_an_operator_can_roll_the_day_back_without_waiting_for_midnight(pool):
+    """The repair for a day that was spent twice, and no wider than that.
+
+    A deploy of the rollover fix does not unlock the rows the old code already
+    stamped, so the box stays shut until midnight unless somebody says otherwise.
+    Rolling the stamp is the whole route: the ceiling itself is untouched, so a
+    pool whose accounts the upstream really did spend says so again on the very
+    next request rather than being walked into the wall a second time.
+    """
+    with httpx.Client(timeout=CLIENT_TIMEOUT) as client:
+        token = enroll(client, pool.base)
+        client.post(pool.base + "/v1/admin/key_ceiling", json={"provider": "groq", "tokens": 1},
+                    headers={"X-Admin": "admin-secret"})
+        assert complete(client, pool.base, token).status_code == 200
+        assert complete(client, pool.base, token).status_code == 200
+        stuck = complete(client, pool.base, token)
+        assert stuck.status_code == 429 and "ceiling" in stuck.json()["error"], stuck.json()
+
+        refused = client.post(pool.base + "/v1/admin/roll_keys", json={})
+        assert refused.status_code in (401, 403), "the route answers to strangers"
+
+        rolled = client.post(pool.base + "/v1/admin/roll_keys", json={},
+                             headers={"X-Admin": "admin-secret"})
+        assert rolled.status_code == 200, rolled.json()
+        assert rolled.json()["rolled"] == 2, rolled.json()
+        assert pool_server.at_today_ceiling("groq") is False, "the day is rolled"
+        # The keys were handed back a moment ago, and a hand-back leaves the lease
+        # stamp for a second on purpose. Waiting that out is what the operator sees;
+        # rolling a day must not clear a real 429 cooldown, because that cooldown is
+        # the one thing standing between this pool and the provider's wall.
+        time.sleep(1.5)
+        assert complete(client, pool.base, token).status_code == 200, "the pool is usable again"
+
+
 def test_one_number_can_give_every_key_the_same_ceiling(pool, monkeypatch):
     monkeypatch.setenv("BEECODE_POOL_KEY_CEILING", "50")
     pool_server.sync_keys()
