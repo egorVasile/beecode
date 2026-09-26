@@ -234,6 +234,10 @@ class BeeCodeApp(App):
         self._answer_painted = ""
         # Which frame of the layout rhythm this is: see `ANSWER_BEATS`.
         self._answer_beats = 0
+        # What the skin last answered for the logo and the panel border, so the
+        # clock only touches the real widgets when the picture actually changed.
+        self._logo_shown = ""
+        self._frame_shown = ""
         # The model's own bytes for the turn in flight. A repaired or a cut-off
         # call is only an honest note if the user can see what was actually sent,
         # and `_stream_buf` is cleared the moment a tool starts.
@@ -360,6 +364,8 @@ class BeeCodeApp(App):
         except Exception:
             pass                        # the host does not owe a skin a stack trace
         self._paint_hud(strip)
+        self._paint_logo()
+        self._paint_frame()
         self._update_status()
         if self._waiting_line:
             self._repaint_waiting()
@@ -1093,6 +1099,66 @@ class BeeCodeApp(App):
         else:
             bee.update(render_bee(0))
 
+    def _paint_logo(self) -> None:
+        """The header word in the skin's colours, on the clock.
+
+        The full-screen interface has no 48x5 box to spend, so a skin that owns
+        `banner` gets the line that is always on screen — the word in the corner —
+        while the whole logo still goes into the log at startup. Only the first row
+        is used, and a skin that hands back what BeeCode drew changes nothing.
+        """
+        from beeagent.core import skins
+        from beeagent.ui.components import BANNER_ROWS, BANNER_WIDTH
+
+        try:
+            mine = skins.banner_render(size=(BANNER_WIDTH, len(BANNER_ROWS)),
+                                       default=Text("BeeCode"))
+        except Exception:
+            return
+        if mine is None:
+            return
+        if isinstance(mine, str):
+            mine = Text(mine.split("\n")[0])
+        else:
+            try:
+                mine = mine.split("\n")[0]
+            except Exception:
+                mine = Text(str(mine).split("\n")[0])
+        if str(mine) == self._logo_shown and self._logo_shown:
+            return
+        self._logo_shown = str(mine)
+        try:
+            self.home.query_one("#brand", Label).update(mine)
+        except Exception:
+            pass
+
+    def _paint_frame(self) -> None:
+        """The answer panel's border, in the colour the skin chose for it.
+
+        The box stays ours: this only answers for the colour, so `frame=none` in
+        the settings still draws no box even under a skin that owns the surface.
+        """
+        from beeagent.core import skins
+
+        try:
+            color = skins.frame_color("answer", "")
+        except Exception:
+            return
+        if color == self._frame_shown:
+            return
+        self._frame_shown = color
+        try:
+            log = self.home.query_one("#log")
+        except Exception:
+            return
+        try:
+            # A style may carry "bold" beside the colour; Textual's border wants the
+            # colour alone, and an unknown token is the skin's mistake, not a reason
+            # to leave the panel with no border at all.
+            log.styles.border = ("tall", str(color).split()[-1]) if color else None
+        except Exception:
+            pass
+
     def _update_status(self) -> None:
         cfg = self.ctx.config
         n = len(self.ctx.session.messages) if self.ctx.session is not None else 0
@@ -1114,14 +1180,21 @@ class BeeCodeApp(App):
             self.home.query_one("#status", Label).update(line)
 
     def _welcome(self) -> None:
-        from beeagent.ui.components import BANNER_ROWS, GRADIENT
-        banner = Text()
+        from beeagent.core import skins
+        from beeagent.ui.components import BANNER_ROWS, BANNER_WIDTH, GRADIENT
+
+        shipped = Text()
         last = len(BANNER_ROWS) - 1
         for i, row in enumerate(BANNER_ROWS):
-            banner.append(row, style=f"bold {GRADIENT[i % len(GRADIENT)]}")
+            shipped.append(row, style=f"bold {GRADIENT[i % len(GRADIENT)]}")
             if i != last:
-                banner.append("\n")
-        self.chatlog.write(banner)
+                shipped.append("\n")
+        try:
+            mine = skins.banner_render(size=(BANNER_WIDTH, len(BANNER_ROWS)),
+                                       default=shipped)
+        except Exception:
+            mine = None
+        self.chatlog.write(mine if mine is not None else shipped)
         self.chatlog.write(Text("Free AI coding agent powered by g4f", style="dim"))
         self.chatlog.write(Text(
             "Type a request and press Enter. Type / to see commands. "

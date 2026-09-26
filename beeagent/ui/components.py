@@ -229,12 +229,30 @@ def _banner_frames() -> list:
     return frames
 
 
+def _skin_banner(seconds, default):
+    """The logo as the skin on screen draws it, or None when nobody holds it.
+
+    The clock goes out as `time.monotonic()`, the same contract the spinner runs
+    on, so a pack can phase its own cycle; `default` is the settled shipped logo,
+    which lets a skin recolour those pixels instead of redrawing the word.
+    """
+    from beeagent.core import skins
+
+    try:
+        return skins.banner_render(seconds=seconds,
+                                   size=(BANNER_WIDTH, len(BANNER_ROWS)),
+                                   default=default)
+    except Exception:
+        return None
+
+
 def print_banner(animate: Optional[bool] = None):
     """Draw the logo: it appears pixel by pixel, then its colours settle down.
 
     Which of those happen is the `banner` slot: "shimmer" animates, "static"
     prints the settled logo, "none" prints nothing at all — and a plugin that
-    registers a callable draws the opening itself.
+    registers a callable draws the opening itself. A skin that owns the `banner`
+    surface answers ahead of all three, because then the logo is its drawing.
     """
     choice = skin.value("banner", "shimmer")
     if callable(choice):
@@ -247,7 +265,23 @@ def print_banner(animate: Optional[bool] = None):
         # Wipe the screen at launch so the logo lands on a clean page.
         console.clear()
     console.print()
-    if mode == "shimmer" and _banner_animates(animate):
+    settled = banner_static()
+    mine = _skin_banner(time.monotonic(), settled)
+    if mine is not None:
+        if _banner_animates(animate) and console.is_terminal:
+            # One frame per step of the timeline the shipped shimmer uses: the
+            # skin gets the clock and decides what moves, this loop only decides
+            # how often it is asked.
+            try:
+                with Live(console=console, transient=True, auto_refresh=False) as live:
+                    for _ in range(BANNER_REVEAL_STEPS + BANNER_SETTLE_STEPS):
+                        live.update(Align.center(_skin_banner(time.monotonic(), settled)
+                                                 or mine), refresh=True)
+                        time.sleep(BANNER_STEP_DELAY)
+            except Exception:
+                pass
+        console.print(Align.center(_skin_banner(time.monotonic(), settled) or mine))
+    elif mode == "shimmer" and _banner_animates(animate):
         # Runs before the prompt starts, so Live's cursor movement cannot
         # fight with patch_stdout; `transient` erases the frames afterwards.
         try:
@@ -257,7 +291,9 @@ def print_banner(animate: Optional[bool] = None):
                     time.sleep(BANNER_STEP_DELAY)
         except Exception:
             pass
-    console.print(Align.center(banner_static()))
+        console.print(Align.center(banner_static()))
+    else:
+        console.print(Align.center(settled))
     console.print()
     console.print(Align.center(
         Text.assemble(("BeeCode", f"bold {HONEY}"), Text(" — free AI coding agent powered by g4f", style="dim"))
@@ -269,7 +305,7 @@ def print_welcome():
     console.print()
     panel = Panel(
         Align.center(Text("Type a request, or '/' for commands — 'quit' to exit", style="dim")),
-        **skin.frame_kwargs(BORDER),
+        **skin.frame_kwargs(BORDER, 'prompt'),
         padding=(0, 2),
     )
     console.print(panel)
@@ -332,7 +368,7 @@ def render_tool_end(tool_name: str, tool_args: dict, output: str, error: bool):
         # The picture is the result: the model reads it back from the tool output,
         # and the user should not have to open a file to see what was drawn.
         console.print("    [bold #7cb342]●[/] [#8fbf6f]diagram[/]")
-        console.print(Panel(Text(output), **skin.frame_kwargs(BORDER), padding=(0, 1)))
+        console.print(Panel(Text(output), **skin.frame_kwargs(BORDER, 'output'), padding=(0, 1)))
     else:
         console.print(f"    [bold {color}]{icon}[/] [{color}]{tool_name}[/]")
 
@@ -352,7 +388,7 @@ def _render_code_preview(content: str):
     syntax = Syntax(code, "python", theme="monokai", line_numbers=False)
     panel = Panel(
         syntax,
-        **skin.frame_kwargs(BORDER),
+        **skin.frame_kwargs(BORDER, 'tool'),
         padding=(0, 1),
     )
     console.print(panel)
@@ -367,7 +403,7 @@ def _render_bash_output(output: str):
     text = "\n".join(preview)
     panel = Panel(
         Text(text, style="dim"),
-        **skin.frame_kwargs(HEAVY_BORDER),
+        **skin.frame_kwargs(HEAVY_BORDER, 'output'),
         padding=(0, 1),
     )
     console.print(panel)
@@ -394,7 +430,7 @@ def render_response(text: str):
     md = Markdown(text, hyperlinks=False)
     panel = Panel(
         md,
-        **skin.frame_kwargs(BORDER),
+        **skin.frame_kwargs(BORDER, 'answer'),
         title=bee_title("🐝 BeeCode"),
         title_align="center",
         padding=(0, 1),
@@ -406,7 +442,7 @@ def render_error(message: str):
     console.print()
     panel = Panel(
         Text(message, style="red"),
-        **skin.frame_kwargs("bold red"),
+        **skin.frame_kwargs("bold red", 'error'),
         title="[bold red]Error[/]",
         title_align="center",
     )
@@ -476,7 +512,7 @@ def models_table(models: list[str], provider: str = "g4f") -> Table:
 
     table = Table(
         title=bee_title(f"🐝 {provider} models"),
-        **skin.frame_kwargs(BORDER),
+        **skin.frame_kwargs(BORDER, 'picker'),
         show_header=True,
         header_style="bold " + HONEY,
         expand=False,
@@ -505,7 +541,7 @@ def models_table(models: list[str], provider: str = "g4f") -> Table:
 def providers_table(providers: list[dict]) -> Table:
     table = Table(
         title=bee_title("🐝 Providers"),
-        **skin.frame_kwargs(BORDER),
+        **skin.frame_kwargs(BORDER, 'picker'),
         show_header=True,
         header_style="bold " + HONEY,
         expand=False,
@@ -521,7 +557,7 @@ def providers_table(providers: list[dict]) -> Table:
 def commands_table(commands: list) -> Table:
     table = Table(
         title=bee_title("🐝 Commands"),
-        **skin.frame_kwargs(BORDER),
+        **skin.frame_kwargs(BORDER, 'picker'),
         show_header=True,
         header_style="bold " + HONEY,
         expand=False,
@@ -537,7 +573,7 @@ def commands_table(commands: list) -> Table:
 def tools_table(tools: list) -> Table:
     table = Table(
         title=bee_title("🐝 Tools"),
-        **skin.frame_kwargs(BORDER),
+        **skin.frame_kwargs(BORDER, 'picker'),
         show_header=True,
         header_style="bold " + HONEY,
         expand=False,
@@ -1104,6 +1140,6 @@ def show_thinking_fallback():
         Text(numbered),
         title=f"💭 мысли ({len(lines)} строк)",
         title_align="center",
-        **skin.frame_kwargs(BORDER),
+        **skin.frame_kwargs(BORDER, 'thinking'),
         padding=(0, 1),
     ))

@@ -197,7 +197,7 @@ FORBIDDEN_NAMES = frozenset({
 
 HOOKS = ("on_init", "on_surfaces", "on_frame", "on_event", "on_output",
          "on_status", "on_spinner", "on_thinking", "on_stream", "on_answer",
-         "on_hud")
+         "on_hud", "on_banner", "on_frame_color")
 
 #: The pieces of the interface a skin may take over, and the hook that answers for
 #: each. A surface a skin has not claimed is drawn by BeeCode exactly as it always
@@ -215,6 +215,14 @@ SURFACES = {
     # can draw a Text, a Group, a Panel or somebody's Markdown subclass.
     "answer": "on_answer",
     "hud": "on_hud",              # rows the frame loop paints for the skin
+    # ...`on_banner` owns the logo the interface opens with. It is handed the
+    # monotonic clock and the box it may draw in, and answers with markup or a
+    # renderable, so a pack can run a colour cycle across the letters.
+    "banner": "on_banner",
+    # ...`on_frame_color` answers for the colour of a panel's border, by role
+    # ("answer", "tool", "error", ...). Only the colour is the skin's: the box
+    # itself stays the `frame` slot's decision, so `/skin none` still means no box.
+    "frame": "on_frame_color",
 }
 #: Late calls on one surface that are tolerated before the skin loses that surface
 #: and nothing else. `on_frame` has its own clock; a per-token hook that takes
@@ -1148,7 +1156,8 @@ def needs_tick() -> bool:
         return False
     animates = _hook(entry.skin, "on_frame") is not None
     return bool(animates or owns("hud", entry.name) or owns("spinner", entry.name)
-                or owns("answer", entry.name))
+                or owns("answer", entry.name) or owns("banner", entry.name)
+                or owns("frame", entry.name))
 
 
 def owns(surface: str, skin: str = "") -> bool:
@@ -1343,6 +1352,50 @@ def answer_render(text: str, final: bool = False):
 
             return Text(got)
     return got
+
+
+def banner_render(seconds: float | None = None, size=None, default=None):
+    """The logo as the skin on it draws it, or None when nobody holds the banner.
+
+    The hook is handed the monotonic clock first, then the box it may fill
+    `(columns, rows)` — a skin that cycles colours across the letters has to know
+    how many there are — then the shipped logo, so it can recolour that art instead
+    of redrawing it. Answering with markup or a renderable is the skin's logo;
+    answering with nothing keeps BeeCode's.
+    """
+    if not owns("banner"):
+        return None
+    if seconds is None:
+        seconds = time.monotonic()
+    cols, rows = size or (0, 0)
+
+    def any_block(value):
+        return isinstance(value, str) or renderable(value)
+
+    keeper = object()
+    got = ask("banner", keeper, cols, rows, default, accept=any_block, offer=seconds)
+    if got is keeper:
+        return None
+    if isinstance(got, str):
+        from rich.text import Text
+
+        try:
+            return Text.from_markup(got)
+        except Exception:
+            return Text(got)
+    return got
+
+
+def frame_color(role: str = "answer", default: str = "") -> str:
+    """The colour of a panel's border, by what the panel is.
+
+    Only the colour is the skin's to decide: the shape of the box stays the `frame`
+    slot's, so a user who chose `/skin none` still gets no box from a skin that
+    owns this surface. `role` names the panel — "answer", "tool", "output",
+    "error", "prompt", "picker" — so several panels on one screen can sit at
+    different points of one cycle instead of flashing together.
+    """
+    return ask("frame", default, time.monotonic(), offer=str(role or ""))
 
 
 def hud_frame(painter=None, dt: float = 0.0) -> bool:

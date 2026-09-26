@@ -99,13 +99,26 @@ def reset() -> None:
     _sources.clear()
 
 
-def frame_kwargs(border: str = "") -> dict:
+def frame_kwargs(border: str = "", role: str = "") -> dict:
     """Arguments for `rich.table.Table(...)` that draw the current frame.
 
     A panel asks for its border here, so "no frames" is one setting rather than
     a change to every table in the interface. `border` is what that panel would
     have used; the "none" frame drops it along with the box.
+
+    `role` names what the panel *is* ("answer", "tool", "output", "error",
+    "picker"), and a skin that owns the `frame` surface answers with a colour for
+    it. Asking here rather than at the thirteen call sites means a panel cannot be
+    added later that quietly skips the skin — and the box stays our decision, so a
+    user who chose `frame=none` still gets no box.
     """
+    if role:
+        try:
+            from beeagent.core import skins
+
+            border = skins.frame_color(role, border)
+        except Exception:
+            pass                    # a skin that cannot answer is not the panel's fault
     choice = _VARIANTS["frame"].get(_active.get("frame", "rounded")) or {}
     kwargs = {"box": choice.get("box", box.ROUNDED)}
     if "border_style" in choice:

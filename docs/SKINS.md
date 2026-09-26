@@ -205,6 +205,8 @@ registered — a module, an instance, a dict of callables.
 | `on_stream(piece, done)` | each arriving piece of the answer | the piece, and `True` on the last call | the answer text on its way to the log. Return **plain text** |
 | `on_answer(text, final)` | when the answer block is drawn — once at the end, and about three times a second while it arrives in the TUI | the whole answer text, and whether this is the finished block | the answer's outline, its lists and its headings. Return a **Rich renderable** or markup text |
 | `on_hud(painter, dt)` | once per frame, while you hold the `hud` surface | a painter sized to your reserved rows | the strip above the state line |
+| `on_banner(seconds, width, rows, default)` | when the opening logo is printed, and on every frame the TUI shows | the monotonic clock, the size of the logo box, and the shipped logo | the logo: a colour cycle across the letters, or your own art. Return markup or a renderable |
+| `on_frame_color(role, seconds)` | once per panel drawn, and once per frame for the live answer panel in the TUI | which panel is asking (`"answer"`, `"tool"`, `"output"`, `"error"`, `"prompt"`, `"picker"`, `"thinking"`) and the clock | the **colour** of that panel's border, as a style string: `"bold #7cb342"`. The box stays the `frame` slot's |
 
 A hook may declare fewer parameters than the contract offers and still be called:
 `on_frame(self, dt)` gets `dt` only, `on_event(self)` gets nothing. The host counts
@@ -221,7 +223,7 @@ named `onFrame` is registered, marked active, and draws nothing, forever. Check 
 ### Surfaces: which lines are yours
 
 A skin that only paints a grid can be ignored: the interface carries on around it.
-Five pieces of that interface are *yours* if you ask for them, and asking is the
+Eight pieces of that interface are *yours* if you ask for them, and asking is the
 whole contract:
 
 | surface | hook | what you may change | what happens when you get it wrong |
@@ -232,6 +234,18 @@ whole contract:
 | `stream` | `on_stream(piece, done)` | the answer text as it arrives | same |
 | `answer` | `on_answer(text, final)` | the whole answer block: its outline, its lists, its headings | same |
 | `hud` | `on_hud(painter, dt)` | `HUD_ROWS` rows above the state line, drawn through the painter | same |
+| `banner` | `on_banner(seconds, width, rows, default)` | the opening logo, and the word in the corner of the full-screen interface | same |
+| `frame` | `on_frame_color(role, seconds)` | the colour of a panel's border, per role | same |
+
+`frame` answers with a colour and nothing else, on purpose. The shape of the box is
+the `frame` slot's decision (`/skin frame none`), and a skin that could draw the box
+could undo a setting the user chose with their hands. Roles let several panels on one
+screen sit at different points of one cycle; a role you do not answer for keeps the
+colour BeeCode would have used.
+
+In the full-screen interface `banner` is shown twice: the whole logo goes into the
+log at startup, and its first line recolours the word in the header on every frame —
+that window has no 48×5 box to spend, and a logo nobody can see is not an animation.
 
 `answer` is the only surface that answers with a **block** instead of a line, and
 the only one that may return a Rich renderable — a `Panel`, a `Group`, a

@@ -43,6 +43,11 @@ def host(monkeypatch):
     monkeypatch.setattr(skins, "_BUDGET", dict(skins.budget()))
     monkeypatch.setattr(ui_skin, "_active", dict(ui_skin._DEFAULTS))
     monkeypatch.setattr(ui_skin, "_sources", {})
+    # Per-slot copies: a test that runs a shipped pack's `setup(api)` registers that
+    # pack's variants here, and a plugin banner left under the name "shimmer" would
+    # otherwise answer for every later test that prints the opening logo.
+    monkeypatch.setattr(ui_skin, "_VARIANTS",
+                        {slot: dict(variants) for slot, variants in ui_skin._VARIANTS.items()})
     host.captured = captured
     return captured
 
@@ -1209,3 +1214,125 @@ def test_the_renderer_is_reached_only_lazily():
     body = ast.unparse(tree)
     assert "importlib.import_module(RENDERER_IMPORT_NAME)" in body
     assert "except ImportError" in body
+
+
+# --------------------------------------------------- the logo and the border --
+
+def test_the_last_two_pieces_of_the_screen_are_claimable(host):
+    """`banner` answers with a block, `frame` with a colour — and nothing else.
+
+    The border is the shape of a panel and the box is the `frame` slot's decision;
+    a skin that could answer with a box would be a skin that could undo
+    `/skin none`, which is a setting somebody chose on purpose.
+    """
+    skins.register("prism", {
+        "SURFACES": ("banner", "frame"),
+        "on_banner": lambda seconds, width, rows, default: "[#ff0000]LOGO[/]",
+        "on_frame_color": lambda role, seconds: f"bold #00ff00",
+    }, pack="skin-prism")
+    skins.switch("prism")
+    drawn = skins.banner_render(seconds=3.0, size=(48, 5), default=None)
+    assert str(drawn).strip() == "LOGO", repr(drawn)
+    assert skins.frame_color("answer", "bold green") == "bold #00ff00"
+    assert skins.frame_color("error", "bold green") == "bold #00ff00"
+    assert skins.needs_tick(), "a cycling logo has to be asked on the clock"
+    # The role travels: a panel is told which one it is colouring.
+    seen = []
+    skins.register("roles", {"SURFACES": ("frame",),
+                             "on_frame_color": lambda role, seconds: seen.append(role) or ""})
+    skins.switch("roles")
+    skins.frame_color("tool", "x")
+    assert seen == ["tool"], seen
+
+
+def test_nobody_holds_the_logo_until_a_skin_asks_for_it(host):
+    """No skin, no question: the shipped banner and the shipped border stand."""
+    assert skins.banner_render(seconds=1.0, size=(48, 5), default=None) is None
+    assert skins.frame_color("answer", "bold green") == "bold green"
+    skins.register("plain", {"on_frame": lambda dt, painter: None})
+    skins.switch("plain")
+    assert skins.banner_render(seconds=1.0, size=(48, 5), default=None) is None
+    assert skins.frame_color("answer", "bold green") == "bold green"
+
+
+def test_a_border_that_answers_with_a_number_loses_the_border(host):
+    """The shape of the answer is checked, so a wrong one costs one line only."""
+    skins.register("wrong", {"SURFACES": ("frame", "status"),
+                             "on_frame_color": lambda role, seconds: 12,
+                             "on_status": lambda default: "still here"})
+    skins.switch("wrong")
+    assert skins.frame_color("answer", "bold green") == "bold green"
+    assert "frame" in skins.surfaces("wrong")["dropped"], skins.surfaces("wrong")
+    assert skins.status_text("d") == "still here", "the status line went with it"
+
+
+def test_the_classic_banner_prints_what_the_skin_drew(host, monkeypatch):
+    """The REPL's opening logo is the skin's, when the skin holds that surface.
+
+    Driven through `print_banner`, not through `banner_render`: the seam between
+    them is where a banner that never reaches the screen would hide.
+    """
+    import io
+
+    from rich.console import Console
+
+    from beeagent.ui import components
+
+    skins.register("logoskin", {
+        "SURFACES": ("banner",),
+        "on_banner": lambda seconds, width, rows, default: "[#123456]MY LOGO[/]",
+    })
+    skins.switch("logoskin")
+    buffer = io.StringIO()
+    original = components.console
+    components.console = Console(file=buffer, width=58, force_terminal=False)
+    try:
+        components.print_banner(animate=False)
+    finally:
+        components.console = original
+    out = buffer.getvalue()
+    assert "MY LOGO" in out, out
+    monkeypatch.setattr(skins, "_ACTIVE", skins.BASELINE)
+    buffer.seek(0)
+    buffer.truncate(0)
+    components.console = Console(file=buffer, width=58, force_terminal=False)
+    try:
+        components.print_banner(animate=False)
+    finally:
+        components.console = original
+    assert "MY LOGO" not in buffer.getvalue(), "the baseline drew the skin's logo"
+
+
+def test_the_full_screen_header_and_border_follow_the_skin(host):
+    """Textual: the corner word and the answer panel's border come from the skin."""
+    import asyncio
+
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core.session import Session
+    from beeagent.ui.tui import BeeCodeApp
+    from textual.widgets import Label
+
+    skins.register("chrome", {
+        "SURFACES": ("banner", "frame"),
+        "on_banner": lambda seconds, width, rows, default: "[bold #ff00aa]PRISM[/]",
+        "on_frame_color": lambda role, seconds: "#00ffaa",
+    })
+    skins.switch("chrome")
+
+    async def go():
+        app = BeeCodeApp(config=BeeConfig(), session=Session())
+        async with app.run_test(size=(90, 30)) as pilot:
+            await pilot.pause()
+            app._paint_logo()
+            app._paint_frame()
+            await pilot.pause(0.1)
+            brand = app.home.query_one("#brand", Label)
+            border = app.home.query_one("#log").styles.border
+            return str(brand.render()), border
+
+    shown, border = asyncio.run(go())
+    assert "PRISM" in shown, shown
+    # Textual expands one border setting into four edges; the colour is the point.
+    assert border is not None, border
+    assert border.top[0] == "tall", border
+    assert border.top[1].hex.lower() == "#00ffaa", border

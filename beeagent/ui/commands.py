@@ -703,7 +703,7 @@ def _skin_slot_table(skin, only: str = "") -> Table:
     """
     title = L(f"🐝 interface slot: {only}", f"🐝 слот интерфейса: {only}") if only \
         else bee_title("🐝 interface slots")
-    table = Table(title=title, **skin.frame_kwargs(BORDER),
+    table = Table(title=title, **skin.frame_kwargs(BORDER, 'picker'),
                   header_style="bold " + HONEY, expand=False)
     table.add_column("slot", style="bold #ffcc00")
     table.add_column("now")
@@ -776,7 +776,7 @@ def _cmd_extensions(ctx, args):
     from beeagent.ext.api import ExtensionRegistry
 
     registry = getattr(getattr(ctx.agent, "plugins", None), "extensions", None) or ExtensionRegistry()
-    table = Table(title=bee_title("🐝 extensions"), **skin.frame_kwargs(BORDER),
+    table = Table(title=bee_title("🐝 extensions"), **skin.frame_kwargs(BORDER, 'picker'),
                   header_style="bold " + HONEY, expand=False)
     table.add_column("plugin", style="bold #ffcc00")
     table.add_column("kind", style="dim")
@@ -1990,7 +1990,7 @@ def _cmd_tasks(ctx, args):
     from beeagent.ui.components import bee_title
 
     table = Table(title=bee_title(L("🐝 tasks", "🐝 задачи")),
-                  **skin.frame_kwargs(BORDER), header_style="bold " + HONEY, expand=False)
+                  **skin.frame_kwargs(BORDER, 'picker'), header_style="bold " + HONEY, expand=False)
     table.add_column("#", style="dim", width=4)
     table.add_column("state", width=8)
     table.add_column("task")
