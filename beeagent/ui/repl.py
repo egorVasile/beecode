@@ -632,11 +632,6 @@ async def run_repl(agent, config, session=None):
             _say("🐝", notice)
     except Exception:
         pass
-    # Same rule as the recovery notice: a model the endpoint stopped serving is
-    # decided at startup, and the user hears about it then rather than from a 400
-    # on his first question.
-    if getattr(agent, "startup_notes", ""):
-        _say("🐝", agent.startup_notes)
 
     prompt_session: PromptSession = PromptSession(
         completer=BeeCompleter(ctx),

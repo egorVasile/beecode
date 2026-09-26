@@ -1202,11 +1202,6 @@ class BeeCodeApp(App):
         except Exception:
             mine = None
         self.chatlog.write(mine if mine is not None else shipped)
-        notes = getattr(getattr(self.ctx, "agent", None), "startup_notes", "")
-        if notes:
-            # The classic REPL says this before the first prompt; the log is the
-            # only place this interface can say it before the first answer fails.
-            self.chatlog.write(Text(notes, style="bold yellow"))
         self.chatlog.write(Text("Free AI coding agent powered by g4f", style="dim"))
         self.chatlog.write(Text(
             "Type a request and press Enter. Type / to see commands. "

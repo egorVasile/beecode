@@ -223,12 +223,6 @@ class Agent:
         # ContextManager asks for a window by model name alone — so the name the
         # reads should resolve against is set here and refreshed on every run.
         windows.note_provider(self.config.provider or "")
-        # A model name saved yesterday can be one the endpoint stopped serving
-        # today — crax rewrote its catalogue on 2026-09-26 and twelve of the
-        # thirteen names it had offered ceased to exist — and the answer to the
-        # stale name is a 400 the user reads as "the pool is broken". Fix the pair
-        # at the seam where both halves are known, and say what was changed.
-        self.startup_notes = self._reconcile_model_with_provider()
         self.parser = CommandParser()
 
         # Skills, plugin tool packs, and MCP servers installed from the catalog.
@@ -490,30 +484,6 @@ class Agent:
             callback("provider_fallback", {"from": "g4f", "to": "pool",
                                            "seat": bool(pool.token)})
         return pool
-
-    def _reconcile_model_with_provider(self) -> str:
-        """Move the session onto a model its endpoint actually answers for.
-
-        Only when the provider has a list to check against and the saved name is
-        not in it: an empty list means the endpoint has not been asked yet, and a
-        made-up default is worse than the stale name plus a real error. The note
-        is returned rather than printed, because the agent is built before anything
-        is on screen — both interfaces show it, and a silent swap reads as BeeCode
-        ignoring a setting.
-        """
-        from beeagent.i18n import L
-
-        provider = self.providers.get(self.config.provider or "g4f")
-        offered = [str(m) for m in (getattr(provider, "models", None) or [])]
-        wanted = str(self.config.model or "").strip()
-        if provider is None or not offered or not wanted or wanted in offered:
-            return ""
-        self.config.model = offered[0]
-        self.context.model = offered[0]
-        return L(f"model “{wanted}” is not one {self.config.provider} answers for — "
-                 f"asking {offered[0]} instead; /models lists the rest",
-                 f"модель “{wanted}” среди тех, что {self.config.provider} не отвечает — "
-                 f"спрашиваю {offered[0]}; остальное в /models")
 
     def preset_provider(self, name: str, key: str):
         """Build the provider for a preset endpoint, with the class that fits it.
