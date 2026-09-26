@@ -40,6 +40,23 @@ class Command:
     arg: Optional[str] = None  # "model" | "provider" | "mode" | "session" | "theme" | "path" | None
     usage: Optional[str] = None
     category: str = "general"
+    #: A hidden command still dispatches, still completes, and still completes
+    #: its arguments — it is only never *advertised*: `visible_commands()`, which
+    #: `/help` renders, leaves it out. `/model` and `/provider` live here because
+    #: an old habit in the fingers should reach the new door, not a "what is
+    #: that" error; two commands for two decisions was the complaint.
+    hidden: bool = False
+
+
+def visible_commands() -> list[Command]:
+    """The commands a person is shown: the help table is built from this list.
+
+    The README table is generated from `COMMANDS` by `scripts/sync_readme.py`,
+    which does not know about `hidden` yet — the script (and the TUI sidebar,
+    which iterates `COMMANDS` directly) need the one-line filter
+    `[c for c in COMMANDS if not c.hidden]` to agree with `/help`.
+    """
+    return [c for c in COMMANDS if not c.hidden]
 
 
 def add_command(name: str, description: str, usage: str = "", category: str = "plugins") -> Command:
@@ -77,12 +94,16 @@ COMMANDS: list[Command] = [
     Command("window", "Show or measure the model context window", usage="/window [measure] [model]", category="info"),
     Command("update", "Check for a newer BeeCode and install it", category="info"),
     Command("pool", "Address, seat and budget of a key pool", usage="/pool [url <адрес> | enroll | status]", category="info"),
-    # model / provider / mode
-    Command("model", "Switch the active model", arg="model", usage="/model <name>", category="engine"),
+    # model / provider / mode — `/model` and `/provider` are hidden aliases of
+    # their plurals: they share the handler, they are not advertised in /help.
+    Command("model", "Switch the active model", arg="model", usage="/model <name>",
+            category="engine", hidden=True),
     Command("models", "List models with the widest context first, --all for every one",
             arg="model", usage="/models [name|upstream] [--all]", category="engine"),
-    Command("provider", "Switch the active provider", arg="provider", usage="/provider <name>", category="engine"),
-    Command("providers", "List providers and which ones have a key", category="engine"),
+    Command("provider", "Switch the active provider", arg="provider", usage="/provider <name>",
+            category="engine", hidden=True),
+    Command("providers", "List providers and which ones have a key", arg="provider",
+            category="engine"),
     Command("key", "Store your own API key for a provider", usage="/key <provider> <token>", category="engine"),
     Command("mode", "Switch between normal and economy", arg="mode", usage="/mode <normal|economy>", category="engine"),
     Command("permissions", "Who may touch the machine: ask, auto or readonly", arg="permission",
@@ -282,7 +303,7 @@ def available_providers(ctx: ReplContext) -> list[str]:
     The list used to carry every free-tier endpoint that takes a key of your own
     (crax, groq, openrouter, ollama, …), which is a different product promise from
     the one on the box. A key already stored in beeagent.json keeps working, and
-    `/provider <name>` still accepts a registered name -- what is gone is offering
+    `/providers <name>` still accepts a registered name -- what is gone is offering
     a stranger ten rows that all say "go get a token first".
     """
     names = ["g4f", "pool"]
@@ -290,6 +311,26 @@ def available_providers(ctx: ReplContext) -> list[str]:
         if name.name not in names:
             names.append(name.name)
     return names
+
+
+def provider_choices(ctx: ReplContext) -> list:
+    """Rows for the providers picker: the doors that answer, plus presets keyed.
+
+    A preset earns a row only once it holds a key — the same promise the table
+    keeps. Adding an endpoint is a typed command (`/providers add`), not a
+    picker row: the picker chooses a value to switch to, and "add" is not a
+    provider.
+    """
+    from beeagent.providers.presets import BY_NAME, key_for
+
+    active = (getattr(ctx.config, "provider", "") or "g4f").lower()
+    rows: list[tuple[str, str]] = []
+    for name in available_providers(ctx):
+        rows.append((name, f"★ {name}" if name.lower() == active else name))
+    for name, endpoint in BY_NAME.items():
+        if key_for(endpoint, ctx.config.api_keys):
+            rows.append((name, f"{endpoint.label} ·key"))
+    return rows
 
 
 def available_paths(ctx: ReplContext) -> list[str]:
@@ -457,7 +498,7 @@ def _run_tool(ctx: ReplContext, tool_name: str, title: str, **kwargs) -> Command
 
 def _cmd_help(ctx, args):
     from beeagent.ui.components import commands_table
-    return CommandResult(output=commands_table(COMMANDS))
+    return CommandResult(output=commands_table(visible_commands()))
 
 
 def _cmd_about(ctx, args):
@@ -491,9 +532,21 @@ def _cmd_models(ctx, args):
     rest = [a for a in given if a not in flags]
     if rest and rest[0] in ("-u", "--upstream"):
         rest = rest[1:]
-    query = rest[0] if rest else ""
+    # The whole rest of the line is the query: a picker sends a full model id,
+    # and g4f has ids with spaces in them, so cutting at the first space would
+    # make such a model untypeable.
+    query = " ".join(rest).strip()
     upstream_map = G4fProvider.upstream_map()
     if query:
+        exact = [model for model in models if model.lower() == query.lower()]
+        if len(exact) == 1:
+            # One name that is exactly one model is the switch `/model <name>`
+            # always meant; `/models <exact name>` now does the same thing,
+            # through the one handler. It is checked before the filter because
+            # a filter that happens to leave one row and a name that IS the
+            # model cannot be told apart by whoever is typing, while what they
+            # expect back is different.
+            return _switch_model(ctx, exact[0])
         models = [m for m in models
                   if query in m.lower() or any(query == p.lower() for p in upstream_map.get(m, []))]
         if not models:
@@ -533,17 +586,62 @@ def _cmd_models(ctx, args):
         L("✔ window measured on this machine · ~ claimed by the model name · requests are capped "
           "at 32k tokens unless you raise max_context_tokens\n"
           "every model: /models --all · measure one: /window measure <model> · "
-          "filter: /models <name|upstream> · switch: /model <name>",
+          "filter: /models <name|upstream> · switch to one: /models <exact name>",
           "✔ окно измерено на этой машине · ~ заявлено в имени модели · запросы режутся до 32k, "
           "пока не поднят max_context_tokens\n"
           "все модели: /models --all · померить: /window measure <модель> · "
-          "фильтр: /models <имя|провайдер> · переключить: /model <имя>"),
+          "фильтр: /models <имя|провайдер> · переключить: /models <точное имя>"),
         style="dim")
     return CommandResult(output=table)
 
 
+def _switch_model(ctx, name: str) -> CommandResult:
+    """Make `name` the model this session writes with. `/models <exact name>`
+    and the hidden alias `/model <name>` both arrive here."""
+    if name not in available_models(ctx):
+        return _err(L(f"unknown model '{name}' — /models lists what answers",
+                      f"неизвестная модель '{name}' — список в /models"))
+    ctx.config.model = name
+    if ctx.agent is not None:
+        ctx.agent.context.model = name
+    _persist_config(ctx)
+    return _ok(L(f"model → {name}", f"модель → {name}"))
+
+
 def _cmd_providers(ctx, args):
-    """What can serve requests right now, and what still needs a key."""
+    """List endpoints, switch to one, or edit its address, keys and models.
+
+    This is the one door since `/provider` became a hidden alias: the list, the
+    switch and the editor are the same command, because a person looking for one
+    is always standing next to the other two.
+    """
+    if args:
+        first = args[0].lower()
+        if first in ("add", "new", "create"):
+            return _edit_provider(ctx, " ".join(args[1:]).strip(), adding=True)
+        if first in ("edit", "set", "change"):
+            return _edit_provider(ctx, " ".join(args[1:]).strip())
+        if first == "key":
+            rest = args[1:]
+            if not rest:
+                return _err(L("name the provider: /providers key <name> [k1,k2]",
+                              "назовите провайдера: /providers key <имя> [k1,k2]"))
+            if len(rest) == 1:
+                return _edit_provider(ctx, rest[0], keys_only=True)
+            return _replace_pool(ctx, rest[0], ",".join(rest[1:]))
+        if first == "models":
+            return _providers_models(ctx, args[1:])
+        if first == "use":
+            if len(args) < 2:
+                return _err(L("name the provider: /providers use <name> — /providers lists them",
+                              "назовите провайдера: /providers use <имя> — список в /providers"))
+            return _switch_provider(ctx, args[1])
+        if first in ("remove", "rm", "delete"):
+            return _remove_provider(ctx, args[1] if len(args) > 1 else "")
+        return _switch_provider(ctx, first)
+
+    from beeagent.providers.presets import BY_NAME, key_for
+    from beeagent.core import provider_setup
     from beeagent.ui.components import providers_table
 
     active = getattr(ctx.config, "provider", "g4f")
@@ -557,74 +655,368 @@ def _cmd_providers(ctx, args):
     }
     rows = []
     for name in available_providers(ctx):
+        custom = next((c for c in (getattr(ctx.config, "custom_providers", None) or [])
+                       if str(c.name).lower() == name.lower()), None)
+        if custom is not None:
+            # An installed endpoint is named with its address and what it lacks;
+            # a keyless one is told what to type, not filed under "no key".
+            pool = provider_setup.stored_keys(ctx.config, name)
+            lacking = "" if pool else L(" · needs a key: /providers key " + name,
+                                        " · нужен ключ: /providers key " + name)
+            rows.append({"name": name + ("  ←" if active.lower() == name.lower() else ""),
+                         "type": custom.type,
+                         "desc": f"{custom.url} · keys: {provider_setup.key_tails(pool)}"
+                                 + lacking})
+            continue
         kind, desc = about.get(name, (L("registered", "зарегистрирован"),
                                       L("from beeagent.json", "из beeagent.json")))
         rows.append({"name": name + ("  ←" if active == name else ""),
                      "type": kind, "desc": desc})
-    return CommandResult(output=providers_table(rows))
+    for name, endpoint in BY_NAME.items():
+        # A preset only earns a row when it holds a key of your own — the same
+        # promise the picker and the box make. The row says which key, by tail.
+        key = key_for(endpoint, ctx.config.api_keys)
+        if key:
+            rows.append({"name": name + ("  ←" if active == name else ""),
+                         "type": L(f"your key {provider_setup.mask_key(key)}",
+                                   f"твой ключ {provider_setup.mask_key(key)}"),
+                         "desc": f"{endpoint.label} — {endpoint.url}"})
+    table = providers_table(rows)
+    table.caption = Text(
+        L("switch: /providers <name> · add an endpoint: /providers add · change one: "
+          "/providers edit <name> · keys only: /providers key <name> · models: "
+          "/providers models <name> [a,b,c] · remove yours: /providers remove <name>",
+          "переключить: /providers <имя> · добавить: /providers add · изменить: "
+          "/providers edit <имя> · только ключи: /providers key <имя> · модели: "
+          "/providers models <имя> [a,b,c] · удалить своё: /providers remove <имя>"),
+        style="dim")
+    return CommandResult(output=table)
+
+
+def _switch_provider(ctx, name: str) -> CommandResult:
+    """Point the session at another endpoint, and take the model with it."""
+    from beeagent.providers.presets import BY_NAME, key_for
+
+    name = (name or "").strip().lower()
+    if not name:
+        return _err(L("name the provider: /providers use <name> — /providers lists them",
+                      "назовите провайдера: /providers use <имя> — список в /providers"))
+    if name in BY_NAME and not key_for(BY_NAME[name], ctx.config.api_keys):
+        # Say out loud that nothing changed. The refusal alone let a person open
+        # /models, see another provider's names, and conclude the list was broken.
+        return _err(L(f"{BY_NAME[name].label} needs a key of your own: /key {name} <token> "
+                      f"(free at {BY_NAME[name].signup}) — still on "
+                      f"{getattr(ctx.config, 'provider', 'g4f')}",
+                      f"{BY_NAME[name].label} нужен твой ключ: /key {name} <токен> "
+                      f"(бесплатно на {BY_NAME[name].signup}) — ты всё ещё на "
+                      f"{getattr(ctx.config, 'provider', 'g4f')}"))
+    if ctx.agent is not None and ctx.agent.providers.get(name) is None:
+        return _err(L(f"provider “{name}” is not registered — /providers shows what works",
+                      f"провайдер “{name}” не зарегистрирован — список в /providers"))
+    if ctx.agent is None and name not in BY_NAME \
+            and name not in [n.lower() for n in available_providers(ctx)]:
+        # The same answer with or without an agent. `ctx.agent` is None for an
+        # embedder and for a dispatch-only test, and accepting a name there meant
+        # the value was written to the config and read back on the next start —
+        # which is a session pointed at an endpoint that does not exist. The names
+        # come from `available_providers`, not from `BY_NAME` alone, because g4f and
+        # the pool are the two BeeCode always serves and neither is a preset.
+        return _err(L(f"there is no provider called “{name}” — /providers lists them, "
+                      f"/providers add creates one",
+                      f"провайдера “{name}” нет — список в /providers, "
+                      f"новый создаёт /providers add"))
+    ctx.config.provider = name
+    # The model has to move with the provider in both directions. This used to
+    # happen only when leaving g4f, so `/providers pool` then `/providers g4f`
+    # left the session asking g4f for a crax model id it cannot serve.
+    provider = ctx.agent.providers.get(name) if ctx.agent is not None else None
+    models = list(getattr(provider, "models", None) or [])
+    if not models and name == "g4f":
+        from beeagent.providers.g4f_provider import G4fProvider
+        models = G4fProvider.discover_models()
+    if models:
+        ctx.config.model = models[0]
+        if ctx.agent is not None:
+            ctx.agent.context.model = models[0]
+    _persist_config(ctx)
+    return _ok(L(f"provider → {name} · model → {ctx.config.model}   all of them: /models",
+                 f"провайдер → {name} · модель → {ctx.config.model}   все: /models"))
+
+
+def _edit_provider(ctx, name: str, adding: bool = False,
+                   keys_only: bool = False) -> CommandResult:
+    """Open the four fields of one endpoint: the modal in the TUI, or the line
+    that does it one by one where there is no screen to draw on."""
+    from beeagent.ui import provider_form
+
+    message, refusal = provider_form.open_form(
+        ctx, name, adding=adding, keys_only=keys_only,
+        workdir=ctx.agent.workdir if ctx.agent is not None else ".")
+    if refusal:
+        return _err(refusal)
+    return _ok(message)
+
+
+def _replace_pool(ctx, name: str, keys: str) -> CommandResult:
+    """Set the whole key pool for one provider, from the command line."""
+    from beeagent.core import provider_setup
+
+    name = name.strip().lower()
+    fields = provider_setup.current(ctx.config, name)
+    fields.name, fields.was = name, name
+    fields.keys = keys
+    message, refusal = provider_setup.apply(
+        ctx.config, ctx.agent, fields,
+        workdir=ctx.agent.workdir if ctx.agent is not None else ".")
+    return _err(refusal) if refusal else _ok(f"🔑 {message}")
+
+
+def _providers_models(ctx, args) -> CommandResult:
+    """`/providers models <name> [a,b,c]` — name them, or ask and keep what answers."""
+    from beeagent.core import provider_setup
+
+    if not args:
+        return _err(L("usage: /providers models <name> [a,b,c] — without the list, "
+                      "the endpoint is asked what it has",
+                      "использование: /providers models <имя> [a,b,c] — без списка "
+                      "спросим у самого эндпоинта"))
+    name = args[0].strip().lower()
+    # The whole rest of the line is the list: commas separate models, so a
+    # space inside an id belongs to the id rather than starting another one.
+    given = provider_setup.split_models([" ".join(args[1:])]) if len(args) > 1 else []
+    fields = provider_setup.current(ctx.config, name)
+    if not (fields.url or fields.key_list or fields.models
+            or provider_setup.exists(ctx.config, name)):
+        return _err(L(f"there is no provider called {name} — /providers add {name} "
+                      f"creates one",
+                      f"провайдера {name} нет — /providers add {name} создаст его"))
+    fields.name, fields.was = name, name
+    notice = ""
+    if not given:
+        from beeagent.providers.presets import BY_NAME, key_for
+
+        endpoint = BY_NAME.get(name)
+        keys = ",".join(provider_setup.stored_keys(ctx.config, name)) \
+            or (key_for(endpoint, ctx.config.api_keys) if endpoint else "")
+        models, _dialect, refusal = provider_setup.discover(fields.url or
+                                                            (endpoint.url if endpoint else ""),
+                                                             keys)
+        if not models:
+            # The three empties — refused, silent, empty list — are what the
+            # refusal sentence carries; say which happened and change nothing.
+            return _err(L(f"nothing found / нечего не найдено — {name} gave no model list"
+                          + (f": {refusal}" if refusal else "")
+                          + f". name them: /providers models {name} <a,b,c>",
+                          f"нечего не найдено — {name} не назвал моделей"
+                          + (f": {refusal}" if refusal else "")
+                          + f". назовите сами: /providers models {name} <a,b,c>"))
+        notice = L(f"discovered {len(models)} model(s): {', '.join(models[:6])}"
+                   f"{' …' if len(models) > 6 else ''}\n",
+                   f"найдено {len(models)} модель(ей): {', '.join(models[:6])}"
+                   f"{' …' if len(models) > 6 else ''}\n")
+        fields.models = models
+    else:
+        fields.models = given
+        notice = L(f"models for {name}: {', '.join(given[:6])}"
+                   f"{' …' if len(given) > 6 else ''}\n",
+                   f"модели {name}: {', '.join(given[:6])}"
+                   f"{' …' if len(given) > 6 else ''}\n")
+    message, refusal = provider_setup.apply(
+        ctx.config, ctx.agent, fields,
+        workdir=ctx.agent.workdir if ctx.agent is not None else ".")
+    return _err(refusal) if refusal else _ok(notice + message)
+
+
+def _remove_provider(ctx, name: str) -> CommandResult:
+    """Delete a custom endpoint. A built-in one is refused, in so many words."""
+    from beeagent.providers.presets import BY_NAME
+    from beeagent.core import provider_setup
+
+    name = (name or "").strip().lower()
+    if not name:
+        return _err(L("name the endpoint: /providers remove <name> — /providers lists them",
+                      "назовите эндпоинт: /providers remove <имя> — список в /providers"))
+    if name in ("g4f", "pool"):
+        return _err(L(f"{name} is built into BeeCode, not an endpoint you added — "
+                      f"there is nothing here to remove",
+                      f"{name} встроен в BeeCode, вы его не добавляли — удалять нечего"))
+    if name in BY_NAME:
+        return _err(L(f"{BY_NAME[name].label} is a built-in endpoint — its address ships "
+                      f"with BeeCode; only the key is yours, and it goes with: "
+                      f"/key {name} remove",
+                      f"{BY_NAME[name].label} — встроенный эндпоинт, его адрес идёт с "
+                      f"BeeCode; ваш там только ключ, он убирается так: /key {name} remove"))
+    parts, refusal = provider_setup.forget(
+        ctx.config, ctx.agent, name,
+        workdir=ctx.agent.workdir if ctx.agent is not None else ".")
+    if refusal:
+        return _err(refusal)
+    if not parts:
+        return _err(L(f"there is no custom endpoint called {name} — /providers lists "
+                      f"what is",
+                      f"своего эндпоинта {name} нет — что есть, видно в /providers"))
+    return _ok(f"🗑 {name}: " + " · ".join(parts))
+
+
+KEY_USAGE = L(
+    "usage: /key <provider> <base-url> <key[,key...]> [model [model ...]]\n"
+    "   or: /providers add (and /providers edit <name>) to type the four fields",
+    "употребление: /key <провайдер> <base-url> <ключ[,ключ...]> [модель [модель ...]]\n"
+    "   или: /providers add (и /providers edit <имя>) — четыре поля в форме")
 
 
 def _cmd_key(ctx, args):
-    """Store a key the user obtained themselves. The token is never echoed."""
+    """Store a key, or a whole endpoint. The token is never echoed.
+
+    Two shapes for two moments: `/key groq gsk_xxx` when a key was just copied off
+    a signup page, and the four-field line when an endpoint of one's own is being
+    pointed at. Both end in `core/provider_setup.py`, so discovery, what lands in
+    `beeagent.json`, and the masked echo mean the same thing from either door.
+    """
+    from beeagent.core import provider_setup
+    from beeagent.providers.presets import BY_NAME
+
+    if not args:
+        return CommandResult(output=Text(_keys_overview(ctx), style="dim"))
+
+    name = args[0].strip().lower()
+    if len(args) == 1:
+        return CommandResult(output=Text(_key_state(ctx, name), style="dim"))
+
+    if args[1] in ("remove", "rm", "delete"):
+        parts, refusal = provider_setup.forget(
+            ctx.config, ctx.agent, name,
+            workdir=ctx.agent.workdir if ctx.agent is not None else ".")
+        if refusal:
+            return _err(refusal)
+        return _ok(f"🗑 {name}: " + (" · ".join(parts) or
+                                    L("nothing was stored under that name",
+                                      "по такому имени ничего не было")))
+
+    if provider_setup.looks_like_url(args[1]):
+        return _setup_endpoint(ctx, provider_setup.Fields(
+            name=name, url=args[1].strip(),
+            keys=args[2].strip() if len(args) > 2 else "",
+            models=list(args[3:])))
+
+    if name not in BY_NAME:
+        return _err(L(f"there is no built-in provider called {name!r} to hang a bare key "
+                      f"on — name its address too: /key {name} <base-url> <key>",
+                      f"встроенного провайдера {name!r} нет — назовите и адрес: "
+                      f"/key {name} <base-url> <ключ>") + "\n" + KEY_USAGE)
+    return _store_key(ctx, name, args[1].strip())
+
+
+def _store_key(ctx, name: str, token: str) -> CommandResult:
+    """A key for a built-in endpoint: the preset keeps its own URL and class."""
     from beeagent.config.loader import save_config
     from beeagent.providers.presets import BY_NAME
 
-    def persist():
-        try:
-            save_config(ctx.config, ctx.agent.workdir if ctx.agent is not None else ".")
-        except OSError:
-            pass
-
-    if not args:
-        stored = sorted((ctx.config.api_keys or {}).keys())
-        return CommandResult(output=Text(
-            L(f"keys stored for: {', '.join(stored) or 'nobody yet'}   add one: /key <provider> <token>",
-              f"ключи сохранены для: {', '.join(stored) or 'пока никого'}   добавить: /key <провайдер> <токен>"),
-            style="dim"))
-
-    name = args[0].lower()
-    if name not in BY_NAME:
-        return _err(L(f"unknown provider '{name}'. /providers lists them.",
-                      f"неизвестный провайдер '{name}'. Список — /providers."))
-    endpoint = BY_NAME[name]
-
-    def drop():
-        ctx.config.api_keys.pop(name, None)
-        if ctx.agent is not None:
-            ctx.agent.providers.unregister(name)
-            ctx.agent.ready_presets = [p for p in ctx.agent.ready_presets if p != name]
-        persist()
-
-    # Bare `/key groq` reports the state instead of deleting anything: a missing
-    # argument must never cost the user their key.
-    if len(args) < 2:
-        current = (ctx.config.api_keys or {}).get(name)
-        if current:
-            return CommandResult(output=Text(L(
-                f"{endpoint.label}: key saved (…{current[-4:]}) — "
-                f"replace it with /key {name} <token>, delete with /key {name} remove",
-                f"{endpoint.label}: ключ сохранён (…{current[-4:]}) — "
-                f"заменить: /key {name} <токен>, удалить: /key {name} remove"), style="dim"))
-        return CommandResult(output=Text(L(
-            f"{endpoint.label}: no key yet — get one at {endpoint.signup} "
-            f"and run /key {name} <token>",
-            f"{endpoint.label}: ключа нет — возьми на {endpoint.signup} "
-            f"и выполни /key {name} <токен>"), style="dim"))
-
-    if args[1] in ("remove", "rm", "delete"):
-        drop()
-        return _ok(L(f"🗑 key for {endpoint.label} removed", f"🗑 ключ {endpoint.label} удалён"))
-
-    token = args[1].strip()
     ctx.config.api_keys[name] = token
     if ctx.agent is not None:
         # Through the agent's factory, so an endpoint with its own provider class
-        # keeps the behaviour that class carries.
+        # keeps the behaviour that class carries (crax splits a comma pool).
         ctx.agent.attach_preset(name, token)
         ctx.agent.ready_presets = list(dict.fromkeys(list(ctx.agent.ready_presets) + [name]))
-    persist()
-    return _ok(L(f"🔑 saved a key for {endpoint.label} (…{token[-4:]}). Activate: /provider {name}",
-                 f"🔑 ключ {endpoint.label} сохранён (…{token[-4:]}). Включить: /provider {name}"))
+    try:
+        save_config(ctx.config, ctx.agent.workdir if ctx.agent is not None else ".")
+    except OSError as exc:
+        return _err(L(f"nothing was saved: {exc}", f"ничего не сохранено: {exc}"))
+    tail = provider_mask_key(token)
+    return _ok(L(f"🔑 {BY_NAME[name].label}: key saved ({tail}) · "
+                 f"switch: /providers {name}",
+                 f"🔑 {BY_NAME[name].label}: ключ сохранён ({tail}) · "
+                 f"включить: /providers {name}"))
+
+
+def provider_mask_key(token: str) -> str:
+    """The one masking spelling this file uses, shared with the setup module."""
+    from beeagent.core import provider_setup
+
+    return provider_setup.mask_key(token)
+
+
+def _setup_endpoint(ctx, fields) -> CommandResult:
+    """Ask the endpoint for its models when nobody named any, then save."""
+    from beeagent.core import provider_setup
+
+    notice = ""
+    if not fields.models and fields.url:
+        models, dialect, refusal = provider_setup.discover(fields.url, fields.keys)
+        if models:
+            fields.models = models
+            notice = L(f"{len(models)} model(s) read from the endpoint\n",
+                       f"{len(models)} модель(ей) получено от эндпоинта\n")
+        else:
+            # The keys and the address are still worth saving; what is missing is
+            # said as a question with the exact line that answers it.
+            notice = L(
+                "nothing found / нечего не найдено — the endpoint gave no model list"
+                + (f": {refusal}" if refusal else "") + ". please specify the models "
+                f"yourself:\n  /providers models {fields.name} <model> [model ...]\n",
+                "нечего не найдено — эндпоинт не назвал ни одной модели"
+                + (f": {refusal}" if refusal else "") + ". укажите модели сами:\n"
+                f"  /providers models {fields.name} <модель> [модель ...]\n")
+
+    message, refusal = provider_setup.apply(
+        ctx.config, ctx.agent, fields,
+        workdir=ctx.agent.workdir if ctx.agent is not None else ".")
+    if refusal:
+        return _err(refusal + "\n" + KEY_USAGE)
+    return _ok(notice + message)
+
+
+def _keys_overview(ctx) -> str:
+    """Every provider holding anything, one line each, keys by their tails only."""
+    from beeagent.core import provider_setup
+
+    names = sorted(set(list((getattr(ctx.config, "api_keys", None) or {}).keys())
+                       + [str(custom.name).lower()
+                          for custom in (getattr(ctx.config, "custom_providers", None) or [])]))
+    if not names:
+        return L("no keys stored yet. /providers lists the free endpoints; /providers add "
+                 "opens a form for an endpoint of your own.",
+                 "ключей пока нет. /providers покажет бесплатные эндпоинты; /providers add "
+                 "откроет форму для своего.")
+    lines = []
+    for name in names:
+        fields = provider_setup.current(ctx.config, name)
+        lines.append(f"{name:16s} {fields.url or '—'}  keys: "
+                     f"{provider_setup.key_tails(fields.key_list)}  models: "
+                     f"{len(fields.models) or '—'}")
+    return "\n".join(lines) + "\n" + KEY_USAGE
+
+
+def _key_state(ctx, name: str) -> str:
+    """One provider's four facts, and both ways to change them.
+
+    A bare `/key <name>` reports instead of deleting: an argument left out by
+    accident must never cost a person their key.
+    """
+    from beeagent.core import provider_setup
+    from beeagent.providers.presets import BY_NAME
+
+    fields = provider_setup.current(ctx.config, name)
+    if not fields.url and not fields.key_list and not fields.models:
+        if name in BY_NAME:
+            return L(f"{BY_NAME[name].label}: no key yet — get one at "
+                     f"{BY_NAME[name].signup} and run /key {name} <token>",
+                     f"{BY_NAME[name].label}: ключа нет — возьми на "
+                     f"{BY_NAME[name].signup} и выполни /key {name} <токен>")
+        return L(f"there is no provider called {name!r} — /providers lists them",
+                 f"провайдера {name!r} нет — список в /providers")
+    active = (getattr(ctx.config, "provider", "") or "").lower() == name
+    pool = L(" (a pool — order saved as typed)", " (пул — порядок сохранён как введён)") \
+        if len(fields.key_list) > 1 else ""
+    return (f"{name}\n  url    {fields.url or '—'}\n"
+            f"  keys   {provider_setup.key_tails(fields.key_list)}{pool}\n"
+            f"  models {', '.join(fields.models[:8]) or '—'}"
+            f"{' …' if len(fields.models) > 8 else ''}\n"
+            + ("  ← active\n" if active else f"  switch: /providers {name}\n")
+            + L("edit: /providers edit " + name + "   or in one line: /key "
+                f"{name} <url> <keys> [models ...]",
+                "изменить: /providers edit " + name + "   или в одну строку: /key "
+                f"{name} <url> <ключи> [модели ...]"))
 
 
 def _persist_config(ctx) -> None:
@@ -640,59 +1032,6 @@ def _persist_config(ctx) -> None:
         save_config(ctx.config, ctx.agent.workdir if ctx.agent is not None else ".")
     except OSError:
         pass
-
-
-def _cmd_model(ctx, args):
-    if not args:
-        return CommandResult(output=Text(f"current model: {ctx.config.model}  (see /models)", style="dim"))
-    # A picker sends the whole name, and model ids may contain a space, so the
-    # arguments are rejoined rather than taken one at a time. The current g4f
-    # catalogue happens to have none, but cutting at the first space would make
-    # any such id unreachable the day one appears.
-    name = " ".join(args).strip()
-    if name not in available_models(ctx):
-        return _err(f"Unknown model '{name}'. Run /models to see the list.")
-    ctx.config.model = name
-    if ctx.agent is not None:
-        ctx.agent.context.model = name
-    _persist_config(ctx)
-    return _ok(f"model → {name}")
-
-
-def _cmd_provider(ctx, args):
-    from beeagent.providers.presets import BY_NAME, key_for
-
-    if not args:
-        return CommandResult(output=Text(
-            L(f"current provider: {ctx.config.provider}  — /providers shows the rest",
-              f"текущий провайдер: {ctx.config.provider}  — остальные в /providers"), style="dim"))
-    name = args[0].lower()
-    if name in BY_NAME and not key_for(BY_NAME[name], ctx.config.api_keys):
-        # Say out loud that nothing changed. The refusal alone let a person open
-        # /model, see another provider's names, and conclude the list was broken.
-        return _err(L(f"{BY_NAME[name].label} needs a key of your own: /key {name} <token> "
-                      f"(free at {BY_NAME[name].signup}) — still on {ctx.config.provider}",
-                      f"{BY_NAME[name].label} нужен твой ключ: /key {name} <токен> "
-                      f"(бесплатно на {BY_NAME[name].signup}) — ты всё ещё на {ctx.config.provider}"))
-    if ctx.agent is not None and ctx.agent.providers.get(name) is None:
-        return _err(L(f"provider '{name}' is not registered — /providers shows what works",
-                      f"провайдер '{name}' не зарегистрирован — список в /providers"))
-    ctx.config.provider = name
-    # The model has to move with the provider in both directions. This used to
-    # happen only when leaving g4f, so `/provider pool` then `/provider g4f` left
-    # the session asking g4f for a crax model id it cannot serve.
-    provider = ctx.agent.providers.get(name) if ctx.agent is not None else None
-    models = list(getattr(provider, "models", None) or [])
-    if not models and name == "g4f":
-        from beeagent.providers.g4f_provider import G4fProvider
-        models = G4fProvider.discover_models()
-    if models:
-        ctx.config.model = models[0]
-        if ctx.agent is not None:
-            ctx.agent.context.model = models[0]
-    _persist_config(ctx)
-    return _ok(L(f"provider → {name} · model → {ctx.config.model}   all of them: /models",
-                 f"провайдер → {name} · модель → {ctx.config.model}   все: /models"))
 
 
 def _skin_slot_table(skin, only: str = "") -> Table:
@@ -2081,8 +2420,8 @@ def _cmd_pool(ctx, args):
                                  "владелец пула должен подтвердить это место, иначе оно не работает."),
                         style="bold yellow")
         else:
-            text.append("\n" + L("switch to it with: /provider pool",
-                                 "переключись на него: /provider pool"), style="dim")
+            text.append("\n" + L("switch to it with: /providers pool",
+                                 "переключись на него: /providers pool"), style="dim")
         return CommandResult(output=text)
 
     if sub in ("", "status"):
@@ -2141,8 +2480,11 @@ HANDLERS: dict[str, Callable] = {
     "models": _cmd_models,
     "providers": _cmd_providers,
     "key": _cmd_key,
-    "model": _cmd_model,
-    "provider": _cmd_provider,
+    # Hidden aliases: the singular doors of the two plurals, same handler, so
+    # `/model <x>` and `/provider <x>` keep working for fingers that remember
+    # them — while `/help` and the README advertise only the plural doors.
+    "model": _cmd_models,
+    "provider": _cmd_providers,
     "lang": _cmd_lang,
     "skin": _cmd_skin,
     "extensions": _cmd_extensions,

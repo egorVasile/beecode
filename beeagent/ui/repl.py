@@ -31,7 +31,8 @@ from beeagent.ui.components import (
 )
 from beeagent.ui.commands import (
     ReplContext, build_sources, get_suggestions, dispatch,
-    available_models, available_providers, model_choices, AVAILABLE_MODES, THEMES,
+    available_models, available_providers, provider_choices, model_choices,
+    AVAILABLE_MODES, THEMES,
     catalog_choices, skill_choices, mcp_choices, skin_choices, history_body,
 )
 from beeagent.ui.viewer import show_scrolled
@@ -327,14 +328,21 @@ def _picker_specs(ctx: ReplContext):
                     " — ★ рекомендуемые, сначала с большим контекстом")
     return {
         "models":    (model_title,
-                     lambda: model_choices(ctx), "/model",
+                     lambda: model_choices(ctx), "/models",
                      lambda: ctx.config.model),
         "model":     (model_title,
-                     lambda: model_choices(ctx), "/model",
+                     lambda: model_choices(ctx), "/models",
                      lambda: ctx.config.model),
-        "providers": (L("🐝 Select provider", "🐝 Выбрать провайдер"), lambda: available_providers(ctx), "/provider",
+        # One door: both names open the same picker, and the chosen value comes
+        # back through `/providers`, where the editing sub-commands live too.
+        # The extra row `add` is how a mouse user reaches the guided form.
+        "providers": (L("🐝 Select provider — add a new one from the last row",
+                        "🐝 Выбрать провайдера — добавить своего можно последней строкой"),
+                      lambda: provider_choices(ctx), "/providers",
                       lambda: ctx.config.provider),
-        "provider":  (L("🐝 Select provider", "🐝 Выбрать провайдер"), lambda: available_providers(ctx), "/provider",
+        "provider":  (L("🐝 Select provider — add a new one from the last row",
+                        "🐝 Выбрать провайдера — добавить своего можно последней строкой"),
+                      lambda: provider_choices(ctx), "/providers",
                       lambda: ctx.config.provider),
         "mode":      (L("🐝 Select mode", "🐝 Выбрать режим"),     lambda: list(AVAILABLE_MODES),      "/mode",
                       lambda: ctx.config.mode),
@@ -407,7 +415,55 @@ async def try_picker(ctx: ReplContext, name: str, args: list[str]):
         return None
     if choice is None:
         return None
-    return dispatch(ctx, f"{apply_cmd} {choice}")
+    line = f"{apply_cmd} {choice}"
+    parts = line.split()
+    guided = await try_guided(ctx, parts[0][1:], parts[1:])
+    if guided is not None:
+        return guided
+    return dispatch(ctx, line)
+
+
+#: `/providers` sub-commands that need to ask the person something. Everything
+#: else about providers — switching, `models <name> <a,b>`, `remove` — is a
+#: complete sentence and belongs to `dispatch`; an interview is not.
+_GUIDED_SUBS = ("add", "new", "create", "edit", "set", "change", "key")
+
+
+async def try_guided(ctx: ReplContext, name: str, args: list[str]):
+    """Run the guided endpoint form for the classic REPL, when a line needs one.
+
+    prompt_toolkit dialogs must be awaited — the blocking `.run()` refuses to
+    start inside the loop that already owns the terminal — so this cannot live
+    behind the synchronous `dispatch`; the command path calls it first and only
+    falls through to `dispatch` when there is nothing to ask. The full-screen
+    TUI does not come this way: the same command there pushes the modal screen
+    from `ui/provider_form.py` itself.
+    """
+    if name not in ("providers", "provider") or not args:
+        return None
+    sub = args[0].lower()
+    if sub not in _GUIDED_SUBS:
+        return None
+    adding = sub in ("add", "new", "create")
+    keys_only = sub == "key"
+    rest = args[1:]
+    if not adding and not rest:
+        return None                     # `/providers edit` alone: dispatch asks for a name
+    if keys_only and len(rest) > 1:
+        return None                     # the pool is given inline: no interview needed
+    from beeagent.ui import provider_form
+
+    try:
+        return await provider_form.guided_form(
+            ctx, name=rest[0] if rest else "", adding=adding, keys_only=keys_only,
+            workdir=ctx.agent.workdir if ctx.agent is not None else ".")
+    except Exception as e:
+        # A broken dialog must not take the conversation with it; say what
+        # failed and let the plain command answer.
+        console.print(Text(L(f"  the form could not run: {e.__class__.__name__}: {e}",
+                             f"  форма не запустилась: {e.__class__.__name__}: {e}"),
+                           style="dim"))
+        return None
 
 
 def _spawn_agent_task(agent, line: str, ctx: ReplContext):
@@ -628,7 +684,12 @@ async def run_repl(agent, config, session=None):
                 parts = line.split()
                 name = parts[0][1:]
                 args = parts[1:]
-                res = await try_picker(ctx, name, args)
+                # Three doors, one order: an interview the line cannot answer on
+                # its own (the endpoint form), then the mouse picker for a bare
+                # list command, then the plain command.
+                res = await try_guided(ctx, name, args)
+                if res is None:
+                    res = await try_picker(ctx, name, args)
                 if res is None:
                     res = dispatch(ctx, line)
                 if res.action == "clear":

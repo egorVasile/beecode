@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from beeagent.ui.commands import COMMANDS  # noqa: E402
+from beeagent.ui.commands import COMMANDS, visible_commands  # noqa: E402
 
 BEGIN = "<!-- COMMANDS:BEGIN -->"
 END = "<!-- COMMANDS:END -->"
@@ -24,6 +24,11 @@ def build_table() -> str:
     rows = ["| Command | What it does | Usage |", "| --- | --- | --- |"]
     by_category: dict[str, list] = {}
     for command in COMMANDS:
+        if command.hidden:
+            # A hidden alias is the same door under a shorter word; documenting it
+            # as its own row is how `/model` and `/models` came to look like two
+            # features that both needed fixing.
+            continue
         by_category.setdefault(command.category, []).append(command)
     labels = {
         "info": "Info and status", "engine": "Model, provider, mode", "session": "Sessions",
@@ -51,7 +56,8 @@ def main() -> None:
     else:
         text = text.replace("<!-- COMMANDS_TABLE -->", table)
     io.open(path, "w", encoding="utf-8").write(text)
-    print(f"README.md: {len(COMMANDS)} commands documented")
+    print(f"README.md: {len(visible_commands())} commands documented "
+          f"({len(COMMANDS) - len(visible_commands())} hidden aliases left out)")
 
 
 if __name__ == "__main__":

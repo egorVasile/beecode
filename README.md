@@ -490,10 +490,8 @@ mouse-clickable picker.
 | `/key` | Store your own API key for a provider | `/key <provider> <token>` |
 | `/lang` | Switch the interface language | `/lang <en|ru>` |
 | `/mode` | Switch between normal and economy | `/mode <normal|economy>` |
-| `/model` | Switch the active model | `/model <name>` |
 | `/models` | List models with the widest context first, --all for every one | `/models [name|upstream] [--all]` |
 | `/permissions` | Who may touch the machine: ask, auto or readonly | `/permissions <ask|auto|readonly>` |
-| `/provider` | Switch the active provider | `/provider <name>` |
 | `/providers` | List providers and which ones have a key | `/providers` |
 | `/skin` | Choose interface variants: frames, banner, spinner | `/skin [slot] [variant]` |
 | `/skins` | Skins that are code: list them, switch, see why one was refused | `/skins [name, number, next, off]` |

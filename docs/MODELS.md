@@ -104,7 +104,19 @@ built on them was a promise BeeCode could only keep by solving the check.
 ## Adding your own key
 
 Keyless is a shared, throttled resource, and the pinned set is five ids. A free
-key of your own is usually faster, steadier and far wider: `/providers` lists the
-endpoints, `/key <provider> <token>` stores it, `/provider <name>` switches,
-`/models` then lists what that provider offers for your key. Only your own keys —
-see the note in the README.
+key of your own is usually faster, steadier and far wider. `/providers` is the one
+door for all of it, in both interfaces:
+
+| what you type | what happens |
+| --- | --- |
+| `/providers` | the table — which endpoints have a key, which one is live, with key tails masked |
+| `/providers add` | four questions: name, base URL, keys (one per line, blank line ends), models |
+| `/providers edit <name>` | the same form, filled in with what is stored; leaving the key line empty keeps it |
+| `/providers key <name> <pool>` | replace the key pool of one endpoint, in the order the keys are tried |
+| `/providers models <name>` | re-ask the endpoint what it answers for, and say how many were found |
+| `/providers use <name>` | switch. Bare `/model <name>` still switches — it is the same door, shorter |
+| `/providers remove <name>` | delete an endpoint you added. The ones BeeCode ships are not deletable, and the answer names the door that does affect them |
+
+Nothing in that list prints a key back: the table, the form's echo and every error
+show the last four characters only. `/models` then lists what the live provider
+offers, widest context first. Only your own keys — see the note in the README.

@@ -33,7 +33,7 @@ from textual.widgets import (  # noqa: I001
 from beeagent.core.session import Session
 from beeagent.i18n import L
 from beeagent.ui.bee import BEE_FRAME_COUNT, render_bee
-from beeagent.ui.commands import COMMANDS, ReplContext, dispatch, history_body
+from beeagent.ui.commands import COMMANDS, ReplContext, dispatch, history_body, visible_commands
 from beeagent.ui.components import DARK_LEAF, HONEY, LEAF, bee_title, hud_lines
 
 # The picker is the classic dialog (`repl.BEE_DIALOG_STYLE`) drawn in Textual:
@@ -518,7 +518,10 @@ class BeeCodeApp(App):
         lv = self.home.query_one("#cmdlist", ListView)
         lv.clear()
         q = prefix.lower()
-        for c in COMMANDS:
+        for c in visible_commands():
+            # `/model` and `/provider` still work when typed; showing them beside
+            # `/models` and `/providers` is what made four commands look like four
+            # different decisions to make.
             if c.name.startswith(q):
                 label = Label(Text.assemble((f"/{c.name}", f"bold {HONEY}"),
                                             (f"  {c.description}", "dim")))
@@ -1110,9 +1113,13 @@ class BeeCodeApp(App):
         from beeagent.core import skins
         from beeagent.ui.components import BANNER_ROWS, BANNER_WIDTH
 
+        # One row, not the whole logo: the header shows a line, and laying out five
+        # to throw four away costs Rich about a millisecond a frame — on a box that
+        # is already compiling. The first row of the shipped art travels along as
+        # the shape to recolour, so a skin that reuses it keeps the letterforms.
+        top = Text(BANNER_ROWS[0]) if BANNER_ROWS else Text("BeeCode")
         try:
-            mine = skins.banner_render(size=(BANNER_WIDTH, len(BANNER_ROWS)),
-                                       default=Text("BeeCode"))
+            mine = skins.banner_render(size=(BANNER_WIDTH, 1), default=top)
         except Exception:
             return
         if mine is None:

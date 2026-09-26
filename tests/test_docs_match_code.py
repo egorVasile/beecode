@@ -79,14 +79,31 @@ def test_every_readme_command_exists_in_the_registry(command_block):
         "Either the command was removed or renamed; run scripts/sync_readme.py.")
 
 
-def test_the_table_holds_every_registered_command(command_block):
-    from beeagent.ui.commands import COMMANDS
+def test_the_table_holds_every_command_the_user_is_shown(command_block):
+    """The page lists the doors, not every handle that opens one.
+
+    `/model` and `/provider` are registered — they dispatch, they complete, a
+    two-year habit keeps working — and they are deliberately *not* rows: four
+    commands printed for two decisions is what made a user ask which one he was
+    supposed to type. So the page is checked against `visible_commands()`, and what
+    a hidden alias still owes the reader is checked here too: the door that took
+    its place has to be on the page, or the alias has been removed, not hidden.
+    """
+    from beeagent.ui.commands import COMMANDS, visible_commands
 
     documented = {name for _, name, _, _ in _table_rows(command_block)}
-    undocumented = sorted({c.name for c in COMMANDS} - documented)
+    undocumented = sorted({c.name for c in visible_commands()} - documented)
     assert not undocumented, (
-        f"commands the machine has and the page does not: {undocumented}. "
+        f"commands the machine shows and the page does not: {undocumented}. "
         "Run scripts/sync_readme.py.")
+
+    hidden = [c.name for c in COMMANDS if c.hidden]
+    assert hidden, "the flag exists so a command can hide; nothing uses it"
+    for name in hidden:
+        twin = name.rstrip("s") if name.endswith("s") else name + "s"
+        assert twin in documented, (
+            f"/{name} is hidden but /{twin} is not on the page either — a name that "
+            "works and is documented nowhere is how a command becomes folklore")
 
 
 def test_documented_descriptions_and_usage_are_what_the_registry_says(command_block):
