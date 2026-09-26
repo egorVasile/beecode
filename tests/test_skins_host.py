@@ -964,6 +964,74 @@ def test_a_slot_pack_named_at_skin_points_at_the_right_command(host, clean_comma
     assert "banner" not in text, "one slot asked, the whole board printed"
 
 
+def test_the_skin_picker_numbers_and_next_skip_the_broken(host, clean_commands):
+    """One list, three ways to use it: a click, a number, a name.
+
+    The rows have to agree, because a person reads "3" in the dialog and types
+    `/skins 3`; and `next` has to walk only the skins that can actually be worn,
+    or it parks him on a refused one every third press.
+    """
+    from beeagent.ui.commands import skin_choices
+
+    skins.register("good", {"SURFACES": ("status",),
+                            "on_status": lambda default: "x",
+                            "on_frame": lambda dt, painter: None}, pack="skin-good")
+    skins.install_source("broken", _source("import os"))
+    rows = skins.choice_rows()
+    assert rows[0][0] == "off", rows               # taking it off is row one
+    values = [value for value, _label in rows]
+    assert "good" in values and "broken" in values, values
+    label = dict(rows)["good"]
+    # Claims are known from the moment the skin is registered, not only after a
+    # switch: the picker describes every skin in the folder, worn or not.
+    assert "redraws status" in label, label
+    assert dict(rows)["broken"].endswith("refused") or "отклонён" in dict(rows)["broken"], \
+        dict(rows)["broken"]
+
+    numbered = dict(skin_choices(None))
+    assert numbered["off"].startswith("1 · "), numbered
+    assert numbered["good"].startswith("2 · "), numbered
+    picked = _run(clean_commands, "/skins 2").output.plain
+    assert "skin: good" in picked, picked
+    assert skins.active_name() == "good"
+
+    assert "no row 99" in _run(clean_commands, "/skins 99").output.plain or \
+        "нет строки 99" in _run(clean_commands, "/skins 99").output.plain
+    # One wearable skin has nowhere to go, and says so instead of a silent no-op.
+    alone = _run(clean_commands, "/skins next").output.plain
+    assert "only one skin" in alone or "один скин" in alone, alone
+    skins.register("other", {"SURFACES": ("status",),
+                             "on_status": lambda default: "y"}, pack="skin-other")
+    assert skins.wearable() == ["good", "other"], skins.wearable()
+    assert "skin: other" in _run(clean_commands, "/skins next").output.plain
+    assert "skin: good" in _run(clean_commands, "/skins next").output.plain, "must wrap"
+
+
+def test_the_skin_picker_is_registered_for_both_interfaces(host):
+    """`/skins` bare opens the dialog in the TUI and in the classic REPL."""
+    from beeagent.config.schema import BeeConfig
+    from beeagent.ui.commands import ReplContext
+    from beeagent.ui.repl import _picker_specs
+
+    specs = _picker_specs(ReplContext(config=BeeConfig()))
+    assert "skins" in specs, sorted(specs)
+    title, values_fn, apply_cmd, current_fn = specs["skins"]
+    assert apply_cmd == "/skins"
+    assert current_fn() == "off", current_fn()
+    skins.register("rec", Recorder())
+    assert [value for value, _ in values_fn()] == ["off", "rec"], values_fn()
+
+
+def test_every_listed_skin_says_where_it_will_show_up(host):
+    """No row may just say "on_frame": a list has to be readable on its own."""
+    skins.register("frameonly", {"on_frame": lambda dt, painter: None})
+    skins.register("lines", {"SURFACES": ("answer",),
+                             "on_answer": lambda text, final=False: None})
+    rows = dict(skins.choice_rows())
+    assert "strip above the state line" in rows["frameonly"], rows
+    assert "redraws answer" in rows["lines"], rows
+
+
 def test_skins_reads_in_both_languages(host, tmp_path, clean_commands):
     """Bilingual wording, checked in UTF-8 files: the console here is cp1251."""
     skins.register("rec", Recorder())

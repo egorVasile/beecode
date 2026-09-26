@@ -858,6 +858,16 @@ def register(name: str, skin=None, description: str = "", source=None,
         skin = types.SimpleNamespace(**skin)
     entry.skin = skin
     _REGISTRY[clean] = entry
+    if entry.skin is not None and not entry.refused:
+        # Resolve the claims now, not only at `switch()`: `/skins` and the picker
+        # list the skins this folder has, and a row that says "paints a row of its
+        # own" about a skin that redrew the answer is a lie told before the switch.
+        # `switch()` resolves them again, after `on_init` ran, which is where a
+        # dynamic `on_surfaces` may still change its mind.
+        try:
+            _resolve_claims(entry)
+        except Exception:
+            pass
     if previous is not None and _ACTIVE == clean:
         # Re-registering the skin on screen — the reload path, and the only way a
         # stopped skin promised to come back. Treat it as a fresh switch, so its
@@ -1863,7 +1873,7 @@ def _flat(text) -> str:
 # ========================================================= /skins command =====
 
 COMMAND_NAME = "skins"
-USAGE = "/skins [name]"
+USAGE = "/skins [name, number, next, off]"
 DESCRIPTION = "Skins that are code: list them, switch, see why one was refused"
 
 
@@ -1888,17 +1898,37 @@ def register_command() -> bool:
 
 
 def _cmd_skins(ctx, args):
-    """`/skins` lists, `/skins <name>` switches, `/skins off` takes the baseline back.
+    """`/skins` picks, `/skins <name|number>` switches, `/skins off` takes the baseline back.
 
-    The switch is *remembered* on the config, because a skin you chose at 11 pm and
-    lost by lunchtime is a setting nobody can use. Written for any successful
-    switch, and cleared by `off`, so the file always says what is on the screen.
+    One screen, three ways to say the same thing, because a mouse, a number and a
+    name are three different habits: `/skins` opens the list, `/skins 2` wears the
+    second row of that list, `/skins shimmer` wears it by name (or by the name it
+    was installed under), `/skins next` walks the skins that actually work.
     """
     from beeagent.ui.commands import CommandResult
     from rich.text import Text
 
-    if args:
-        reason = switch(args[0])
+    word = str(args[0]).strip() if args else ""
+    low = word.lower()
+    if low in ("next", "след", "дальше"):
+        word = _next_skin() or ""
+        if not word:
+            return CommandResult(output=Text(
+                L("there is only one skin here to wear", "надеть здесь нечего, скин один"),
+                style="dim"))
+    elif low == "list":
+        return CommandResult(output=Text(listing()))
+    elif word.isdigit():
+        rows = [value for value, _ in choice_rows()]
+        index = int(word) - 1
+        if not 0 <= index < len(rows):
+            return CommandResult(output=Text(
+                L(f"there is no row {word} — /skins shows the list",
+                  f"строки {word} нет — список по /skins"), style="bold red"))
+        word = rows[index]
+
+    if word:
+        reason = switch(word)
         if reason:
             return CommandResult(output=Text(reason, style="bold red"))
         _remember(ctx, "" if active_name() == BASELINE else active_name())
@@ -1907,6 +1937,18 @@ def _cmd_skins(ctx, args):
         return CommandResult(output=Text(line + (f"\n{note}" if note else ""),
                                          style="bold"))
     return CommandResult(output=Text(listing()))
+
+
+def _next_skin() -> str:
+    """The next wearable skin, wrapping; "" when there is nothing to walk to."""
+    rows = wearable()
+    if len(rows) < 2:
+        return ""
+    here = active_name()
+    try:
+        return rows[(rows.index(here) + 1) % len(rows)] if here in rows else rows[0]
+    except ValueError:
+        return rows[0]
 
 
 def _remember(ctx, name: str) -> None:
@@ -1927,6 +1969,44 @@ def _remember(ctx, name: str) -> None:
             save_config(config, getattr(getattr(ctx, "agent", None), "workdir", ".") or ".")
     except Exception:
         pass
+
+
+def choice_rows() -> list:
+    """(value, label) pairs: the same list the picker shows and `/skins <number>` takes.
+
+    The first row is always BeeCode's own interface, because "take the skin off" has
+    to be the easiest thing to find, not a word one has to remember. A refused or
+    stopped skin stays on the list with its reason: hiding the ones that failed is
+    how a folder ends up with a skin nobody can explain.
+    """
+    rows = [("off", L("BeeCode's own interface", "штатный интерфейс BeeCode"))]
+    for name in [word for word in names() if word != BASELINE]:
+        entry = _REGISTRY.get(name)
+        if entry is None:
+            continue
+        handle = name if not entry.pack or entry.pack == name else f"{name} ({entry.pack})"
+        if entry.refused:
+            note = L("refused", "отклонён")
+        elif entry.demoted:
+            note = L(f"stopped: {entry.demote_reason}", f"остановлен: {entry.demote_reason}")
+        else:
+            note = visible_note(name)
+        label = f"{handle} — {note}" if note else handle
+        if active_name() == name:
+            label = "★ " + label
+        rows.append((name, label))
+    return rows
+
+
+def wearable() -> list:
+    """The names a switch can actually reach, in list order — what `next` walks."""
+    return [value for value, _label in choice_rows()
+            if value != "off" and not _refused_or_stopped(value)]
+
+
+def _refused_or_stopped(name: str) -> bool:
+    entry = _REGISTRY.get(name)
+    return entry is None or bool(entry.refused) or entry.demoted
 
 
 def listing() -> str:

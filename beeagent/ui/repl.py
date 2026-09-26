@@ -32,7 +32,7 @@ from beeagent.ui.components import (
 from beeagent.ui.commands import (
     ReplContext, build_sources, get_suggestions, dispatch,
     available_models, available_providers, model_choices, AVAILABLE_MODES, THEMES,
-    catalog_choices, skill_choices, mcp_choices, history_body,
+    catalog_choices, skill_choices, mcp_choices, skin_choices, history_body,
 )
 from beeagent.ui.viewer import show_scrolled
 from beeagent.core.session import Session
@@ -307,6 +307,14 @@ class BeeCompleter(Completer):
 # Commands that open a mouse-clickable picker when run without an explicit
 # argument. Each maps to (dialog title, values callable, command that applies
 # the chosen value, callable returning the currently active value).
+def _current_skin() -> str:
+    """The skin in force, spelled the way the picker's first row is spelled."""
+    from beeagent.core import skins
+
+    active = skins.active_name()
+    return active if active != skins.BASELINE else "off"
+
+
 def _picker_specs(ctx: ReplContext):
     # The provider belongs in the title. A person who ran `/provider crax` and was
     # refused -- no key -- stays on g4f, and an unlabelled list of g4f model names
@@ -344,6 +352,11 @@ def _picker_specs(ctx: ReplContext):
                       lambda: None),
         "skills":    (L("🐝 Skill", "🐝 Скил"),            lambda: skill_choices(ctx),         "/skill",
                       lambda: None),
+        # The skins board in a dialog: the first row is BeeCode's own interface, so
+        # "take it off" is a click like everything else. Chosen values come back as
+        # `/skins <value>`, which is the same command a keyboard user types.
+        "skins":     (L("🐝 Select skin", "🐝 Выбрать скин"),   lambda: skin_choices(ctx),        "/skins",
+                      _current_skin),
         "skill":     (L("🐝 Skill", "🐝 Скил"),             lambda: skill_choices(ctx),         "/skill",
                       lambda: None),
         "mcp":       (L("🐝 MCP server", "🐝 MCP-сервер"),      lambda: mcp_choices(ctx),           "/mcp tools",

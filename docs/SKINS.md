@@ -118,6 +118,31 @@ A git or market install of a *pack* is external code by any standard, so
 Read it first, then re-run: /plugin install … --trust
 ```
 
+### Wearing one
+
+`/skins` is a list you pick from — mouse in the full-screen interface, arrow keys in
+the classic one — and its rows are numbered, so all three of these wear the same
+skin:
+
+```
+/skins                    → the list; click it, or type the number
+/skins 3                  → the third row of that list
+/skins shimmer            → by the name the skin calls itself
+/skins skin-shimmer       → by the name you installed it under. Both work: the shelf
+                            and the skin use different names, and the mismatch is
+                            where "I downloaded a skin and nothing happened" came from
+/skins next               → walk the skins that can actually be worn
+/skins off                → BeeCode's own interface back
+/skins list               → the same board as text, with why a skin is refused
+```
+
+Row 1 of every list is BeeCode's own interface, because taking a skin off should be
+the easiest thing to find. The choice goes into `beeagent.json` as `skin` and is put
+back on at the next start, after the packs have registered — installing a skin pack
+puts it on right away when nothing else was chosen. A skin that draws nothing in the
+interface you are in says so in the same row, and a refused one shows the line and
+the token the gate objected to.
+
 One licensing fact, because it surprises people: BeeCode is GPL-3.0, its own
 templates are GPL-3.0-or-later, and the market's client-side licence gate
 (`beeagent/plugins/catalog.py`, `OPEN_LICENSES`) does **not** list GPL. A GPL skin

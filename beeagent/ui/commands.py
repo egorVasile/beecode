@@ -328,6 +328,20 @@ def skill_choices(ctx: ReplContext) -> list[tuple[str, str]]:
     return [(s.name, f"📚 {s.name} — {s.description}") for s in skills]
 
 
+def skin_choices(ctx: ReplContext) -> list:
+    """The skin list as numbered rows, for the mouse picker and for `/skins 2`.
+
+    The number is in the label because the dialog is the only place most users see
+    the list; typing `/skins 2` has to pick the row they just looked at, not the
+    same list in another order.
+    """
+    from beeagent.core import skins
+
+    rows = skins.choice_rows()
+    return [(value, f"{number} · {label}")
+            for number, (value, label) in enumerate(rows, start=1)]
+
+
 def mcp_choices(ctx: ReplContext) -> list[tuple[str, str]]:
     manager, _ = _extensions(ctx)
     out = []

@@ -496,7 +496,7 @@ mouse-clickable picker.
 | `/provider` | Switch the active provider | `/provider <name>` |
 | `/providers` | List providers and which ones have a key | `/providers` |
 | `/skin` | Choose interface variants: frames, banner, spinner | `/skin [slot] [variant]` |
-| `/skins` | Skins that are code: list them, switch, see why one was refused | `/skins [name]` |
+| `/skins` | Skins that are code: list them, switch, see why one was refused | `/skins [name, number, next, off]` |
 | `/trust` | Let this folder change how BeeCode behaves (plugins, permission gate) | `/trust [yes|no|reset]` |
 | `/undo` | Undo what BeeCode wrote to your files, newest first | `/undo [n|list|clear]` |
 
