@@ -196,7 +196,8 @@ FORBIDDEN_NAMES = frozenset({
 })
 
 HOOKS = ("on_init", "on_surfaces", "on_frame", "on_event", "on_output",
-         "on_status", "on_spinner", "on_thinking", "on_stream", "on_hud")
+         "on_status", "on_spinner", "on_thinking", "on_stream", "on_answer",
+         "on_hud")
 
 #: The pieces of the interface a skin may take over, and the hook that answers for
 #: each. A surface a skin has not claimed is drawn by BeeCode exactly as it always
@@ -209,6 +210,10 @@ SURFACES = {
     # skin can phase anything it likes without having to remember when it last ran.
     "thinking": "on_thinking",    # the reasoning block, while it is on screen
     "stream": "on_stream",        # the answer text as each piece arrives
+    # ...`on_answer` is the finished block. It answers with a Rich *renderable*,
+    # not a string: restyling a list means building the block, and both interfaces
+    # can draw a Text, a Group, a Panel or somebody's Markdown subclass.
+    "answer": "on_answer",
     "hud": "on_hud",              # rows the frame loop paints for the skin
 }
 #: Late calls on one surface that are tolerated before the skin loses that surface
@@ -667,18 +672,24 @@ def _hook(skin, name):
 
 
 def _accepts(func, offered: int) -> int:
-    """How many of the contract's arguments this hook is willing to take."""
+    """Hand a hook as many of the contract's arguments as it declares itself able
+    to take.
+
+    Declared, not *required*: a hook written as `on_stream(piece, done=False)` says
+    it can receive the flag, and counting only the parameters without defaults would
+    hide the flag from every hook polite enough to give it a default — which is how
+    a skin that flushes on the last piece never learns that the answer has ended.
+    """
     try:
         params = list(inspect.signature(func).parameters.values())
     except (TypeError, ValueError):                  # builtins, C functions
         return offered
     if any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params):
         return offered
-    needed = [p for p in params
-              if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                            inspect.Parameter.POSITIONAL_OR_KEYWORD)
-              and p.default is inspect.Parameter.empty]
-    return min(offered, max(0, len(needed)))
+    positional = [p for p in params
+                  if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                                inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+    return min(offered, len(positional))
 
 
 def _active_entry():
@@ -1047,7 +1058,8 @@ def needs_tick() -> bool:
     if entry is None or entry.demoted:
         return False
     animates = _hook(entry.skin, "on_frame") is not None
-    return bool(animates or owns("hud", entry.name) or owns("spinner", entry.name))
+    return bool(animates or owns("hud", entry.name) or owns("spinner", entry.name)
+                or owns("answer", entry.name))
 
 
 def owns(surface: str, skin: str = "") -> bool:
@@ -1080,13 +1092,50 @@ def _drop_surface(entry, word: str, why: str) -> None:
     _announce(entry.notice)
 
 
-def ask(surface: str, default: str = "", *args) -> str:
+def _accepted(value, accept) -> bool:
+    """Does this answer have the shape the surface promised to hand back?
+
+    `accept` is a type, a tuple of them, or a predicate — the block surface needs
+    the last form, because "something Rich can draw" is a question about a duck,
+    not about a class the host is willing to import at arm's length.
+    """
+    if callable(accept) and not isinstance(accept, type):
+        return bool(accept(value))
+    return isinstance(value, accept)
+
+
+def renderable(value) -> bool:
+    """Can Rich draw this — and is it not one of ours?
+
+    A plain string is *not* a renderable here: the answer surface reads one as
+    markup the skin wrote, and that translation happens once, here, so no caller
+    has to know the difference. Rich's own protocol check is used when it imports,
+    and the dunder it tests for is the fallback — a host with no Rich installed
+    still has to answer the question instead of raising inside the guard whose
+    whole job is keeping a skin from raising.
+    """
+    if isinstance(value, str):
+        return False
+    try:
+        from rich.console import ConsoleRenderable
+
+        return isinstance(value, ConsoleRenderable)
+    except Exception:
+        return hasattr(value, "__rich_console__") or hasattr(value, "__rich_measure__")
+
+
+def ask(surface: str, default="", *args, accept=str, offer=None):
     """The guarded call: a surface nobody holds answers with the built-in text.
 
     `None` from the hook means "keep yours"; a string — even an empty one — is the
     skin's own answer, because "show nothing here" is something a skin may want
     correctly and the host has no business second-guessing. Any other return value
-    is its mistake, and the built-in text stands.
+    is its mistake, and the built-in text stands. `accept` widens what counts as an
+    answer for the one surface that draws a block instead of a line.
+
+    `offer` is what the hook is handed as its first argument — normally the host's
+    own wording, which is also the fallback. They differ for a block surface, where
+    the skin is asked about *the answer* and the fallback is the caller's renderer.
     """
     word = (surface or "").strip().lower()
     entry = _active_entry()
@@ -1100,7 +1149,7 @@ def ask(surface: str, default: str = "", *args) -> str:
     try:
         # The host's own wording travels to the hook as its first argument, so a
         # skin can keep it, wrap it, or replace it without asking for state.
-        answer = _call(hook, (default,) + tuple(args))
+        answer = _call(hook, (default if offer is None else offer,) + tuple(args))
     except Exception as e:
         entry.surface_errors[word] = entry.surface_errors.get(word, 0) + 1
         _drop_surface(entry, word, L(f"{SURFACES[word]} raised {type(e).__name__}: "
@@ -1139,11 +1188,11 @@ def ask(surface: str, default: str = "", *args) -> str:
         entry.surface_overruns[word] = 0
     if answer is None:
         return default
-    if not isinstance(answer, str):
+    if not _accepted(answer, accept):
         _drop_surface(entry, word, L(f"{SURFACES[word]} returned a "
-                                     f"{type(answer).__name__}, not text",
+                                     f"{type(answer).__name__}, not an answer",
                                      f"{SURFACES[word]} вернул "
-                                     f"{type(answer).__name__}, а не текст"))
+                                     f"{type(answer).__name__}, а не ответ"))
         return default
     return answer
 
@@ -1172,6 +1221,39 @@ def stream_text(default: str = "", done: bool = False) -> str:
     to animate them can flush what it held.
     """
     return ask("stream", default, done)
+
+
+def answer_render(text: str, final: bool = False):
+    """The finished answer as the skin draws it, or None when nobody holds it.
+
+    The one surface that answers with a block instead of a line. A skin may hand
+    back a Rich renderable — that is how a pack draws its own outline and its own
+    lists — or a string of markup, which becomes a `Text` here so that the source
+    skin, which the gate will not let import Rich, has a way in too. `None`, from
+    either side, means "print it the way you always did".
+
+    `final` says whether this is the answer as it was left or a frame of it while
+    it arrives. A skin that parses markdown to lay a block out needs that to know
+    when the expensive path is affordable: once on the finished answer is always
+    affordable, twelve times a second over a 40 KB answer is not.
+    """
+    def any_answer(value):
+        return isinstance(value, str) or renderable(value)
+
+    keeper = object()
+    got = ask("answer", keeper, final, accept=any_answer, offer=text)
+    if got is keeper:
+        return None
+    if isinstance(got, str):
+        try:
+            from rich.text import Text
+
+            return Text.from_markup(got)
+        except Exception:
+            from rich.text import Text
+
+            return Text(got)
+    return got
 
 
 def hud_frame(painter=None, dt: float = 0.0) -> bool:
