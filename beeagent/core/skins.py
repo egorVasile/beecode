@@ -538,6 +538,10 @@ class Entry:
     name: str
     skin: object = None
     description: str = ""
+    #: The plugin folder that contributed this skin, when a folder did. A user
+    #: installs `skin-pulse` and types what he sees on the shelf, so the shelf name
+    #: has to be a handle on the skin too — see `resolve()`.
+    pack: str = ""
     refusals: list = field(default_factory=list)
     module_name: str = ""
     demoted: bool = False
@@ -578,6 +582,7 @@ class Entry:
             "active": active_name() == self.name,
             "kind": kind_of(self.skin),
             "description": self.description,
+            "pack": self.pack,
             "hooks": list(self.hooks()),
             "refused": refusal_text(self.name, self.refusals) if self.refused else "",
             "demoted": self.demoted,
@@ -713,7 +718,7 @@ def entries() -> list:
 
 def get(name: str):
     """The skin object registered under `name`, or None."""
-    entry = _REGISTRY.get(name)
+    entry = _entry(name)
     return None if entry is None or entry.refused else entry.skin
 
 
@@ -797,13 +802,18 @@ def _palettes(skin: dict) -> list:
 # ----------------------------------------------------------------- registering
 
 def register(name: str, skin=None, description: str = "", source=None,
-             check: bool = True) -> Entry:
+             check: bool = True, pack: str = "") -> Entry:
     """Add a skin, and store why it was refused if it was.
 
     `skin` may be an object or module with hooks, a legacy colour/slot dict, or
     source *text*. With `source=` (or a string as `skin`) the AST gate runs before
     a byte compiles, and a refusal is recorded in place of a skin so `/skins` can
     show the line and the token.
+
+    `pack` is the plugin folder that contributed it. A user installs the item he
+    read on the shelf and then types that same name, so the shelf name has to be a
+    handle on the skin — `register("pulse", ..., pack="skin-pulse")` answers both
+    `/skins pulse` and `/skins skin-pulse`.
 
     Registering nothing becomes active: `switch()` is a separate act, the same
     separation `ui/skin.py` draws between choosing and drawing.
@@ -814,7 +824,8 @@ def register(name: str, skin=None, description: str = "", source=None,
     disk should come in through `install_source()`.
     """
     clean = (name or "").strip()
-    entry = Entry(name=clean or "?", description=description or "")
+    entry = Entry(name=clean or "?", description=description or "",
+                  pack=(pack or "").strip())
     if not clean:
         entry.refusals = [Refusal(0, "<empty>", "syntax", detail=L(
             "a skin has to be registered under a name",
@@ -916,6 +927,48 @@ def reset() -> None:
 
 # ------------------------------------------------------------------ switching --
 
+def resolve(name: str) -> str:
+    """The registered name a handle points at: the skin's own, or its pack's.
+
+    ""when nothing answers to either. Both spellings have to work because they are
+    the same object seen from two places: the shelf lists `skin-pulse`, the skin
+    calls itself `pulse`, and a user types what he installed. Getting
+    `no skin "skin-pulse"` after installing `skin-pulse` is the difference between
+    a skin that works and one that "does not apply".
+    """
+    word = (name or "").strip().lower()
+    if not word:
+        return ""
+    for registered, entry in _REGISTRY.items():
+        if registered.lower() == word:
+            return registered
+        if entry.pack and entry.pack.lower() == word:
+            return registered
+    return ""
+
+
+def _entry(name: str = ""):
+    """The record behind a handle: the skin's own name, or its pack's, or the active one."""
+    if not name:
+        return _active_entry()
+    found = resolve(name)
+    return _REGISTRY.get(found) if found else None
+
+
+def for_pack(pack: str) -> list:
+    """The skin names the plugin folder `pack` registered — what install should wear.
+
+    A pack can register none (a slot pack), one, or several; the caller decides what
+    to do, because only it knows whether the user asked for a skin by installing it
+    or is installing a tool that happens to draw one.
+    """
+    word = (pack or "").strip().lower()
+    if not word:
+        return []
+    return [entry.name for entry in _REGISTRY.values()
+            if entry.pack and entry.pack.lower() == word]
+
+
 def switch(name: str) -> str:
     """Put a skin in force. "" on success, the reason it did not otherwise.
 
@@ -928,7 +981,8 @@ def switch(name: str) -> str:
         _ACTIVE = ""
         _LAST_FRAME = time.monotonic()
         return ""
-    entry = _REGISTRY.get(word) or _REGISTRY.get(word.lower())
+    found = resolve(word)
+    entry = _REGISTRY.get(found) if found else None
     if entry is None:
         return L(f"no skin “{word}” — /skins lists what there is",
                  f"скина «{word}» нет — список по /skins")
@@ -1056,17 +1110,19 @@ def visible_note(name: str = "") -> str:
     (the classic loop emits that grid), so the answer is to say what is held rather
     than to refuse the skin.
     """
-    entry = _REGISTRY.get(name or "") if name else _active_entry()
+    entry = _entry(name)
     if entry is None or entry.name == BASELINE:
         return ""
     held = sorted(word for word in entry.claims if word not in entry.dropped)
     if held:
         return L(f"redraws {', '.join(held)}", f"рисует {', '.join(held)}")
     if _hook(entry.skin, "on_frame") is not None:
-        return L("takes no line of the interface: it paints a grid, and nothing "
-                 "emits that grid in the full-screen interface — expect no change",
-                 "ни одну строку интерфейса не берёт: рисует сетку, которую в "
-                 "полноэкранном интерфейсе никто не выводит — изменений не жди")
+        return L("paints a row of its own: the full-screen interface shows it as the "
+                 "strip above the state line; the classic REPL prints each line once "
+                 "and cannot repaint one",
+                 "рисует свою строку: в полноэкранном интерфейсе это полоса над "
+                 "строкой состояния; классический REPL печатает строку один раз и "
+                 "перерисовать её не может")
     return L("colours and slots only", "только цвета и слоты")
 
 
@@ -1087,7 +1143,7 @@ def needs_tick() -> bool:
 
 def owns(surface: str, skin: str = "") -> bool:
     """Whether the skin on screen (or `skin`) holds that surface right now."""
-    entry = _REGISTRY.get(skin or "") if skin else _active_entry()
+    entry = _entry(skin)
     if entry is None:
         return False
     word = (surface or "").strip().lower()
@@ -1096,7 +1152,7 @@ def owns(surface: str, skin: str = "") -> bool:
 
 def surfaces(skin: str = "") -> dict:
     """The claim report: held, refused, lost. `/skins` and the doctor read this."""
-    entry = _REGISTRY.get(skin or "") if skin else _active_entry()
+    entry = _entry(skin)
     if entry is None:
         return {"held": [], "refused": {}, "dropped": {}, "hud_rows": 0}
     return {"held": [word for word in entry.claims if word not in entry.dropped],
@@ -1414,7 +1470,7 @@ def notices() -> list:
 
 
 def notice_for(name: str) -> str:
-    entry = _REGISTRY.get(name)
+    entry = _entry(name)
     return entry.notice if entry is not None else ""
 
 
@@ -1782,7 +1838,7 @@ def is_known_event(name: str) -> bool:
 def stats(name: str = "") -> dict:
     """The host's counters, or one skin's record."""
     if name:
-        entry = _REGISTRY.get(name)
+        entry = _entry(name)
         return entry.as_dict() if entry else {}
     out = dict(_COUNTS)
     out.update({
@@ -1925,7 +1981,12 @@ def listing() -> str:
                     note = f"{note} · {L('lost', 'потеряно')} {lost}"
             if entry.description:
                 note = f"{entry.description} · {note}"
-        rows.append((mark, entry.name, note, _tally(entry)))
+        handle = entry.name
+        if entry.pack and entry.pack.lower() != entry.name.lower():
+            # Show both names, because the shelf and the skin use different ones,
+            # and the mismatch is exactly what made installed skins look broken.
+            handle = f"{entry.name} ({entry.pack})"
+        rows.append((mark, handle, note, _tally(entry)))
 
     if not rows:
         return L("no skins registered", "скинов не зарегистрировано")
@@ -1949,7 +2010,31 @@ def listing() -> str:
         footer += L(f" · unknown events counted: {', '.join(sorted(unknown))}",
                     f" · незнакомых событий: {', '.join(sorted(unknown))}")
     lines.extend(["", footer])
+    shelf = _shelf()
+    if shelf:
+        # The other half of "I downloaded a skin and nothing happened": sometimes he
+        # has not. The catalog is a local file, so this costs no network and names
+        # the command for each skin on it.
+        lines.append(L(f"on the shelf, not installed: {', '.join(shelf)}",
+                       f"на полке, не установлено: {', '.join(shelf)}"))
+        lines.append(L("  wear one: /plugin install <name>, then it is on",
+                       "  надеть: /plugin install <имя> — после установки скин надет"))
     return "\n".join(lines)
+
+
+def _shelf() -> list:
+    """Skin packs the shipped catalog offers that this folder has not registered."""
+    try:
+        from beeagent.plugins.catalog import CATALOG_PATH, Catalog
+
+        items = Catalog(CATALOG_PATH).items()
+    except Exception:
+        return []                  # no catalog, no opinion: the list is still correct
+    known = {name.lower() for name in names()}
+    known.update(entry.pack.lower() for entry in _REGISTRY.values() if entry.pack)
+    return [str(item.name) for item in items
+            if str(item.name or "").lower().startswith("skin-")
+            and str(item.name).lower() not in known]
 
 
 def _tally(entry) -> str:

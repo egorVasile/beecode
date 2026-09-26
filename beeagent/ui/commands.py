@@ -681,6 +681,28 @@ def _cmd_provider(ctx, args):
                  f"провайдер → {name} · модель → {ctx.config.model}   все: /models"))
 
 
+def _skin_slot_table(skin, only: str = "") -> Table:
+    """The slot board: what each slot is set to, and what it can be set to.
+
+    `only` narrows it to one slot, which is what `/skin frame` asks for: the
+    variants of that one thing, not the whole board again.
+    """
+    title = L(f"🐝 interface slot: {only}", f"🐝 слот интерфейса: {only}") if only \
+        else bee_title("🐝 interface slots")
+    table = Table(title=title, **skin.frame_kwargs(BORDER),
+                  header_style="bold " + HONEY, expand=False)
+    table.add_column("slot", style="bold #ffcc00")
+    table.add_column("now")
+    table.add_column("choices", style="dim")
+    for slot in (["frame", "banner", "spinner", "stream"] if not only else [only]):
+        table.add_row(slot, skin.get(slot), ", ".join(skin.variants(slot)))
+    table.caption = Text(
+        L("change one: /skin <slot> <variant> · back to defaults: /skin reset",
+          "изменить: /skin <слот> <вариант> · вернуть как было: /skin reset"),
+        style="dim")
+    return table
+
+
 def _cmd_skin(ctx, args):
     """Choose an interface variant, or show what is available.
 
@@ -691,18 +713,7 @@ def _cmd_skin(ctx, args):
     from beeagent.ui import skin
 
     if not args:
-        table = Table(title=bee_title("🐝 interface slots"), **skin.frame_kwargs(BORDER),
-                      header_style="bold " + HONEY, expand=False)
-        table.add_column("slot", style="bold #ffcc00")
-        table.add_column("now")
-        table.add_column("choices", style="dim")
-        for slot in ("frame", "banner", "spinner", "stream"):
-            table.add_row(slot, skin.get(slot), ", ".join(skin.variants(slot)))
-        table.caption = Text(
-            L("change one: /skin <slot> <variant> · back to defaults: /skin reset",
-              "изменить: /skin <слот> <вариант> · вернуть как было: /skin reset"),
-            style="dim")
-        return CommandResult(output=table)
+        return CommandResult(output=_skin_slot_table(skin))
 
     if args[0] == "reset":
         skin.reset()
@@ -712,8 +723,22 @@ def _cmd_skin(ctx, args):
                      "слоты интерфейса вернули к значениям по умолчанию"))
 
     if len(args) < 2:
-        return _err(L("usage: /skin <slot> <variant> — /skin lists them",
-                      "использование: /skin <слот> <вариант> — список по /skin"))
+        asked = str(args[0] if args else "").strip().lower()
+        if asked in ("frame", "banner", "spinner", "stream"):
+            return CommandResult(output=_skin_slot_table(skin, asked))
+        from beeagent.core import skins
+
+        if asked and skins.resolve(asked):
+            # He named a code skin at the slot command. The two commands look alike
+            # and do different jobs, so the wrong door has to say where the right
+            # one is rather than recite its own usage.
+            return _err(L(f"“{asked}” is a skin of code, not a slot — wear it with: "
+                          f"/skins {asked}",
+                          f"«{asked}» — скин кода, а не слот; надеть: /skins {asked}"))
+        return _err(L("usage: /skin <slot> <variant> — /skin lists them; a skin you "
+                      "installed is worn with /skins <name>",
+                      "использование: /skin <слот> <вариант> — список по /skin; "
+                      "установленный скин надевается так: /skins <имя>"))
     slot, name = args[0].lower(), args[1].lower()
     if not skin.choose(slot, name):
         return _err(L(f"no variant “{name}” for {slot} — /skin lists them",
@@ -1450,6 +1475,35 @@ def _reload_extensions(ctx: ReplContext) -> str:
     return note
 
 
+def _wear_pack_skin(ctx, pack: str) -> str:
+    """What to do with a skin pack the user just installed.
+
+    Someone who installs `skin-pulse` off the shelf did it to *wear* it, so if
+    nothing is chosen yet this puts it on and saves the choice. If he already wears
+    something, that pick is his, not ours to overwrite: the line names the command
+    instead. A pack that registered no skin of its own is a slot pack, and sending
+    him to `/skins` would be a dead end — he needs `/skin`.
+    """
+    from beeagent.core import skins
+
+    found = skins.for_pack(pack)
+    if not found:
+        return L("\n  🎨 this pack owns interface slots, not a skin of its own: "
+                 "look at /skin",
+                 "\n  🎨 у этого пака своего скина нет, он меняет слоты: смотри /skin")
+    if len(found) == 1 and not str(getattr(ctx.config, "skin", "") or "").strip():
+        if skins.switch(found[0]) == "":
+            ctx.config.skin = found[0]
+            _persist_config(ctx)
+            note = skins.visible_note(found[0])
+            return L(f"\n  🎨 skin on: {found[0]}" + (f" — {note}" if note else ""),
+                     f"\n  🎨 скин надет: {found[0]}" + (f" — {note}" if note else ""))
+    return L(f"\n  🎨 skins in this pack: {', '.join(found)} · wear one: /skins {found[0]}"
+             f" · the shelf name works too: /skins {pack}",
+             f"\n  🎨 скины в паке: {', '.join(found)} · надеть: /skins {found[0]}"
+             f" · можно и именем с полки: /skins {pack}")
+
+
 def _catalog_table(items, installed: dict, title: str) -> Table:
     table = Table(
         title=bee_title(title), header_style="bold " + HONEY,
@@ -1703,7 +1757,7 @@ def _cmd_plugin(ctx, args):
                       f"\n  sha256 {entry.sha256[:16]}… verified against the index",
                       f"\n  лицензия {entry.license} · {entry.provenance}"
                       f"\n  sha256 {entry.sha256[:16]}… совпал с обещанным в индексе")
-        return _ok(line + _reload_extensions(ctx))
+        return _ok(line + _reload_extensions(ctx) + _wear_pack_skin(ctx, report["name"]))
 
     if sub in ("remove", "uninstall"):
         try:

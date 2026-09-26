@@ -341,7 +341,7 @@ class BeeCodeApp(App):
             self._stop_skin_clock()
 
     def _skin_tick(self) -> None:
-        """One frame: the skin advances, and the two lines it owns redraw."""
+        """One frame: the skin advances, and the lines it owns redraw."""
         from beeagent.core import skins
 
         if not self._chrome_ready():
@@ -351,17 +351,33 @@ class BeeCodeApp(App):
             # is back, which every command and every finished turn calls for.
             self._stop_skin_clock()
             return
+        strip = self._strip_painter()
         try:
-            skins.frame(self.FRAME_SECONDS)
+            # The skin's `on_frame` gets the same rows its HUD gets: an animation
+            # that has nowhere to be seen is the reason "I installed a skin and
+            # nothing changed" was ever a true sentence about this program.
+            skins.frame(self.FRAME_SECONDS, strip)
         except Exception:
             pass                        # the host does not owe a skin a stack trace
-        self._paint_hud()
+        self._paint_hud(strip)
         self._update_status()
         if self._waiting_line:
             self._repaint_waiting()
         self._answer_beats = (self._answer_beats + 1) % self.ANSWER_BEATS
         if self._stream_buf and not self._answer_beats:
             self._repaint_stream()
+
+    def _strip_painter(self):
+        """The rows the skin is allowed to paint: its HUD strip, one row at minimum."""
+        from beeagent.core import skins
+        from beeagent.core.renderer import Painter
+
+        rows = 1
+        try:
+            rows = max(1, int(skins.surfaces()["hud_rows"] or 1))
+        except Exception:
+            rows = 1
+        return Painter(size=(max(20, self.screen.size.width - 8), rows))
 
     def _chrome_ready(self) -> bool:
         """Are the home screen's own lines there to be drawn on?"""
@@ -429,30 +445,28 @@ class BeeCodeApp(App):
         self._answer_painted = self._stream_buf
         self.stream.update(mine)
 
-    def _paint_hud(self) -> None:
+    def _paint_hud(self, painter=None) -> None:
         from beeagent.core import skins
 
         if not self._chrome_ready():
             return                      # a strip has nowhere to go; not the skin's fault
         try:
             label = self.home.query_one("#hud", Label)
-            if not skins.owns("hud"):
-                if label.display:
-                    label.display = False
-                    label.update("")
-                return
-            from beeagent.core.renderer import Painter
-
-            cols = max(20, self.screen.size.width - 8)
-            painter = Painter(size=(cols, max(1, skins.surfaces()["hud_rows"])))
-            painted = skins.hud_frame(painter, self.FRAME_SECONDS)
-            lines = hud_lines(painter, painter.rows) if painted else []
+            owns = skins.owns("hud")
+            if painter is None:
+                painter = self._strip_painter()
+            # A skin that owns the strip is asked to fill it; a skin that only has
+            # `on_frame` has already drawn its animation into the same rows.
+            filled = skins.hud_frame(painter, self.FRAME_SECONDS) if owns else True
+            lines = [line for line in hud_lines(painter, painter.rows)
+                     if str(line).strip()] if filled else []
             if not lines:
                 # Nothing drawn — including a skin that broke on this frame — means
                 # no strip: an empty reserved row would push the answer down for a
                 # picture that is not there.
-                label.display = False
-                label.update("")
+                if label.display:
+                    label.display = False
+                    label.update("")
                 return
             # One Rich Text per row, joined with real line breaks: the cells carry
             # the colours the skin chose, and a plain string here would flatten the

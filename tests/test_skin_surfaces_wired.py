@@ -164,6 +164,60 @@ def on_hud(painter, dt):
     asyncio.run(scenario())
 
 
+def test_a_frame_only_skin_is_seen_as_the_strip_above_the_state_line(tmp_path, english):
+    """The other half of "I installed a skin and nothing changed".
+
+    `skin-pulse`, `skin-pet` and `skin-baseline` claim no surface: they paint a row
+    from `on_frame`. Nothing used to emit that grid in the TUI, so the most popular
+    kind of skin was invisible in the default interface. The frame is now handed the
+    same rows the HUD gets, and the strip is only shown when something was drawn.
+    """
+    app = app_running(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(110, 34)) as pilot:
+            await pilot.pause(0.3)
+            label = app.home.query_one("#hud")
+            assert label.display is False
+            use("""
+FRAME = ["one", "two"]
+STEP = 0
+
+
+def on_frame(dt, painter):
+    global STEP
+    STEP = (STEP + 1) % 2
+    painter.clear_region(0, 0, painter.cols, 1)
+    painter.draw_text(0, 0, "pulse " + FRAME[STEP], color="#ffcc00")
+""", name="rowonly")
+            # Drive the pair the tick drives, without the clock: the app restarts its
+            # own timer from `_update_status`, so a "one tick, one step" assertion
+            # would be a race with it rather than a test of this wiring.
+            from beeagent.core import renderer
+
+            grid = renderer.Grid(70, 1)
+            strip = renderer.Painter(grid, size=(70, 1))
+            skins.frame(0.08, strip)
+            app._paint_hud(strip)
+            await pilot.pause(0.05)
+            assert label.display is True, "the skin drew a row and the strip stayed hidden"
+            first = str(label.render()).strip()
+            assert first.startswith("pulse "), first
+
+            grid2 = renderer.Grid(70, 1)
+            strip2 = renderer.Painter(grid2, size=(70, 1))
+            skins.frame(0.08, strip2)
+            app._paint_hud(strip2)
+            await pilot.pause(0.05)
+            assert str(label.render()).strip() != first, "the frame never reached the strip"
+
+            skins.switch("off")
+            app._paint_hud()
+            await pilot.pause(0.1)
+            assert label.display is False, "the strip outlived the skin that drew it"
+    asyncio.run(scenario())
+
+
 # ------------------------------------------------ the clock that moves the lines --
 
 COUNTER = """

@@ -828,27 +828,140 @@ def test_a_skin_that_is_not_installed_says_so_and_keeps_the_baseline(host, tmp_p
     assert skins.active_name() == skins.BASELINE
 
 
-def test_a_skin_that_takes_no_line_says_so_instead_of_looking_broken(host, clean_commands):
-    """The 8.0.0 complaint, answered: "active" and nothing moved.
+def test_a_skin_says_where_it_will_show_up_instead_of_looking_broken(host, clean_commands):
+    """The 8.0.0 complaint, answered in words a user can act on.
 
-    A frame-only skin is legitimate — the classic loop emits its grid — so the fix
-    is not to refuse it but to say, at the moment he switches, that this interface
-    will not change.
+    "Installed, switched, `skin: pulse`, and nothing moved" was true. The skin now
+    names what it takes over — the lines it redraws, the row it animates, or nothing
+    but colours — at the moment he switches and in every row of `/skins`.
     """
     assert skins.register_command() is True
     skins.register("rec", Recorder())                    # on_frame, no claims
     out = _run(clean_commands, "/skins rec").output.plain
     assert "skin: rec" in out, out
-    assert "no change" in out or "expect no change" in out, out
+    assert "strip above the state line" in out, out
     row = [line for line in _run(clean_commands, "/skins").output.plain.splitlines()
            if "rec" in line][0]
-    assert "grid" in row, row
+    assert "paints a row" in row, row
+
+    skins.register("colours", {"frame": "ascii"})
+    only = _run(clean_commands, "/skins colours").output.plain
+    assert "colours and slots only" in only, only
 
     skins.install_source("taker", "SURFACES = ('status',)\n\n\n"
                                    "def on_status(default):\n    return 'x'\n")
     held = _run(clean_commands, "/skins taker").output.plain
     assert "redraws status" in held, held
-    assert _run(clean_commands, "/skins off").output.plain.count("no change") == 0
+    assert _run(clean_commands, "/skins off").output.plain.count("strip above") == 0
+
+
+def test_the_name_on_the_shelf_wears_the_skin_it_installed(host):
+    """`/plugin install skin-pulse` then `/skins skin-pulse` — the same words, one skin.
+
+    The pack folder and the skin inside it are named differently by design (`pulse`
+    is what the skin calls itself), and that mismatch was the report "I downloaded a
+    skin and it does not apply": the shelf name answered `no skin`.
+    """
+    from beeagent.ext.api import ExtensionAPI
+    from beeagent.plugins.catalog import Catalog, CatalogItem
+
+    skins.register("pulse", {"on_frame": lambda dt, painter: None}, pack="skin-pulse")
+    assert skins.resolve("skin-pulse") == "pulse"
+    assert skins.resolve("PULSE") == "pulse"
+    assert skins.switch("skin-pulse") == ""
+    assert skins.active_name() == "pulse"
+    assert skins.stats("skin-pulse")["hooks"] == ["on_frame"]
+    assert skins.surfaces("skin-pulse")["held"] == []
+    assert skins.for_pack("skin-pulse") == ["pulse"]
+    assert skins.for_pack("skin-nothing") == []
+    # A name that is neither is still refused, and says so.
+    assert "no skin" in skins.switch("skin-typo")
+    listing = skins.listing()
+    assert "pulse (skin-pulse)" in listing, listing
+
+
+def test_installing_a_skin_pack_from_the_shelf_puts_it_on(host, tmp_path, monkeypatch):
+    """The whole complaint, end to end: download a skin, and it is on.
+
+    Real loader, real catalog entry, real `plugin.json` — because the failure lived
+    in the seam between them: the pack registered a skin called `pulse`, the shelf
+    called it `skin-pulse`, and `/skins skin-pulse` answered "no such skin".
+    """
+    import json
+
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core import trust
+    from beeagent.core.agent import Agent
+    from beeagent.plugins.catalog import TEMPLATES_DIR
+    from beeagent.ui.commands import ReplContext, dispatch
+
+    monkeypatch.chdir(tmp_path)
+    trust.for_folder(str(tmp_path)).say_trusted()
+    config = BeeConfig()
+    agent = Agent(config=config, workdir=str(tmp_path))
+    ctx = ReplContext(agent=agent, config=config, session=None)
+
+    result = dispatch(ctx, "/plugin install skin-pulse")
+    text = result.output.plain if hasattr(result.output, "plain") else str(result.output)
+    assert "installed" in text, text
+    assert "skin on: pulse" in text, text            # said, not left to guess
+    assert config.skin == "pulse"
+    assert skins.active_name() == "pulse"
+    # …and the name he installed it under keeps working from here on.
+    assert skins.switch("skin-pulse") == ""
+    saved = json.loads((tmp_path / "beeagent.json").read_text(encoding="utf-8"))
+    assert saved["skin"] == "pulse", saved
+
+
+def test_the_shelf_lists_the_skins_this_folder_does_not_have(host):
+    """/skins says what is missing, so "no skins" is never the whole answer."""
+    listing = skins.listing()
+    for name in ("skin-pulse", "skin-shimmer"):
+        assert name in listing, (name, listing)
+    assert "/plugin install" in listing, listing
+    skins.register("pulse", {"on_frame": lambda dt, painter: None}, pack="skin-pulse")
+    gone = skins.listing()
+    assert "skin-pulse" not in gone.split("on the shelf")[-1], gone
+
+
+def test_a_slot_pack_that_installs_is_told_as_one(host, tmp_path, monkeypatch):
+    """`skin-hive` owns slots, not a skin: say that instead of offering `/skins`."""
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core import trust
+    from beeagent.core.agent import Agent
+    from beeagent.ui.commands import ReplContext, dispatch
+
+    monkeypatch.chdir(tmp_path)
+    trust.for_folder(str(tmp_path)).say_trusted()
+    config = BeeConfig()
+    agent = Agent(config=config, workdir=str(tmp_path))
+    ctx = ReplContext(agent=agent, config=config, session=None)
+    result = dispatch(ctx, "/plugin install skin-hive")
+    text = result.output.plain if hasattr(result.output, "plain") else str(result.output)
+    assert "look at /skin" in text, text
+    assert not config.skin, "a slot pack chose a skin"
+
+
+def test_a_slot_pack_named_at_skin_points_at_the_right_command(host, clean_commands):
+    """`/skin pulse` and `/skin frame` are both better than a usage line."""
+    from beeagent.ui import commands as core
+    from beeagent.ui.commands import ReplContext, dispatch
+
+    skins.register("pulse", {"on_frame": lambda dt, painter: None}, pack="skin-pulse")
+    answer = dispatch(ReplContext(), "/skin pulse").output
+    text = answer.plain if hasattr(answer, "plain") else str(answer)
+    assert "skin of code" in text and "/skins pulse" in text, text
+
+    slot = dispatch(ReplContext(), "/skin frame").output
+    import io as _io
+
+    board = _io.StringIO()
+    from rich.console import Console
+
+    Console(file=board, width=70, force_terminal=False).print(slot)
+    text = board.getvalue()
+    assert "rounded" in text and "heavy" in text, text        # that slot's choices
+    assert "banner" not in text, "one slot asked, the whole board printed"
 
 
 def test_skins_reads_in_both_languages(host, tmp_path, clean_commands):

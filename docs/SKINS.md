@@ -261,10 +261,17 @@ and the surface is dropped; a single call over the hard cap loses the surface *a
 stops the skin drawing at all. The notice says which line and why, once.
 
 In the TUI these lines are redrawn by the same 12 fps clock that runs your
-`on_frame`, and the clock only runs while the skin on screen can show movement. In
-the classic REPL each line is printed as it happens and cannot be redrawn — a
-spinner there answers once per turn, which is the honest limit of a line-oriented
-terminal.
+`on_frame`, and the clock only runs while the skin on screen can show movement. A
+skin that claims nothing and only has `on_frame` is not left invisible: the rows it
+paints are shown as the strip above the state line, which is how `skin-pulse`,
+`skin-pet` and `skin-baseline` are seen in the default interface at all. In the
+classic REPL each line is printed as it happens and cannot be redrawn — a spinner
+there answers once per turn, which is the honest limit of a line-oriented terminal.
+
+Two names wear one skin. A pack folder and the skin inside it usually differ — the
+shelf says `skin-pulse`, the skin says `pulse` — so `/skins` accepts both, in any
+case, and the listing shows `pulse (skin-pulse)`. Installing a skin pack puts it on
+when nothing was chosen, and otherwise prints the one command to type.
 
 The order a skin can observe, end to end:
 
@@ -765,11 +772,11 @@ draw the reply itself — outline, lists and all — in both interfaces.
    painter hands your skin a real `Painter` whose grid nothing writes to a screen:
    the draw calls succeed, `stats()` counts the frame, and nothing moves. That is
    the right design for a headless run and the most confusing first hour of writing
-   a skin, because it looks like a skin that does not work. The way to be *seen*
-   today is a surface, or the `hud` strip — both of which the TUI reads back out of
-   your grid and prints. `skins.painter_visible()`, or the loop reporting "nobody is
-   emitting these frames", would turn the rest of it into a message instead of a
-   mystery.
+   a skin, because it looks like a skin that does not work. The TUI now hands
+   `on_frame` the strip's own rows — one to four — so a skin that paints a row is
+   seen, and a skin that paints a whole screen picture still is not.
+   `skins.painter_visible()`, or the loop reporting "nobody is emitting these
+   frames", would turn the rest of it into a message instead of a mystery.
 5. **Three pieces of the interface have no surface.** `status`, `spinner`,
    `thinking`, `stream`, `answer` and the `hud` strip are yours to claim; the
    banner, the prompt's own prefix and the sidebar are not, and are rewritten only

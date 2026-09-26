@@ -162,13 +162,17 @@ class ExtensionAPI:
         `skin()` offers one *piece* of the interface to the legacy slot table; this
         hands the whole `on_init`/`on_frame`/`on_event`/surface set to the skin
         host, which is what a pack that animates the screen needs. True when the
-        host took it. The pack still contributes a row for `/extensions` itself,
-        so this records nothing.
+        host took it.
+
+        The folder name is recorded as the skin's other handle: a user installs
+        `skin-pulse` off the shelf and types what he installed, so `/skins
+        skin-pulse` has to reach the skin that calls itself `pulse`.
         """
         from beeagent.core import skins
 
         try:
-            entry = skins.register(name, hooks, description=description)
+            entry = skins.register(name, hooks, description=description,
+                                   pack=self.plugin)
         except Exception:
             return False
         return not entry.refused
