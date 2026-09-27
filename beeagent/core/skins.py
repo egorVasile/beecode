@@ -2002,9 +2002,14 @@ def _cmd_skins(ctx, args):
         reason = switch(word)
         if reason:
             return CommandResult(output=Text(reason, style="bold red"))
-        _remember(ctx, "" if active_name() == BASELINE else active_name())
+        kept = _remember(ctx, "" if active_name() == BASELINE else active_name())
         line = L(f"skin: {active_name()}", f"скин: {active_name()}")
         note = visible_note(active_name())
+        if not kept:
+            line += L(" (the choice could not be saved here — it lasts this "
+                      "session; the old skin returns on restart)",
+                      " (выбор не сохранился здесь — держится эту сессию; "
+                      "при перезапуске вернётся старый скин)")
         return CommandResult(output=Text(line + (f"\n{note}" if note else ""),
                                          style="bold"))
     return CommandResult(output=Text(listing()))
@@ -2022,16 +2027,18 @@ def _next_skin() -> str:
         return rows[0]
 
 
-def _remember(ctx, name: str) -> None:
-    """Put the chosen skin on the config and save it. Quiet when there is no config.
+def _remember(ctx, name: str) -> bool:
+    """Put the chosen skin on the config and save it. True when it reached disk.
 
     Saving is the whole point and the whole risk: a folder where BeeCode cannot
-    write must not turn a working switch into an error message, so a failure here
-    is dropped rather than reported — the skin is on the screen either way.
+    write must not turn a working switch into an error message, so a failure
+    here never breaks the switch — it is reported by the return value instead,
+    because a choice that is only in memory comes back as the old skin on the
+    next start, and that looks exactly like "the switch did nothing".
     """
     config = getattr(ctx, "config", None)
     if config is None or not hasattr(config, "skin"):
-        return
+        return False
     try:
         from beeagent.config.loader import save_config
 
@@ -2039,7 +2046,8 @@ def _remember(ctx, name: str) -> None:
             config.skin = name
             save_config(config, getattr(getattr(ctx, "agent", None), "workdir", ".") or ".")
     except Exception:
-        pass
+        return False
+    return True
 
 
 def choice_rows() -> list:

@@ -309,7 +309,15 @@ class BeeCodeApp(App):
             pass
         self._populate_commands()
         self._skin_timer = None
-        self.set_interval(0.28, self._animate_bee)
+        # The bee flaps four times a second on desktop; on a phone that repaint
+        # is the stutter, so it flaps about once a second there.
+        try:
+            from beeagent.ui.platform import want_compact
+
+            bee_tick = 1.0 if want_compact() else 0.28
+        except Exception:
+            bee_tick = 0.28
+        self.set_interval(bee_tick, self._animate_bee)
         self._fit_to_width()
         self._welcome()
         self._update_status()
@@ -1117,15 +1125,26 @@ class BeeCodeApp(App):
         is used, and a skin that hands back what BeeCode drew changes nothing.
         """
         from beeagent.core import skins
-        from beeagent.ui.components import BANNER_ROWS, BANNER_WIDTH
+        from beeagent.ui.components import BANNER_ROWS, BANNER_WIDTH, COMPACT_ROWS
 
         # One row, not the whole logo: the header shows a line, and laying out five
         # to throw four away costs Rich about a millisecond a frame — on a box that
         # is already compiling. The first row of the shipped art travels along as
         # the shape to recolour, so a skin that reuses it keeps the letterforms.
-        top = Text(BANNER_ROWS[0]) if BANNER_ROWS else Text("BeeCode")
+        # On a phone the full first row wraps the header, so the compact word
+        # goes there instead.
+        compact = False
         try:
-            mine = skins.banner_render(size=(BANNER_WIDTH, 1), default=top)
+            from beeagent.ui.platform import want_compact
+
+            compact = want_compact()
+        except Exception:
+            compact = False
+        rows, width = (COMPACT_ROWS, len(COMPACT_ROWS[0])) if compact \
+            else (BANNER_ROWS, BANNER_WIDTH)
+        top = Text(rows[0]) if rows else Text("BeeCode")
+        try:
+            mine = skins.banner_render(size=(width, 1), default=top)
         except Exception:
             return
         if mine is None:
@@ -1194,8 +1213,26 @@ class BeeCodeApp(App):
 
     def _welcome(self) -> None:
         from beeagent.core import skins
-        from beeagent.ui.components import BANNER_ROWS, BANNER_WIDTH, GRADIENT
+        from beeagent.ui.components import (BANNER_ROWS, BANNER_WIDTH, COMPACT_ROWS,
+                                            GRADIENT, banner_compact)
 
+        compact = False
+        try:
+            from beeagent.ui.platform import want_compact
+
+            compact = want_compact()
+        except Exception:
+            compact = False
+        if compact:
+            try:
+                mine = skins.banner_render(size=(len(COMPACT_ROWS[0]), len(COMPACT_ROWS)),
+                                           default=banner_compact())
+            except Exception:
+                mine = None
+            self.chatlog.write(mine if mine is not None else banner_compact())
+            self.chatlog.write(Text("Free AI coding agent powered by g4f", style="dim"))
+            self.chatlog.write(Text(""))
+            return
         shipped = Text()
         last = len(BANNER_ROWS) - 1
         for i, row in enumerate(BANNER_ROWS):
@@ -1204,7 +1241,7 @@ class BeeCodeApp(App):
                 shipped.append("\n")
         try:
             mine = skins.banner_render(size=(BANNER_WIDTH, len(BANNER_ROWS)),
-                                       default=shipped)
+                                        default=shipped)
         except Exception:
             mine = None
         self.chatlog.write(mine if mine is not None else shipped)

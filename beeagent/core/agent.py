@@ -219,6 +219,7 @@ class Agent:
 
         self.context = ContextManager(
             model=self.config.model, window=self.config.max_context_tokens or None)
+        self.sync_context()
         # A measured window belongs to the endpoint that measured it, and
         # ContextManager asks for a window by model name alone — so the name the
         # reads should resolve against is set here and refreshed on every run.
@@ -427,6 +428,27 @@ class Agent:
 
         raise _no_answer(last_error)
 
+    def sync_context(self) -> None:
+        """Point the context budget at the active provider.
+
+        A custom endpoint with its own context rule (0 = unlimited, N = a
+        ceiling just for it) wins for that provider; everywhere else the
+        global `max_context_tokens` applies. Called at startup and on every
+        model resolution, so a switch takes effect on the next turn, not on
+        the next restart.
+        """
+        from beeagent.core import provider_setup
+
+        unlimited, ceiling = provider_setup.context_for(
+            self.config, getattr(self.config, "provider", ""))
+        self.context.unlimited = unlimited
+        if ceiling:
+            self.context._window_cap = ceiling
+        else:
+            self.context._window_cap = self.config.max_context_tokens or None
+            if unlimited:
+                self.context._window_cap = None
+
     def _model_for(self, provider, callback=None) -> str:
         """The model id to actually send.
 
@@ -448,6 +470,7 @@ class Agent:
         # never silent.
         self.config.model = model
         self.context.model = model
+        self.sync_context()
         if callback:
             callback("model_switched", {"from": wanted, "to": model})
         return model

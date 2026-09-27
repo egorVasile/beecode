@@ -207,6 +207,11 @@ class Session:
             ))
         return session
 
+    # A transcript this big is parsed on open, never on listing: reading
+    # megabytes per file made `--continue` hang on every launch once a session
+    # grew real history. Below it the listing parses whole, exactly as before.
+    LIST_FULL_PARSE_BYTES = 2_000_000
+
     @classmethod
     def list_sessions(cls, workdir: str = ".") -> list[str]:
         """Readable session ids, oldest first — `--continue` takes the last one.
@@ -220,6 +225,13 @@ class Session:
         ids = []
         for candidate in sorted(path.glob("*.json")):
             try:
+                if candidate.stat().st_size > cls.LIST_FULL_PARSE_BYTES:
+                    # Big transcript: trust the head flags (`save` writes
+                    # `messages` last, so a torn tail still lists) and let
+                    # `load` be the judge of the body.
+                    if read_head(candidate):
+                        ids.append(candidate.stem)
+                    continue
                 data = json.loads(candidate.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue

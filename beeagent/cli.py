@@ -152,6 +152,13 @@ def main():
         agent.run_sync(args.prompt, callback=agent_callback(agent))
         return
 
+    # Interactive REPL/TUI only: one-shot and scripted subcommands must never
+    # block on a question. Asked once ever; "no" keeps the full logo and never
+    # checks again.
+    if not args.prompt:
+        from beeagent.ui.platform import ask_once
+        ask_once()
+
     session = None
     if args.continue_session:
         sessions = Session.list_sessions()

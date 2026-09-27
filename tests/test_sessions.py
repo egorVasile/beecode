@@ -1,7 +1,7 @@
 """Session identity and durability: ids, atomic saves, tolerant listing."""
 import json
 
-from beeagent.core.session import Session
+from beeagent.core.session import Message, Session
 
 
 def test_two_sessions_started_in_the_same_second_do_not_collide(tmp_path):
@@ -39,6 +39,22 @@ def test_loading_a_broken_session_says_which_one(tmp_path):
         raise AssertionError("a corrupt session must not load silently")
     except ValueError as e:
         assert "20200101_000000" in str(e)
+
+
+def test_a_huge_session_lists_by_its_head_without_reading_it_whole(tmp_path):
+    """Listing must not parse megabytes per file: past 2 MB only the head flags
+    decide, and `load` stays the judge of the body."""
+    from beeagent.core import session as session_module
+
+    session = Session()
+    session.add_user_message("начало")
+    session.messages.append(
+        Message(role="assistant", content="x" * (3 * 1024 * 1024)))
+    session.save(str(tmp_path))
+    path = tmp_path / ".beeagent" / "sessions" / f"{session.session_id}.json"
+    assert path.stat().st_size > session_module.Session.LIST_FULL_PARSE_BYTES
+    assert Session.list_sessions(str(tmp_path)) == [session.session_id]
+    assert Session.load(session.session_id, str(tmp_path)).messages[0].content == "начало"
 
 
 def test_save_leaves_no_temporary_file_behind(tmp_path):

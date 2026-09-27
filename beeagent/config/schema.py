@@ -31,6 +31,12 @@ class CustomProvider(Model):
     url: str
     model: str
     key: Optional[str] = None
+    # Context window for this endpoint only, in tokens. Unset means the global
+    # rules (model size, then the global ceiling); 0 means unlimited — no
+    # trimming, no per-message clipping, no digest shortening, the whole
+    # history goes out as-is. Only for endpoints of one's own: it is the
+    # owner's bill and the owner's window.
+    max_context_tokens: Optional[int] = None
 
 
 class BeeConfig(Model):

@@ -236,6 +236,11 @@ DEFAULT_WINDOW = 8192
 MIN_HISTORY_BUDGET = 256      # the least we keep for the live turn
 MAX_WINDOW = 32768
 
+# "Context 0" of a custom endpoint: the owner said no trimming. The number only
+# feeds the budget math below, so no request is ever cut to fit it — the whole
+# history goes out, unclipped and undigested. It is the owner's bill.
+UNLIMITED_WINDOW = 4_000_000
+
 # A measured limit may be trusted further than a guess from the model name.
 MEASURED_MAX_WINDOW = 262144
 
@@ -358,12 +363,16 @@ def window_for(model: str, ceiling: int = None) -> int:
 
 
 class ContextManager:
-    def __init__(self, max_tokens: int = None, model: str = "gpt-4", window: int = None):
+    def __init__(self, max_tokens: int = None, model: str = "gpt-4", window: int = None,
+                 unlimited: bool = False):
         self.model = model
         # A configured budget is a ceiling, not a pin: the model's own window
         # decides the size, so a 4k model gets a 4k-sized request instead of a
         # 12000-token payload the endpoint would trim behind our back.
         self._window_cap = window or max_tokens
+        # Unlimited ("context 0" on a custom endpoint): nothing is trimmed,
+        # clipped or digested — the request is the whole conversation.
+        self.unlimited = bool(unlimited)
         # Optional extra system-prompt section (installed skills).
         self.skills_section: str | None = None
         # What the model may do without asking (see core/permissions.py).
@@ -391,6 +400,8 @@ class ContextManager:
 
     @property
     def window(self) -> int:
+        if self.unlimited:
+            return UNLIMITED_WINDOW
         auto = window_for(self.model, self._window_cap)
         return min(auto, self._window_cap) if self._window_cap else auto
 
@@ -419,8 +430,12 @@ class ContextManager:
         budget = max(self.max_tokens - self._cost(base) - self._cost(reminder),
                      MIN_HISTORY_BUDGET)
         # One message may not eat the history budget — a thread needs to be able
-        # to hold at least three of them.
-        self._msg_cap = max(MIN_MSG_TOKENS, min(self.MAX_MSG_TOKENS, budget // 3))
+        # to hold at least three of them. Unlimited skips the per-message clip:
+        # the owner asked for the whole output, not a 2000-token excerpt of it.
+        if self.unlimited:
+            self._msg_cap = budget
+        else:
+            self._msg_cap = max(MIN_MSG_TOKENS, min(self.MAX_MSG_TOKENS, budget // 3))
 
         # First try to carry the conversation verbatim.
         kept, dropped, clipped, lost = self._window(rows, budget)

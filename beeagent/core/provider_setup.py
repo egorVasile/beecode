@@ -93,13 +93,14 @@ def key_tails(keys) -> str:
 
 @dataclass
 class Fields:
-    """The four facts, as typed, plus how the models were found out."""
+    """The facts, as typed, plus how the models were found out."""
     name: str = ""
     url: str = ""
     keys: str = ""                              # comma separated, in the typed order
     models: list[str] = field(default_factory=list)
     dialect: str = ""                           # main speaks one shape: "openai_compat"
     was: str = ""                               # the name being edited, if any
+    context: str = ""                           # as typed: "" keep, "0" unlimited, digits a ceiling
 
     @property
     def key_list(self) -> list[str]:
@@ -162,6 +163,26 @@ def name_refusal(name: str) -> str:
                  f"«{value}» — служебное слово /providers; провайдер с таким именем "
                  f"бы было не достать; выберите другое")
     return ""
+
+
+def parse_context(value, keep=None):
+    """A typed context size: (number|None, refusal).
+
+    "" keeps what is stored (an edit that says nothing changes nothing);
+    "0" is unlimited — no trimming, no clip, no digest; digits are a ceiling
+    in tokens for this endpoint only. Anything else is refused with the menu.
+    """
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return keep, ""
+    if text == "0":
+        return 0, ""
+    if text.isdigit() and int(text) > 0:
+        return int(text), ""
+    return None, L(f"{text!r} is not a context size — a number of tokens, or 0 "
+                   f"for unlimited (no trimming at all)",
+                   f"{text!r} — не размер контекста: число токенов или 0 для "
+                   f"безлимита (никаких обрезок)")
 
 
 def split_models(values) -> list[str]:
@@ -262,6 +283,31 @@ def stored_keys(config, name: str) -> list[str]:
     return []
 
 
+def context_for(config, provider_name: str) -> tuple:
+    """(unlimited, ceiling) for the active provider.
+
+    A custom endpoint may carry its own context rule: 0 means unlimited — no
+    trimming, no per-message clip, no digest — a positive number is a ceiling
+    in tokens just for it. Unset means the global rules. Built-ins always take
+    the global rules: their windows are measured, not owned.
+    """
+    wanted = (provider_name or "").strip().lower()
+    for custom in getattr(config, "custom_providers", None) or []:
+        if str(custom.name).lower() != wanted:
+            continue
+        limit = getattr(custom, "max_context_tokens", None)
+        if limit is None:
+            return False, None
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            return False, None
+        if limit <= 0:
+            return True, None
+        return False, limit
+    return False, None
+
+
 def exists(config, name: str) -> bool:
     """Whether this name already means an endpoint — the form says "edit" then."""
     name = (name or "").strip().lower()
@@ -291,6 +337,8 @@ def current(config, name: str) -> Fields:
             fields.keys = ",".join(keys_of(custom.key))
         if custom.model:
             fields.models = [custom.model]
+        stored = getattr(custom, "max_context_tokens", None)
+        fields.context = "" if stored is None else str(stored)
         break
     cached = cached_models(name)
     if cached:
@@ -410,14 +458,24 @@ def apply(config, agent, fields: Fields, workdir: str = ".") -> tuple:
 
     kept = [custom for custom in (getattr(config, "custom_providers", None) or [])
             if str(custom.name).lower() not in (name, was)]
+    already_limit = getattr(already, "max_context_tokens", None) \
+        if already is not None else None
+    context, refusal = parse_context(fields.context, keep=already_limit)
+    if refusal:
+        return "", refusal
     entry = _entry(name=name, url=url, keys=keys, models=models,
-                   keep_model=already.model if already is not None else "")
+                   keep_model=already.model if already is not None else "",
+                   context=context)
     kept.append(entry)
     config.custom_providers = kept
 
     if models:
         write_models_cache(name, models)
     _register(config, agent, name, url, keys, models)
+    if agent is not None and hasattr(agent, "sync_context"):
+        # The context rule (unlimited/ceiling) takes effect on the next turn,
+        # not on the next restart.
+        agent.sync_context()
     if was and was != name and agent is not None:
         agent.providers.unregister(was)
         agent.ready_presets = [p for p in agent.ready_presets if p != was]
@@ -466,6 +524,17 @@ def _apply_preset(config, agent, name, fields: Fields, keys: str, models,
     return _saved_message(name, endpoint.url, fields, list(models), config, agent), ""
 
 
+def _context_note(config, name: str) -> str:
+    """" · context ∞" for an unlimited endpoint, " · context 128k" for a ceiling."""
+    unlimited, ceiling = context_for(config, name)
+    if unlimited:
+        return L(" · context ∞ (unlimited — nothing is trimmed)",
+                 " · контекст ∞ (безлимит — ничего не режется)")
+    if ceiling:
+        return L(f" · context {ceiling} tokens", f" · контекст {ceiling} токенов")
+    return ""
+
+
 def _saved_message(name, url, fields: Fields, models, config, agent) -> str:
     active = (getattr(config, "provider", "") or "").lower() == name
     switched = ""
@@ -477,7 +546,7 @@ def _saved_message(name, url, fields: Fields, models, config, agent) -> str:
                                f" · включить: /providers {name}")
     return (f"{name}: {url} · {L('keys', 'ключей')}: "
             f"{key_tails(fields.keys)} · {L('models', 'моделей')}: {len(models) or '—'}"
-            + switched + hint)
+            + _context_note(config, name) + switched + hint)
 
 
 def _carry_over(config, was: str, name: str) -> None:
@@ -487,14 +556,16 @@ def _carry_over(config, was: str, name: str) -> None:
         config.api_keys[name] = stored
 
 
-def _entry(name: str, url: str, keys: str, models: list[str], keep_model: str = ""):
+def _entry(name: str, url: str, keys: str, models: list[str], keep_model: str = "",
+           context=None):
     from beeagent.config.schema import CustomProvider
 
     # main's schema persists one `model` per custom entry — no list — so the
     # first name is the entry and the whole list goes to the models cache.
     return CustomProvider(name=name, type="openai_compat", url=url,
                           key=keys or None,
-                          model=(models[0] if models else (keep_model or "gpt-4")))
+                          model=(models[0] if models else (keep_model or "gpt-4")),
+                          max_context_tokens=context)
 
 
 def _register(config, agent, name: str, url: str, keys: str,

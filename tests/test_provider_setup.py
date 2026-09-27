@@ -244,3 +244,47 @@ def test_a_cached_model_list_expires_with_the_version_that_wrote_it(tmp_path, mo
 
     write(["glm-5.3"], saved_at=time.time() - 15 * 86400)
     assert provider_setup.cached_models(name) == [], "the cache has to expire"
+
+
+# --- per-endpoint context rules ------------------------------------------------
+
+def test_parse_context_menu():
+    assert ps.parse_context("", keep="K") == ("K", "")
+    assert ps.parse_context("0") == (0, "")
+    assert ps.parse_context("128000") == (128000, "")
+    value, refusal = ps.parse_context("lots")
+    assert value is None and refusal, "garbage must be refused with words"
+    value, refusal = ps.parse_context("-5")
+    assert value is None and refusal
+
+
+def test_context_for_reads_the_custom_entry():
+    from beeagent.config.schema import BeeConfig, CustomProvider
+
+    config = BeeConfig(custom_providers=[
+        CustomProvider(name="big", type="openai_compat", url="https://x.test/v1",
+                       model="m", max_context_tokens=0),
+        CustomProvider(name="small", type="openai_compat", url="https://y.test/v1",
+                       model="m", max_context_tokens=4000),
+        CustomProvider(name="plain", type="openai_compat", url="https://z.test/v1",
+                       model="m"),
+    ])
+    assert ps.context_for(config, "big") == (True, None)
+    assert ps.context_for(config, "small") == (False, 4000)
+    assert ps.context_for(config, "plain") == (False, None)
+    assert ps.context_for(config, "g4f") == (False, None)
+
+
+def test_apply_persists_the_context_rule_and_rereads_it():
+    from beeagent.config.loader import load_config
+
+    config = BeeConfig()
+    fields = ps.Fields(name="big", url="https://big.test/v1", keys="",
+                       models=["m"], context="0")
+    message, refusal = ps.apply(config, None, fields)
+    assert refusal == "", refusal
+    assert "∞" in message
+    back = load_config(".")
+    assert back.custom_providers[0].max_context_tokens == 0
+    unlimited, ceiling = ps.context_for(back, "big")
+    assert unlimited is True and ceiling is None

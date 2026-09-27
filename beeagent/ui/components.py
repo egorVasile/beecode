@@ -190,6 +190,25 @@ def banner_static() -> Text:
     return _banner_paint(lambda i, j, width: _rest_color(i))
 
 
+# The phone logo: the same word at xscale 1 — 35 cells wide, no animation, no
+# screen clear. Chosen when the one-time question was answered "yes" and this
+# launch runs on Termux (see ui/platform.py).
+COMPACT_ROWS = _pixel_text("BEECODE", xscale=1, sep="")
+COMPACT_WIDTH = max(len(r) for r in COMPACT_ROWS)
+
+
+def banner_compact() -> Text:
+    """The small static logo for narrow slow screens."""
+    text = Text()
+    last = len(COMPACT_ROWS) - 1
+    for i, row in enumerate(COMPACT_ROWS):
+        for style, ch in brand_ramp(row):
+            text.append(ch, style=style)
+        if i != last:
+            text.append("\n")
+    return text
+
+
 def brand_ramp(text: str) -> list:
     """`text` split into (style, char) tokens along the honey->leaf ramp.
 
@@ -253,7 +272,25 @@ def print_banner(animate: Optional[bool] = None):
     prints the settled logo, "none" prints nothing at all — and a plugin that
     registers a callable draws the opening itself. A skin that owns the `banner`
     surface answers ahead of all three, because then the logo is its drawing.
+
+    On a phone that agreed to compact mode (see ui/platform.py) none of that
+    runs: a small static logo, no screen clear, no 38-frame animation.
     """
+    try:
+        from beeagent.ui.platform import want_compact
+
+        compact = want_compact()
+    except Exception:
+        compact = False
+    if compact:
+        console.print()
+        console.print(Align.center(banner_compact()))
+        console.print(Align.center(
+            Text.assemble(("BeeCode", f"bold {HONEY}"),
+                          Text(" — free AI coding agent", style="dim"))))
+        console.print(Align.center(Text(f"v{__version__}", style="dim italic")))
+        console.print()
+        return
     choice = skin.value("banner", "shimmer")
     if callable(choice):
         choice()
@@ -970,6 +1007,11 @@ class ResponseStream:
                 return k
         return 0
 
+    # On a phone every console.print is a terminal round trip while
+    # prompt_toolkit repaints the prompt beside it — that flicker is the lag.
+    # Compact mode holds complete lines briefly and prints the burst at once.
+    COALESCE_SECONDS = 0.15
+
     def _print(self, text):
         text = strip_terminal(text)
         """Write only whole lines — never leave the cursor mid-line.
@@ -983,6 +1025,8 @@ class ResponseStream:
         if not text:
             return
         self._pending += text
+        if self._hold_burst():
+            return
         while True:
             line, found, rest = self._pending.partition("\n")
             if not found:
@@ -994,11 +1038,37 @@ class ResponseStream:
             self._pending = rest
             console.print(Text(line))
 
+    def _hold_burst(self) -> bool:
+        """True when this write should wait for the burst window to pass.
+
+        Desktop path untouched: holding only happens in compact phone mode, and
+        `_flush_pending` always empties the buffer at turn end, so no text is
+        ever held past its turn.
+        """
+        try:
+            from beeagent.ui.platform import want_compact
+
+            compact = want_compact()
+        except Exception:
+            compact = False
+        if not compact:
+            return False
+        now = time.monotonic()
+        last = getattr(self, "_last_flush", 0.0)
+        if now - last < self.COALESCE_SECONDS:
+            return True
+        self._last_flush = now
+        return False
+
     def _flush_pending(self):
         """End the turn on a line boundary, whatever is left in the buffer."""
         if self._pending:
             console.print(Text(self._pending))
             self._pending = ""
+        try:
+            self._last_flush = time.monotonic()
+        except Exception:
+            pass
 
     def on_tool_start(self):
         """Content so far was a tool-call payload, not an answer — drop it."""

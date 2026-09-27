@@ -307,3 +307,35 @@ def test_the_pool_models_carry_the_windows_their_owner_states():
         assert advertised_window(model) == tokens, model
     # the specific id must win over the shorter family rule it sits next to
     assert advertised_window("glm-5.3-flash") > advertised_window("glm-5.3")
+
+
+def test_unlimited_context_sends_everything_untrimmed():
+    """"Context 0" on a custom endpoint: no trimming, no clip, no digest.
+
+    A history that a 1024-token window would shed and clip goes out whole,
+    because the owner said the endpoint takes it.
+    """
+    history = [{"role": "user", "content": "вопрос"},
+               {"role": "assistant", "content": "ответ " * 2000},
+               {"role": "user", "content": "ещё вопрос"}]
+    plain = ContextManager(model="gpt-4", window=1024)
+    plain.build_messages(history, [])
+    assert plain.trimmed > 0, "the control build must actually trim"
+
+    wide = ContextManager(model="gpt-4", window=1024, unlimited=True)
+    built = wide.build_messages(history, [])
+    assert wide.trimmed == 0 and wide.dropped == 0 and wide.clipped == 0
+    assert wide.shed == []
+    sent = " ".join(str(m.get("content") or "") for m in built)
+    assert "ответ ответ" in sent and "ещё вопрос" in sent
+
+
+def test_limited_context_still_trims():
+    """Unlimited is opt-in per endpoint, never the default."""
+    history = [{"role": "user", "content": "вопрос"},
+               {"role": "assistant", "content": "ответ " * 2000},
+               {"role": "user", "content": "ещё вопрос"}]
+    manager = ContextManager(model="gpt-4", window=1024)
+    manager.build_messages(history, [])
+    assert manager.trimmed > 0
+    assert manager.unlimited is False

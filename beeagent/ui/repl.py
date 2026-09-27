@@ -735,7 +735,10 @@ async def run_repl(agent, config, session=None):
             if _AUTOSAVER is not None:
                 _AUTOSAVER.close(ctx.session)
             else:
-                ctx.session.save()
+                # Into the project, not wherever the process was started: the
+                # bare save() landed in CWD, and a session saved beside the
+                # project is a session `--continue` never finds.
+                ctx.session.save(workdir)
         except Exception as e:
             _say("⚠", L(f"the session could not be saved ({e.__class__.__name__}: {e})",
                         f"сессия не сохранена ({e.__class__.__name__}: {e})"))

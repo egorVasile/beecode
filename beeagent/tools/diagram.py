@@ -26,6 +26,7 @@ arrow that has to step around someone else's block does so in the text and in th
 SVG alike, off the same route, because a line drawn through a box is a lie in both.
 """
 import os
+import re
 from pathlib import Path
 
 from .base import BaseTool, ToolResult, write_text_preserving
@@ -50,6 +51,39 @@ MAX_ID_CHARS = 40
 MAX_NAME_CHARS = 120
 MAX_SVG_BYTES = 250_000    # 40 boxes and 80 arrows never reach this; past it the
                            # drawing is a dump, so it is refused, not written half
+
+# Paint, model-chosen: a block takes `fill` and `border`, an arrow `color`.
+# Anything else would let a label smuggle CSS or a URL into the file.
+_NAMED_COLORS = {
+    "red": "#d32f2f", "green": "#2f7d32", "blue": "#1e88e5",
+    "yellow": "#f9a825", "orange": "#ef6c00", "purple": "#8e24aa",
+    "teal": "#00897b", "gray": "#616161", "black": "#212121",
+    "white": "#ffffff",
+}
+_HEX_COLOR = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _paint(value, what: str, problems: list) -> str | None:
+    """A color the model named, as #rrggbb — or None with one telling problem.
+
+    Accepted on purpose: `#f00`, `#ff0000`, and ten plain names. Anything else
+    (rgb(), a URL, a style fragment) is refused with the whole menu, so the fix
+    takes one call instead of a guessing round.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if _HEX_COLOR.match(text):
+        if len(text) == 4:
+            text = "#" + "".join(ch * 2 for ch in text[1:])
+        return text.lower()
+    known = _NAMED_COLORS.get(text.lower())
+    if known:
+        return known
+    problems.append(
+        f"{what} color {text[:24]!r} is not a color — use #rgb, #rrggbb or one of "
+        f"{', '.join(sorted(_NAMED_COLORS))}; left default")
+    return None
 
 
 def _sign(value):
@@ -140,19 +174,19 @@ def _refused(name: str, why: str) -> str:
 class DiagramTool(BaseTool):
     name = "diagram"
     description = (
-        "Draw boxes with arrows and return the picture as text, so you can see what you "
-        "made and fix it. You place the boxes: give each an id, label and cell "
-        "coordinates, and each arrow a from/to. Overlaps, unplaceable labels and "
-        "unknown ids are reported. The same lines go into an SVG for the user — only "
-        "when there is a picture to save, and only under a plain relative .svg name "
-        "inside the working directory."
+        "Draw boxes with arrows, get the picture as text to check and fix. "
+        "Overlaps, nested blocks (with free coordinates), bad labels/ids are "
+        "reported — fix what is listed. On 'diagram is final', show the picture. "
+        "Same lines go to an SVG file (plain relative .svg name)."
     )
     parameters = {
         "type": "object",
         "properties": {
             "blocks": {
                 "type": "array",
-                "description": "Boxes: {id, label, x, y}. x,y are the top-left cell. "
+                "description": "Boxes: {id, label, x, y, fill?, border?} "
+                               "(x,y top-left; colors #rgb, red, green, blue, yellow, "
+                               "orange, purple, teal, gray, black, white). "
                                f"A label is a caption: {MAX_LABEL_CHARS} characters, "
                                f"{MAX_LABEL_LINES} lines, the rest is not drawn.",
                 "items": {
@@ -162,19 +196,22 @@ class DiagramTool(BaseTool):
                         "label": {"type": "string"},
                         "x": {"type": "integer"},
                         "y": {"type": "integer"},
+                        "fill": {"type": "string"},
+                        "border": {"type": "string"},
                     },
                     "required": ["id", "label"],
                 },
             },
             "edges": {
                 "type": "array",
-                "description": "Arrows: {from, to, label?}. Both must be block ids.",
+                "description": "Arrows {from, to, label?, color?}, same colors.",
                 "items": {
                     "type": "object",
                     "properties": {
                         "from": {"type": "string"},
                         "to": {"type": "string"},
                         "label": {"type": "string"},
+                        "color": {"type": "string"},
                     },
                     "required": ["from", "to"],
                 },
@@ -297,8 +334,11 @@ class DiagramTool(BaseTool):
             except (TypeError, ValueError):
                 problems.append(f"block {bid!r} has non-numeric x/y — placed at 0,0")
                 x = y = 0
+            fill = _paint(raw.get("fill"), f"block {bid!r} fill", problems)
+            border = _paint(raw.get("border"), f"block {bid!r} border", problems)
             boxes[bid] = {"id": bid, "label": label, "x": max(0, x), "y": max(0, y),
-                          "w": width, "h": len(lines) + 2, "lines": lines}
+                          "w": width, "h": len(lines) + 2, "lines": lines,
+                          "fill": fill, "border": border}
         return boxes
 
     # --- geometry -----------------------------------------------------------
@@ -312,6 +352,41 @@ class DiagramTool(BaseTool):
         ax1, ay1, ax2, ay2 = cls._rect(a)
         bx1, by1, bx2, by2 = cls._rect(b)
         return not (ax2 < bx1 or bx2 < ax1 or ay2 < by1 or by2 < ay1)
+
+    @classmethod
+    def _contains(cls, outer, inner):
+        """Whether `inner` sits wholly inside `outer`: a nesting, not a touch."""
+        ax1, ay1, ax2, ay2 = cls._rect(outer)
+        bx1, by1, bx2, by2 = cls._rect(inner)
+        return ax1 <= bx1 and ay1 <= by1 and bx2 <= ax2 and by2 <= ay2
+
+    def _suggest_spot(self, moving, boxes):
+        """A free top-left cell for `moving`, or None.
+
+        The model is told exact coordinates instead of "move one": one precise
+        address costs one line and usually ends the layout in one more call.
+        Right and down first — diagrams read left to right, top to bottom.
+        """
+        w, h = moving["w"], moving["h"]
+        others = [b for b in boxes.values() if b["id"] != moving["id"]]
+        x0, y0 = moving["x"], moving["y"]
+
+        def free(x, y):
+            probe = {"x": x, "y": y, "w": w, "h": h}
+            return all(not self._overlap(probe, o) for o in others)
+
+        for k in range(1, 10):
+            for cx, cy in ((x0 + k * w, y0), (x0, y0 + k * h),
+                           (max(0, x0 - k * w), y0), (x0, max(0, y0 - k * h))):
+                if free(cx, cy):
+                    return cx, cy
+        return None
+
+    def _place_advice(self, moving, boxes) -> str:
+        spot = self._suggest_spot(moving, boxes)
+        if spot is None:
+            return f"move {moving['id']!r} somewhere clear"
+        return f"move {moving['id']!r} to x={spot[0]}, y={spot[1]}"
 
     def _anchors(self, a, b):
         """Where the arrow leaves a and enters b, from whichever sides face each other."""
@@ -519,9 +594,18 @@ class DiagramTool(BaseTool):
                     grid[row][x1 + 1 + pad + i] = ch
 
         for first, second in [(a, b) for a in boxes.values() for b in boxes.values()
-                              if a["id"] < b["id"]]:
-            if self._overlap(first, second):
-                problems.append(f"{first['id']} and {second['id']} overlap — move one")
+                               if a["id"] < b["id"]]:
+            if self._contains(first, second):
+                problems.append(f"block {second['id']!r} sits inside block {first['id']!r} — "
+                                f"a block cannot live inside another; "
+                                f"{self._place_advice(second, boxes)}")
+            elif self._contains(second, first):
+                problems.append(f"block {first['id']!r} sits inside block {second['id']!r} — "
+                                f"a block cannot live inside another; "
+                                f"{self._place_advice(first, boxes)}")
+            elif self._overlap(first, second):
+                problems.append(f"{first['id']} and {second['id']} overlap — "
+                                f"{self._place_advice(second, boxes)}")
 
         for edge in edges:
             src, dst = edge.get("from"), edge.get("to")
@@ -664,25 +748,28 @@ class DiagramTool(BaseTool):
             if not self._visible(route, owner, cells_w, cells_h):
                 continue            # invisible in the picture, so absent from the file
             points = self._stroke(route, a, b, scale, pad)
+            ink = edge.get("color") or self.INK
             heads.append(f'<marker id="head-{index}" markerUnits="userSpaceOnUse" '
                          f'markerWidth="11" markerHeight="9" refX="10" refY="4.5" '
                          f'orient="auto">'
-                         f'<path d="M0,0 L10,4.5 L0,9 z" fill="{self.INK}"/></marker>')
+                         f'<path d="M0,0 L10,4.5 L0,9 z" fill="{ink}"/></marker>')
             arrows.append(f'<polyline points="{" ".join(points)}" fill="none" '
-                          f'stroke="{self.INK}" stroke-width="2" stroke-linejoin="round" '
+                          f'stroke="{ink}" stroke-width="2" stroke-linejoin="round" '
                           f'stroke-linecap="round" marker-end="url(#head-{index})" '
                           f'data-from="{_esc(a["id"])}" data-to="{_esc(b["id"])}"/>')
             words = " ".join(str(edge.get("label") or "").split())[:14]
             if words:
-                labels.append(self._arrow_label(points, words, scale))
+                labels.append(self._arrow_label(points, words, scale, ink))
 
         blocks = []
         for box in boxes.values():
             rx, ry, rw, rh = rects[box["id"]]
             lines, row, size = self._text_layout(box, rw, rh)
+            fill = box.get("fill") or self.BLOCK_FILL
+            border = box.get("border") or self.INK
             group = [f'<g data-block="{_esc(box["id"])}">',
                      f'<rect x="{rx:.1f}" y="{ry:.1f}" width="{rw:.1f}" height="{rh:.1f}" '
-                     f'rx="6" fill="{self.BLOCK_FILL}" stroke="{self.INK}" stroke-width="2"/>']
+                     f'rx="6" fill="{fill}" stroke="{border}" stroke-width="2"/>']
             for offset, line in enumerate(lines):
                 group.append(f'<text x="{rx + rw / 2:.1f}" '
                              f'y="{ry + (offset + 0.5) * row + size * 0.35:.1f}" '
@@ -757,7 +844,7 @@ class DiagramTool(BaseTool):
         size = min(12.0, row * 0.72, (rw - 6) / (0.62 * longest))
         return lines, row, max(size, 4.0)
 
-    def _arrow_label(self, points, words, scale):
+    def _arrow_label(self, points, words, scale, ink=None):
         """One word per arrow, on the longest stretch of its line, on a chip of
         paper so a crossing stroke cannot eat half of it."""
         nums = [tuple(float(v) for v in point.split(",")) for point in points]
@@ -772,8 +859,9 @@ class DiagramTool(BaseTool):
         y = (best[0][1] + best[1][1]) / 2
         size = min(11.0, scale * 1.3)
         wide, high = len(words) * size * 0.62 + 6, size + 6
+        ink = ink or self.INK
         return (f'<rect x="{x - wide / 2:.1f}" y="{y - high / 2:.1f}" width="{wide:.1f}" '
-                f'height="{high:.1f}" rx="3" fill="{self.PAPER}" stroke="{self.INK}" '
+                f'height="{high:.1f}" rx="3" fill="{self.PAPER}" stroke="{ink}" '
                 f'stroke-width="0.8"/>'
                 f'<text x="{x:.1f}" y="{y + size * 0.35:.1f}" {self.MONO} '
                 f'font-size="{size:.1f}" text-anchor="middle" fill="{self.TEXT}">'
@@ -817,6 +905,19 @@ class DiagramTool(BaseTool):
             return ""
         return display
 
+    def _arrows(self, edges, problems):
+        """Normalised arrows, each with a validated color or none."""
+        arrows = []
+        for raw in list(edges or [])[:MAX_EDGES]:
+            if not isinstance(raw, dict):
+                problems.append(f"arrow {raw!r} is not an object")
+                continue
+            color = _paint(raw.get("color"),
+                           f"arrow {raw.get('from')}->{raw.get('to')} color", problems)
+            arrows.append({"from": raw.get("from"), "to": raw.get("to"),
+                           "label": raw.get("label"), "color": color})
+        return arrows
+
     def execute(self, blocks=None, edges=None, file="") -> ToolResult:
         problems = []
         boxes = self._boxes(blocks, problems)
@@ -825,7 +926,9 @@ class DiagramTool(BaseTool):
                                      "blocks=[{id, label, x, y}]", error=True)
         if len(blocks or []) > MAX_BOXES:
             problems.append(f"only the first {MAX_BOXES} blocks were drawn")
-        arrows = list(edges or [])[:MAX_EDGES]
+        arrows = self._arrows(edges, problems)
+        if len(edges or []) > MAX_EDGES:
+            problems.append(f"only the first {MAX_EDGES} arrows were drawn")
         drawn, canvas_problems = self._canvas(boxes, arrows)
         problems.extend(canvas_problems)
 
@@ -836,19 +939,27 @@ class DiagramTool(BaseTool):
             target, display = placed
             saved = self._save(target, display, boxes, arrows, picture, problems)
 
-        report = [f"your diagram, {len(boxes)} blocks and "
-                  f"{min(len(edges or []), MAX_EDGES)} arrows:"]
+        painted = [f"{b['id']} fill {b['fill']}" for b in boxes.values() if b.get("fill")] \
+            + [f"{b['id']} border {b['border']}" for b in boxes.values() if b.get("border")] \
+            + [f"{e['from']}->{e['to']} {e['color']}" for e in arrows if e.get("color")]
+        report = [f"your diagram, {len(boxes)} blocks and {len(arrows)} arrows:"]
         report.append(picture or "(nothing could be drawn)")
         if saved:
             report.append(f"file: {saved}")
+        if painted:
+            report.append("painted: " + ", ".join(painted))
         if problems:
             report.append("fix these and call diagram again:")
             report.extend(f"  - {item}" for item in problems)
         else:
-            report.append("no overlaps, every arrow lands on a block.")
+            # Final: nothing left to fix — the agent shows this picture instead
+            # of redrawing it.
+            report.append("diagram is final: no overlaps, every arrow lands on a "
+                          "block — show this picture.")
         return ToolResult(output="\n".join(report), error=False,
                           metadata={"blocks": len(boxes), "problems": problems,
-                                    "file": saved})
+                                    "file": saved, "final": not problems,
+                                    "painted": painted})
 
 
 _ESCAPES = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;"}

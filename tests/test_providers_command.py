@@ -219,7 +219,7 @@ def test_providers_add_guided_saves_every_field_and_rereads_it(monkeypatch):
     ctx = _ctx()
     _script(monkeypatch, ["newsrv", "https://api.new.test/v1",
                           "sk-secret9999", "",           # one key, blank line finishes
-                          "m-one,m2"])
+                          "m-one,m2", "0"])              # context 0 = unlimited
     result = asyncio.run(try_guided(ctx, "providers", ["add"]))
     assert result is not None
     plain = result.output.plain
@@ -230,6 +230,7 @@ def test_providers_add_guided_saves_every_field_and_rereads_it(monkeypatch):
     entry = back.custom_providers[0]
     assert entry.name == "newsrv" and entry.url == "https://api.new.test/v1"
     assert entry.key == "sk-secret9999" and entry.model == "m-one"
+    assert entry.max_context_tokens == 0, "context 0 persists as unlimited"
     assert back.api_keys["newsrv"] == "sk-secret9999"
     from beeagent.core import provider_setup
 
@@ -242,7 +243,7 @@ def test_providers_add_on_an_existing_name_is_an_edit_said_out_loud(monkeypatch)
     ctx = _ctx(_mine_config())
     # name collides → prefill; Enter keeps the stored url; keep (not replace) the
     # stored key and add a second one; keep the models.
-    _script(monkeypatch, ["mine", "", "k-new1111", "", "m0"], yes=[False])
+    _script(monkeypatch, ["mine", "", "k-new1111", "", "m0", ""], yes=[False])
     result = asyncio.run(try_guided(ctx, "providers", ["add"]))
     plain = result.output.plain
     assert "already exists" in plain and "edits" in plain
@@ -289,7 +290,7 @@ def test_validation_refusals_stop_the_interview_with_words_not_tracebacks(monkey
     ctx = _ctx()
     # a name nobody can type, then a sane one; a URL that is not one, then a good one
     _script(monkeypatch, ["Bad Name", "ok-name", "not-a-url",
-                          "https://api.ok.test/v1", "k-abc12345", "", "m1"])
+                          "https://api.ok.test/v1", "k-abc12345", "", "m1", ""])
     result = asyncio.run(try_guided(ctx, "providers", ["add"]))
     assert "ok-name" in result.output.plain
     assert ctx.config.custom_providers[0].name == "ok-name"

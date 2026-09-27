@@ -45,6 +45,8 @@ FIELDS = (
      L("leave empty to keep the stored keys", "пусто — оставить сохранённые ключи")),
     ("pf-models", L("models, comma separated", "модели, через запятую"),
      L("empty asks the endpoint for its list", "пусто — спросить у эндпоинта")),
+    ("pf-context", L("context tokens (0 = unlimited)", "контекст в токенах (0 = безлимит)"),
+     L("empty keeps it, 0 trims nothing", "пусто — оставить, 0 — ничего не резать")),
 )
 
 
@@ -120,7 +122,8 @@ class ProviderForm(ModalScreen):
         """Prefill what is safe to show. Keys are never shown, stored or not."""
         values = {"pf-name": self.fields.name, "pf-url": self.fields.url,
                   "pf-keys": "",
-                  "pf-models": ", ".join(self.fields.models)}
+                  "pf-models": ", ".join(self.fields.models),
+                  "pf-context": self.fields.context}
         for ident, value in values.items():
             field = self.query_one(f"#{ident}", Input)
             field.value = value
@@ -140,14 +143,15 @@ class ProviderForm(ModalScreen):
         self.dismiss("")
 
     def _collect(self) -> provider_setup.Fields:
-        """The four fields as typed, with the stored keys kept when the box is empty."""
+        """The fields as typed, with the stored keys kept when the box is empty."""
         fields = provider_setup.Fields(
             name=self.query_one("#pf-name", Input).value.strip(),
             was=self.fields.name,
             url=self.query_one("#pf-url", Input).value.strip(),
             keys=self.query_one("#pf-keys", Input).value.strip(),
             models=provider_setup.split_models(
-                self.query_one("#pf-models", Input).value))
+                self.query_one("#pf-models", Input).value),
+            context=self.query_one("#pf-context", Input).value.strip())
         if not fields.keys:
             fields.keys = ",".join(self.fields.key_list)      # untouched means kept
         if not fields.models:
@@ -222,12 +226,16 @@ def _fallback_text(fields: provider_setup.Fields, name: str) -> str:
     if not fields.url:
         return "\n".join(lines)
     shown = ", ".join(fields.models[:6]) + (" …" if len(fields.models) > 6 else "")
+    context = fields.context.strip()
+    context_line = f"  context {(context or 'default')}" + (
+        " (0 = unlimited, nothing is trimmed)" if context == "0" else "")
     return "\n".join([
         L("there is no screen to open here, so here is what is configured:",
           "экрана нет — вот что настроено:"),
         f"  url    {fields.url}",
         f"  keys   {provider_setup.key_tails(fields.key_list)}",
         f"  models {shown or '—'}",
+        context_line,
         lines[1],
     ])
 
@@ -431,6 +439,24 @@ async def guided_form(ctx, name: str = "", adding: bool = False,
             fields.models = provider_setup.split_models(models_text)
             if not fields.models:
                 notes.append(await _discover_into(fields))
+            # A built-in preset keeps its own facts; there is nowhere to store
+            # a context rule for one, so it is not asked either.
+            if preset is None:
+                current = fields.context.strip()
+                shown = current if current else L("default", "обычно")
+                while True:
+                    typed = await _ask(
+                        L(f"context in tokens, 0 = unlimited, Enter keeps: {shown}",
+                          f"контекст в токенах, 0 = безлимит, Enter оставит: {shown}"),
+                        default=current)
+                    if not typed:
+                        break              # untouched means kept
+                    _, refusal = provider_setup.parse_context(typed)
+                    if refusal:
+                        _say(refusal)
+                        continue
+                    fields.context = typed.strip()
+                    break
         message, refusal = provider_setup.apply(ctx.config, ctx.agent, fields,
                                                 workdir=workdir)
     except _Cancelled:

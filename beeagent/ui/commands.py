@@ -644,6 +644,8 @@ def _cmd_providers(ctx, args):
             return _replace_pool(ctx, rest[0], ",".join(rest[1:]))
         if first == "models":
             return _providers_models(ctx, args[1:])
+        if first == "context":
+            return _providers_context(ctx, args[1:])
         if first == "use":
             if len(args) < 2:
                 return _err(L("name the provider: /providers use <name> — /providers lists them",
@@ -679,6 +681,7 @@ def _cmd_providers(ctx, args):
             rows.append({"name": name + ("  ←" if active.lower() == name.lower() else ""),
                          "type": custom.type,
                          "desc": f"{custom.url} · keys: {provider_setup.key_tails(pool)}"
+                                 + provider_setup._context_note(ctx.config, name)
                                  + lacking})
             continue
         kind, desc = about.get(name, (L("registered", "зарегистрирован"),
@@ -698,10 +701,12 @@ def _cmd_providers(ctx, args):
     table.caption = Text(
         L("switch: /providers <name> · add an endpoint: /providers add · change one: "
           "/providers edit <name> · keys only: /providers key <name> · models: "
-          "/providers models <name> [a,b,c] · remove yours: /providers remove <name>",
+          "/providers models <name> [a,b,c] · context: /providers context <name> "
+          "[tokens|0, 0 is unlimited] · remove yours: /providers remove <name>",
           "переключить: /providers <имя> · добавить: /providers add · изменить: "
           "/providers edit <имя> · только ключи: /providers key <имя> · модели: "
-          "/providers models <имя> [a,b,c] · удалить своё: /providers remove <имя>"),
+          "/providers models <имя> [a,b,c] · контекст: /providers context <имя> "
+          "[токены|0, 0 это безлимит] · удалить своё: /providers remove <имя>"),
         style="dim")
     return CommandResult(output=table)
 
@@ -838,6 +843,44 @@ def _providers_models(ctx, args) -> CommandResult:
         ctx.config, ctx.agent, fields,
         workdir=ctx.agent.workdir if ctx.agent is not None else ".")
     return _err(refusal) if refusal else _ok(notice + message)
+
+
+def _providers_context(ctx, args) -> CommandResult:
+    """`/providers context <name> <tokens|0>` — a context rule for one endpoint.
+
+    0 is unlimited: no trimming, no per-message clip, no digest — the whole
+    conversation goes out as-is. A number is a ceiling in tokens just for it.
+    Without a number, says what the endpoint has now.
+    """
+    from beeagent.core import provider_setup
+
+    if not args:
+        return _err(L("usage: /providers context <name> [tokens|0] — 0 is unlimited",
+                      "использование: /providers context <имя> [токены|0] — 0 это безлимит"))
+    name = args[0].strip().lower()
+    fields = provider_setup.current(ctx.config, name)
+    if not (fields.url or fields.key_list or fields.models
+            or provider_setup.exists(ctx.config, name)):
+        return _err(L(f"there is no provider called {name} — /providers add {name} "
+                      f"creates one",
+                      f"провайдера {name} нет — /providers add {name} создаст его"))
+    if len(args) < 2:
+        unlimited, ceiling = provider_setup.context_for(ctx.config, name)
+        now = L("unlimited ∞ — nothing is trimmed", "безлимит ∞ — ничего не режется") \
+            if unlimited else (L(f"{ceiling} tokens", f"{ceiling} токенов")
+                               if ceiling else L("default rules", "обычные правила"))
+        return CommandResult(output=Text(L(f"context for {name}: {now}",
+                                           f"контекст {name}: {now}"), style="dim"))
+    fields.name, fields.was = name, name
+    fields.context = args[1].strip()
+    message, refusal = provider_setup.apply(
+        ctx.config, ctx.agent, fields,
+        workdir=ctx.agent.workdir if ctx.agent is not None else ".")
+    if refusal:
+        return _err(refusal)
+    if ctx.agent is not None:
+        ctx.agent.sync_context()
+    return _ok(message)
 
 
 def _remove_provider(ctx, name: str) -> CommandResult:
@@ -1860,6 +1903,46 @@ def _extensions(ctx: ReplContext):
     return PluginManager(), None
 
 
+def _unwear_removed_skins(ctx: ReplContext, names: list) -> str:
+    """Take off what the removed pack painted with.
+
+    Uninstall deletes the folder; the skin registry does not watch the
+    filesystem, so without this the removed interface kept painting — active,
+    listed, and re-worn on the next start from the stale `skin` choice. Every
+    skin the pack registered is unloaded, an active one falls back to the
+    baseline, and a choice naming a removed skin is cleared and saved.
+    """
+    from beeagent.core import skins
+
+    if not names:
+        return ""
+    wearing = skins.active_name()
+    for name in names:
+        try:
+            skins.unload(name)
+        except Exception:
+            pass
+    line = L(f"\n  🎨 unworn: {', '.join(names)}",
+             f"\n  🎨 снят: {', '.join(names)}")
+    if wearing in names:
+        skins.switch("")
+        line += L(" — back to BeeCode's own interface",
+                  " — вернулись к штатному интерфейсу")
+    config = getattr(ctx, "config", None)
+    if config is not None and hasattr(config, "skin") \
+            and str(getattr(config, "skin", "") or "") in names:
+        config.skin = ""
+        try:
+            from beeagent.config.loader import save_config
+
+            save_config(config, getattr(getattr(ctx, "agent", None), "workdir", ".") or ".")
+        except Exception:
+            line += L(" (the saved choice could not be cleared — it will be "
+                      "forgotten on restart)",
+                      " (сохранённый выбор не очистился — забудется при перезапуске)")
+    return line
+
+
 def _reload_extensions(ctx: ReplContext) -> str:
     """Re-scan installed extensions after a change; describe what came in."""
     if ctx.agent is None or getattr(ctx.agent, "plugins", None) is None:
@@ -2180,12 +2263,19 @@ def _cmd_plugin(ctx, args):
         return _ok(line + _reload_extensions(ctx) + _wear_pack_skin(ctx, report["name"]))
 
     if sub in ("remove", "uninstall"):
+        # Skins the pack contributed, named before the folder goes: the skin
+        # registry outlives the files, so removing an active pack without
+        # unloading left its interface on screen with nothing to switch off.
+        from beeagent.core import skins as _skins_mod
+
+        doomed = list(_skins_mod.for_pack(target))
         try:
             manager.uninstall(target)
         except Exception as e:
             return _err(L(f"could not remove “{target}”: {e}", f"не удалось удалить «{target}»: {e}"))
+        unworn = _unwear_removed_skins(ctx, doomed)
         tail = _reload_extensions(ctx)
-        return _ok(L(f"🗑 removed {target}.{tail}", f"🗑 удалён {target}.{tail}"))
+        return _ok(L(f"🗑 removed {target}.{unworn}{tail}", f"🗑 удалён {target}.{unworn}{tail}"))
 
     if sub in ("enable", "disable"):
         entry = installed.get(target)
