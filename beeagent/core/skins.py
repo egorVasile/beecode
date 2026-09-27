@@ -197,7 +197,8 @@ FORBIDDEN_NAMES = frozenset({
 
 HOOKS = ("on_init", "on_surfaces", "on_frame", "on_event", "on_output",
          "on_status", "on_spinner", "on_thinking", "on_stream", "on_answer",
-         "on_hud", "on_banner", "on_frame_color")
+         "on_hud", "on_banner", "on_frame_color",
+         "on_welcome", "on_error", "on_tool_start", "on_tool_end")
 
 #: The pieces of the interface a skin may take over, and the hook that answers for
 #: each. A surface a skin has not claimed is drawn by BeeCode exactly as it always
@@ -220,9 +221,22 @@ SURFACES = {
     # renderable, so a pack can run a colour cycle across the letters.
     "banner": "on_banner",
     # ...`on_frame_color` answers for the colour of a panel's border, by role
-    # ("answer", "tool", "error", ...). Only the colour is the skin's: the box
+    # ("answer", "tool", "output", "error", ...). Only the colour is the skin's: the box
     # itself stays the `frame` slot's decision, so `/skin none` still means no box.
     "frame": "on_frame_color",
+    # ...`on_welcome` owns the words of the welcome panel. The frame stays the
+    # host's, like everywhere else a skin meets a box.
+    "welcome": "on_welcome",
+    # ...`on_error` owns the wording of an error line or panel. It never owns
+    # whether the error happened: hiding it is allowed, inventing one is not
+    # possible through this door.
+    "error": "on_error",
+    # ...`on_tool_start` / `on_tool_end` own the chalk lines around a tool call:
+    # who ran, with what, and how it ended. They never see the tool's output
+    # bytes beyond the summary the host offers — the model's evidence is not a
+    # decoration budget — and they never decide whether the call runs.
+    "tool_start": "on_tool_start",
+    "tool_end": "on_tool_end",
 }
 #: Late calls on one surface that are tolerated before the skin loses that surface
 #: and nothing else. `on_frame` has its own clock; a per-token hook that takes
@@ -1338,6 +1352,40 @@ def stream_text(default: str = "", done: bool = False) -> str:
     return ask("stream", default, done)
 
 
+def welcome_text(default=None):
+    """The welcome panel's wording, or None when nobody holds it.
+
+    None (rather than the default) so the caller can tell "no skin" from "the
+    skin answered": the panel frame stays the host's either way.
+    """
+    return ask("welcome", default)
+
+
+def error_text(default=None):
+    """An error line's wording, or None when nobody holds it."""
+    return ask("error", default)
+
+
+def tool_start_text(summary: str, tool: str):
+    """A tool-call line, or None when nobody holds it.
+
+    The hook gets the one-line summary first, then the tool name — declare what
+    you need. The call's arguments travel inside the summary only, capped like
+    the host's own line, because a hook signature is not a place for megabytes.
+    """
+    return ask("tool_start", None, tool, offer=summary)
+
+
+def tool_end_text(summary: str, tool: str, error: bool = False):
+    """A tool-result line, or None when nobody holds it.
+
+    Same shape as the start hook, plus whether the call failed. The tool's
+    output bytes are deliberately not offered: the line says how it ended, and
+    megabytes of evidence are not a decoration budget.
+    """
+    return ask("tool_end", None, tool, bool(error), offer=summary)
+
+
 def answer_render(text: str, final: bool = False):
     """The finished answer as the skin draws it, or None when nobody holds it.
 
@@ -1944,7 +1992,7 @@ def _flat(text) -> str:
 # ========================================================= /skins command =====
 
 COMMAND_NAME = "skins"
-USAGE = "/skins [name, number, next, off]"
+USAGE = "/skins [name, number, next, off, reset]"
 DESCRIPTION = "Skins that are code: list them, switch, see why one was refused"
 
 
@@ -1968,6 +2016,43 @@ def register_command() -> bool:
     return True
 
 
+def _full_reset(ctx) -> str:
+    """Everything visual back to shipped: pack off, slots default, choice cleared.
+
+    Switching the pack off was not enough when the look survived in the slots:
+    a removed pack's choices stay chosen until something chooses again, and the
+    baseline reads the live slots — so "still prism" after `/skins off` was the
+    baseline wearing prism's slots. Returns "" when every write landed, else the
+    sentence saying which one did not.
+    """
+    switch("")
+    try:
+        from beeagent.ui import skin as ui_skin
+
+        ui_skin.reset()
+    except Exception:
+        pass
+    config = getattr(ctx, "config", None)
+    if config is None:
+        return L("the screen is back to shipped, this session only — there is no "
+                 "config here to keep it",
+                 "экран вернулся к штатному, только на эту сессию — конфига тут нет, "
+                 "хранить негде")
+    try:
+        from beeagent.config.loader import save_config
+
+        config.skin = ""
+        if hasattr(config, "ui"):
+            config.ui = {}
+        save_config(config, getattr(getattr(ctx, "agent", None), "workdir", ".") or ".")
+    except Exception:
+        return L("the screen is back to shipped for this session, but the saved "
+                 "choice could not be cleared — it returns on restart",
+                 "экран вернулся к штатному на эту сессию, но сохранённый выбор "
+                 "очистить не удалось — при перезапуске вернётся")
+    return ""
+
+
 def _cmd_skins(ctx, args):
     """`/skins` picks, `/skins <name|number>` switches, `/skins off` takes the baseline back.
 
@@ -1975,12 +2060,24 @@ def _cmd_skins(ctx, args):
     name are three different habits: `/skins` opens the list, `/skins 2` wears the
     second row of that list, `/skins shimmer` wears it by name (or by the name it
     was installed under), `/skins next` walks the skins that actually work.
+    `/skins reset` goes one step further than `off`: pack off, slots to defaults,
+    saved choice cleared — the whole look back to shipped.
     """
     from beeagent.ui.commands import CommandResult
     from rich.text import Text
 
     word = str(args[0]).strip() if args else ""
     low = word.lower()
+    if low in ("reset", "сброс"):
+        leftover = _full_reset(ctx)
+        line = L(f"skin: {active_name()} — the shipped interface, slots included",
+                 f"скин: {active_name()} — штатный интерфейс, включая слоты")
+        if leftover:
+            line += "\n" + leftover
+        else:
+            line += L(" (saved — it survives a restart)",
+                      " (сохранено — переживёт перезапуск)")
+        return CommandResult(output=Text(line, style="bold"))
     if low in ("next", "след", "дальше"):
         word = _next_skin() or ""
         if not word:

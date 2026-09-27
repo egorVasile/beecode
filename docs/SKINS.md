@@ -189,7 +189,7 @@ your pack so it passes both, and check it with the command above.
 
 ## 3. The hooks
 
-All ten are optional. `beeagent.core.skins` looks them up by name on whatever you
+All fourteen are optional. `beeagent.core.skins` looks them up by name on whatever you
 registered — a module, an instance, a dict of callables.
 
 | hook | called | receives | what it is for |
@@ -207,6 +207,10 @@ registered — a module, an instance, a dict of callables.
 | `on_hud(painter, dt)` | once per frame, while you hold the `hud` surface | a painter sized to your reserved rows | the strip above the state line |
 | `on_banner(seconds, width, rows, default)` | when the opening logo is printed, and on every frame the TUI shows | the monotonic clock, the size of the logo box, and the shipped logo | the logo: a colour cycle across the letters, or your own art. Return markup or a renderable |
 | `on_frame_color(role, seconds)` | once per panel drawn, and once per frame for the live answer panel in the TUI | which panel is asking (`"answer"`, `"tool"`, `"output"`, `"error"`, `"prompt"`, `"picker"`, `"thinking"`) and the clock | the **colour** of that panel's border, as a style string: `"bold #7cb342"`. The box stays the `frame` slot's |
+| `on_welcome(default)` | when the welcome panel is printed at startup | the host's own welcome line | that line in your words, or `""` for no welcome panel at all. Return **plain text** |
+| `on_error(default)` | whenever an error line or panel is drawn | the host's error wording | the error in your words. Return **plain text** |
+| `on_tool_start(summary, tool)` | when a tool call is announced | a one-line summary, then the tool name | that announcement in your words, or `""` to hide it. Return **plain text** |
+| `on_tool_end(summary, tool, error)` | when a tool call finishes | a one-line summary, the tool name, and whether it failed | how it ended, in your words, or `""` to hide it. Return **plain text** |
 
 A hook may declare fewer parameters than the contract offers and still be called:
 `on_frame(self, dt)` gets `dt` only, `on_event(self)` gets nothing. The host counts
@@ -223,7 +227,7 @@ named `onFrame` is registered, marked active, and draws nothing, forever. Check 
 ### Surfaces: which lines are yours
 
 A skin that only paints a grid can be ignored: the interface carries on around it.
-Eight pieces of that interface are *yours* if you ask for them, and asking is the
+Twelve pieces of that interface are *yours* if you ask for them, and asking is the
 whole contract:
 
 | surface | hook | what you may change | what happens when you get it wrong |
@@ -236,6 +240,10 @@ whole contract:
 | `hud` | `on_hud(painter, dt)` | `HUD_ROWS` rows above the state line, drawn through the painter | same |
 | `banner` | `on_banner(seconds, width, rows, default)` | the opening logo, and the word in the corner of the full-screen interface | same |
 | `frame` | `on_frame_color(role, seconds)` | the colour of a panel's border, per role | same |
+| `welcome` | `on_welcome(default)` | the welcome panel's words (the frame stays the host's) | same |
+| `error` | `on_error(default)` | the wording of an error line or panel | same |
+| `tool_start` | `on_tool_start(summary, tool)` | the chalk line announcing a tool call | same |
+| `tool_end` | `on_tool_end(summary, tool, error)` | the chalk line closing a tool call | same |
 
 `frame` answers with a colour and nothing else, on purpose. The shape of the box is
 the `frame` slot's decision (`/skin frame none`), and a skin that could draw the box
@@ -277,6 +285,11 @@ The rules on a returned value, in one place:
   printed: return a Rich renderable (a pack may import `rich`), or markup as a
   string (what a skin installed from **source** can do — the gate there will not
   let it import Rich). Returning `None` keeps BeeCode's own answer panel.
+* `welcome`, `error`, `tool_start` and `tool_end` answer in **markup**, like
+  `status` and `spinner`: `[bold #7cb342]…[/]` is colour, and a line whose tags
+  will not read is printed as plain text instead of crashing — the host parses
+  with the same `markup_text()` both interfaces share. Return the line, `""`
+  to hide it, `None` to keep the host's.
 * Your hook is handed the host's own text as its first argument, so you can keep
   it, wrap it or throw it away without asking the host for its state.
 
@@ -823,9 +836,10 @@ draw the reply itself — outline, lists and all — in both interfaces.
    `skins.painter_visible()`, or the loop reporting "nobody is emitting these
    frames", would turn the rest of it into a message instead of a mystery.
 5. **Three pieces of the interface have no surface.** `status`, `spinner`,
-   `thinking`, `stream`, `answer` and the `hud` strip are yours to claim; the
-   banner, the prompt's own prefix and the sidebar are not, and are rewritten only
-   through the legacy `ui/skin.py` slots a skin cannot reach from the TUI. The
+   `thinking`, `stream`, `answer`, the `hud` strip, the welcome panel, error
+   lines and the tool chalk lines are yours to claim; the prompt's own prefix
+   and the sidebar are not, and are rewritten only through the legacy
+   `ui/skin.py` slots a skin cannot reach from the TUI. The
    answer *block* became a surface with `skin-shimmer`; the border a Textual panel
    wears is still CSS, which no skin has a door to.
 6. **The classic REPL cannot redraw.** It is line-oriented on purpose — the prompt

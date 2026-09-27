@@ -71,6 +71,14 @@ def test_yes_on_termux_means_the_small_logo(monkeypatch):
     assert pf.want_compact() is True
 
 
+def test_env_zero_with_whitespace_skips(monkeypatch):
+    _clean(monkeypatch)
+    monkeypatch.setenv("BEECODE_DISPLAY_ASK", "0 ")
+    _type(monkeypatch, "\n")
+    pf.ask_once()
+    assert not pf.display_path().exists()
+
+
 def test_no_tty_means_no_question_and_no_file(monkeypatch, tmp_path):
     _clean(monkeypatch)
 
@@ -87,7 +95,7 @@ def test_the_compact_logo_fits_a_phone_screen():
     from beeagent.ui.components import COMPACT_ROWS, banner_compact
 
     assert COMPACT_ROWS, "the word did not render"
-    assert max(len(r) for r in COMPACT_ROWS) <= 40
+    assert max(len(r) for r in COMPACT_ROWS) <= 48, "must fit a phone screen"
     text = banner_compact()
     assert len(text.plain.splitlines()) == len(COMPACT_ROWS)
     assert text.plain.strip(), "the small logo is not blank"

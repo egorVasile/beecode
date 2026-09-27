@@ -954,18 +954,43 @@ class BeeCodeApp(App):
             args = ", ".join(f"{k}={v!r}" for k, v in data.get("args", {}).items())
             if len(args) > 80:
                 args = args[:77] + "..."
-            self.chatlog.write(Text(f"  ⏳ {data.get('tool')} {args}", style="bold yellow"))
+            try:
+                from beeagent.core import skins
+
+                mine = skins.tool_start_text(
+                    f"{data.get('tool')} {args}".strip(), str(data.get("tool") or ""))
+            except Exception:
+                mine = None
+            if mine is None:
+                self.chatlog.write(Text(f"  ⏳ {data.get('tool')} {args}", style="bold yellow"))
+            elif mine:
+                from beeagent.ui.components import markup_text
+
+                self.chatlog.write(markup_text(mine))
         elif event == "tool_end":
-            mark = "❌" if data.get("error") else "✅"
-            color = "red" if data.get("error") else "green"
-            self.chatlog.write(Text(f"  {mark} {data.get('tool')}", style=f"bold {color}"))
-            out = (data.get("output") or "").strip()
-            if out and data.get("error"):
-                self.chatlog.write(Text("    " + out[:300], style="dim red"))
-            elif out and data.get("tool") == "diagram":
-                # The model reads the drawing back from the tool result; the user
-                # should see the same picture without opening an SVG.
-                self.chatlog.write(Text(out, style="#8fbf6f"))
+            try:
+                from beeagent.core import skins
+
+                mine = skins.tool_end_text(
+                    f"{data.get('tool')} {'failed' if data.get('error') else 'done'}",
+                    str(data.get("tool") or ""), bool(data.get("error")))
+            except Exception:
+                mine = None
+            if mine is None:
+                mark = "❌" if data.get("error") else "✅"
+                color = "red" if data.get("error") else "green"
+                self.chatlog.write(Text(f"  {mark} {data.get('tool')}", style=f"bold {color}"))
+                out = (data.get("output") or "").strip()
+                if out and data.get("error"):
+                    self.chatlog.write(Text("    " + out[:300], style="dim red"))
+                elif out and data.get("tool") == "diagram":
+                    # The model reads the drawing back from the tool result; the user
+                    # should see the same picture without opening an SVG.
+                    self.chatlog.write(Text(out, style="#8fbf6f"))
+            elif mine:
+                from beeagent.ui.components import markup_text
+
+                self.chatlog.write(markup_text(mine))
         elif event == "tool_error":
             self._note("⚠", f"tool '{data.get('tool')}' failed: {data.get('message')}",
                        f"инструмент '{data.get('tool')}' упал: {data.get('message')}",
@@ -998,7 +1023,18 @@ class BeeCodeApp(App):
         elif event == "error":
             self._stream_buf = ""
             self.stream.update("")
-            self.chatlog.write(Text(f"error: {data.get('message')}", style="bold red"))
+            try:
+                from beeagent.core import skins
+
+                mine = skins.error_text()
+            except Exception:
+                mine = None
+            if mine is None:
+                self.chatlog.write(Text(f"error: {data.get('message')}", style="bold red"))
+            elif mine:
+                from beeagent.ui.components import markup_text
+
+                self.chatlog.write(markup_text(mine))
         else:
             # An event no branch caught is an event the user would never have
             # heard. Better one honest line than a silent turn.
@@ -1230,7 +1266,7 @@ class BeeCodeApp(App):
             except Exception:
                 mine = None
             self.chatlog.write(mine if mine is not None else banner_compact())
-            self.chatlog.write(Text("Free AI coding agent powered by g4f", style="dim"))
+            self._welcome_line()
             self.chatlog.write(Text(""))
             return
         shipped = Text()
@@ -1245,13 +1281,31 @@ class BeeCodeApp(App):
         except Exception:
             mine = None
         self.chatlog.write(mine if mine is not None else shipped)
-        self.chatlog.write(Text("Free AI coding agent powered by g4f", style="dim"))
-        self.chatlog.write(Text(
-            "Type a request and press Enter. Type / to see commands. "
-            "Click a command in the sidebar to run it; a command with a list to "
-            "choose from opens a picker.", style="dim"
-        ))
+        self._welcome_line()
         self.chatlog.write(Text(""))
+
+
+    def _welcome_line(self) -> None:
+        """The lines under the logo, in the skin's words when it holds `welcome`."""
+        from beeagent.core import skins
+
+        try:
+            mine = skins.welcome_text()
+        except Exception:
+            mine = None
+        if mine == "":
+            return                        # the skin wants no welcome lines at all
+        self.chatlog.write(Text("Free AI coding agent powered by g4f", style="dim"))
+        if mine is None:
+            self.chatlog.write(Text(
+                "Type a request and press Enter. Type / to see commands. "
+                "Click a command in the sidebar to run it; a command with a list to "
+                "choose from opens a picker.", style="dim"
+            ))
+        else:
+            from beeagent.ui.components import markup_text
+
+            self.chatlog.write(markup_text(mine))
 
 
 def run_tui(config=None, session=None):

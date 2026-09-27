@@ -1903,18 +1903,22 @@ def _extensions(ctx: ReplContext):
     return PluginManager(), None
 
 
-def _unwear_removed_skins(ctx: ReplContext, names: list) -> str:
+def _unwear_removed_skins(ctx: ReplContext, pack: str, names: list) -> str:
     """Take off what the removed pack painted with.
 
-    Uninstall deletes the folder; the skin registry does not watch the
-    filesystem, so without this the removed interface kept painting — active,
-    listed, and re-worn on the next start from the stale `skin` choice. Every
-    skin the pack registered is unloaded, an active one falls back to the
-    baseline, and a choice naming a removed skin is cleared and saved.
+    Uninstall deletes the folder; neither the skin registry nor the slot table
+    watches the filesystem, so without this the removed interface kept
+    painting — active, listed, its slot variants still chosen — and was re-worn
+    on the next start from the stale `skin` choice. Every skin the pack
+    registered is unloaded, its slot variants are unregistered, its slot
+    choices fall back, an active one falls back to the baseline, and a choice
+    naming a removed skin is cleared and saved. The user's own slot choices
+    are then re-applied, so only the removed pack's look goes away.
     """
     from beeagent.core import skins
+    from beeagent.ui import skin as ui_skin
 
-    if not names:
+    if not names and not pack:
         return ""
     wearing = skins.active_name()
     for name in names:
@@ -1922,13 +1926,44 @@ def _unwear_removed_skins(ctx: ReplContext, names: list) -> str:
             skins.unload(name)
         except Exception:
             pass
-    line = L(f"\n  🎨 unworn: {', '.join(names)}",
-             f"\n  🎨 снят: {', '.join(names)}")
+    # Slot variants the pack registered (frame/banner/spinner/stream flavours):
+    # drop them so no choice can point at drawings that no longer exist.
+    loader = getattr(getattr(ctx, "agent", None), "plugins", None)
+    registry = getattr(loader, "extensions", None)
+    if registry is not None and pack:
+        try:
+            for contribution in registry.by_plugin(pack):
+                if contribution.kind == "skin" and ":" in contribution.name:
+                    slot, _, variant = contribution.name.partition(":")
+                    try:
+                        ui_skin.unregister(slot.strip(), variant.strip())
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    # Slot choices the pack made (its background offers at load): fall back,
+    # then bring the user's own back on top.
+    freed = []
+    if pack:
+        try:
+            freed = ui_skin.release_pack(pack, names)
+        except Exception:
+            freed = []
+    config = getattr(ctx, "config", None)
+    if config is not None:
+        try:
+            ui_skin.apply(dict(getattr(config, "ui", {}) or {}))
+        except Exception:
+            pass
+    line = L(f"\n  🎨 unworn: {', '.join(names)}" if names else "\n  🎨 pack removed",
+             f"\n  🎨 снят: {', '.join(names)}" if names else "\n  🎨 пак удалён")
+    if freed:
+        line += L(f" (slots back: {', '.join(freed)})",
+                  f" (слоты вернулись: {', '.join(freed)})")
     if wearing in names:
         skins.switch("")
         line += L(" — back to BeeCode's own interface",
                   " — вернулись к штатному интерфейсу")
-    config = getattr(ctx, "config", None)
     if config is not None and hasattr(config, "skin") \
             and str(getattr(config, "skin", "") or "") in names:
         config.skin = ""
@@ -2273,7 +2308,7 @@ def _cmd_plugin(ctx, args):
             manager.uninstall(target)
         except Exception as e:
             return _err(L(f"could not remove “{target}”: {e}", f"не удалось удалить «{target}»: {e}"))
-        unworn = _unwear_removed_skins(ctx, doomed)
+        unworn = _unwear_removed_skins(ctx, target, doomed)
         tail = _reload_extensions(ctx)
         return _ok(L(f"🗑 removed {target}.{unworn}{tail}", f"🗑 удалён {target}.{unworn}{tail}"))
 

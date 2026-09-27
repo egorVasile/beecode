@@ -10,6 +10,7 @@ in agent.pending and delivered along with the agent's next model call.
 from __future__ import annotations
 
 import asyncio
+import sys
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
@@ -609,6 +610,21 @@ async def _ask_route(agent, error):
 async def run_repl(agent, config, session=None):
     from beeagent.core import updater
     from beeagent.core.session import Session
+
+    try:
+        has_tty = sys.stdin.isatty() and sys.stdout.isatty()
+    except Exception:
+        has_tty = False
+    if not has_tty:
+        # Piped stdin / captured stdout: prompt_toolkit would die below with
+        # NoConsoleScreenBufferError. Say what runs headless instead.
+        from beeagent.i18n import L
+
+        console.print(L("the interactive prompt needs a real terminal — pipe a "
+                        "single request instead: beecode -p \"...\"",
+                        "интерактиву нужен настоящий терминал — одиночный запрос "
+                        "трубой: beecode -p \"...\""))
+        return
 
     ctx = ReplContext(agent=agent, config=config, session=session or Session())
     updater.start(getattr(agent, "workdir", ".") or ".")

@@ -46,8 +46,26 @@ _DEFAULTS = {"frame": "rounded", "banner": "shimmer", "spinner": "honey", "strea
 
 _active = dict(_DEFAULTS)
 
-# slot -> (current value, whether it came from the user rather than a plugin)
+# slot -> where the current choice came from: "user" (/skin), "config"
+# (beeagent.json), "skin:<pack>" (wearing a pack's look right now) or
+# "plugin:<pack>" (a pack's background offer at load).
+#
+# Rank decides who may overrule whom. A background offer must never silently
+# undo an explicit choice: installed packs re-offer on every launch, and
+# without this the user's own /skin picks lost to them on every restart —
+# which is exactly how a removed look kept coming back. Among plugins the
+# last one still wins, as before; an explicit act always wins ties.
 _sources: dict[str, str] = {}
+
+
+def _rank(source: str) -> int:
+    if source in ("user", "config"):
+        return 3
+    if source.startswith("skin:"):
+        return 3
+    if source.startswith("plugin:"):
+        return 1
+    return 0
 
 
 def variants(slot: str) -> list[str]:
@@ -61,12 +79,50 @@ def register(slot: str, name: str, value=object()) -> None:
 
 
 def choose(slot: str, name: str, source: str = "user") -> bool:
-    """Choose a variant. False when that name is not registered."""
+    """Choose a variant. False when that name is not registered — or when a
+    background plugin offer loses to an explicit choice already in force."""
     if name not in _VARIANTS.get(slot, {}):
+        return False
+    if _rank(source) < _rank(_sources.get(slot, "")):
         return False
     _active[slot] = name
     _sources[slot] = source
     return True
+
+
+def unregister(slot: str, name: str) -> bool:
+    """Forget a variant a removed pack registered. True when it existed.
+
+    A choice pointing at it falls back to the default rather than dangling:
+    the variant object is gone with the pack, and a name with nothing behind
+    it would render the stock drawing while claiming the pack's look.
+    """
+    variants = _VARIANTS.get(slot)
+    if variants is None or name not in variants:
+        return False
+    del variants[name]
+    if _active.get(slot) == name:
+        _active[slot] = _DEFAULTS.get(slot, "")
+        _sources.pop(slot, None)
+    return True
+
+
+def release_pack(pack: str, skins=()) -> list:
+    """Forget everything a removed pack decided: its slot choices fall back.
+
+    Returns the slot names that changed. Callers re-apply the user's own
+    config afterwards, so a slot the user chose himself comes back as his,
+    not as the default.
+    """
+    names = set(skins)
+    changed = []
+    for slot, source in list(_sources.items()):
+        if source == f"plugin:{pack}" or \
+                (source.startswith("skin:") and source[5:] in names):
+            _active[slot] = _DEFAULTS.get(slot, "")
+            del _sources[slot]
+            changed.append(slot)
+    return sorted(changed)
 
 
 def get(slot: str) -> str:

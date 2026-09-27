@@ -66,14 +66,44 @@ def save_choice(choice: dict) -> None:
         pass
 
 
+def _read_answer(prompt: str, timeout: float = 120.0) -> str | None:
+    """One input line, or None when nobody answers in time.
+
+    A first launch that blocks forever on a question is a hang, not a prompt:
+    a terminal left unattended (or a pty that looks like a tty but has nobody
+    behind it) gets the default instead. The reader thread is daemonic, so a
+    late answer after the timeout lands nowhere.
+    """
+    import threading
+
+    box: dict = {}
+
+    def _read() -> None:
+        try:
+            box["answer"] = input(prompt)
+        except Exception as exc:
+            box["error"] = exc
+
+    worker = threading.Thread(target=_read, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        return None
+    if "error" in box:
+        raise box["error"]
+    return box.get("answer", "")
+
+
 def ask_once() -> None:
     """The single question, asked once, answered by tapping Enter.
 
     Skipped when there is nobody to tap it (piped stdin, one-shot runs, tests)
-    or when `BEECODE_DISPLAY_ASK=0`. Enter/yes adapts the logo to the screen;
-    anything else keeps the full Windows logo and never checks again.
+    or when `BEECODE_DISPLAY_ASK=0` (whitespace tolerated — `set FOO=0 ` in
+    cmd.exe keeps the space). Enter/yes adapts the logo to the screen;
+    anything else keeps the full Windows logo and never checks again. Silence
+    past two minutes counts as Enter.
     """
-    if os.environ.get("BEECODE_DISPLAY_ASK") == "0":
+    if os.environ.get("BEECODE_DISPLAY_ASK", "").strip() == "0":
         return
     if load_choice().get("asked"):
         return
@@ -86,13 +116,18 @@ def ask_once() -> None:
     from beeagent.i18n import L
 
     try:
-        answer = input(L("📱 Compact logo and calmer animations for a phone screen? [Y/n] ",
-                         "📱 Сжать логотип и успокоить анимации для экрана телефона? [Y/n] ")
-                       ).strip().lower()
+        answer = _read_answer(L("Compact logo and calmer animations for a phone "
+                                "screen? [Y/n] ",
+                                "Сжать логотип и успокоить анимации для экрана "
+                                "телефона? [Y/n] "))
     except (EOFError, OSError, KeyboardInterrupt):
         return
+    if answer is None:
+        # Nobody home: the phone-friendly default, asked never again.
+        save_choice({"asked": True, "adaptive": is_termux()})
+        return
     save_choice({"asked": True,
-                 "adaptive": answer in ("", "y", "yes", "д", "да", "yep")})
+                 "adaptive": answer.strip().lower() in ("", "y", "yes", "д", "да", "yep")})
 
 
 _cached: dict = {}

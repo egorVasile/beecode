@@ -391,3 +391,201 @@ def on_status(default):
     return LANG + ":" + WORD
 """, name="russian")
     assert skins.status_text("x") == "ru:думаю", skins.status_text("x")
+
+
+# ------------------------------------------------- welcome/error/tool lines ---
+
+def test_a_claimed_welcome_error_and_tool_lines_answer(isolated):
+    use("""
+SURFACES = ("welcome", "error", "tool_start", "tool_end")
+
+
+def on_welcome(default):
+    return "W:" + str(default)
+
+
+def on_error(default):
+    return "E!"
+
+
+def on_tool_start(summary, tool):
+    return "S:" + tool + ":" + summary
+
+
+def on_tool_end(summary, tool, error):
+    return "D:" + tool + ("!" if error else ".")
+""")
+    assert skins.welcome_text("hi") == "W:hi"
+    assert skins.error_text("bad") == "E!"
+    assert skins.tool_start_text("read a", "read") == "S:read:read a"
+    assert skins.tool_end_text("read done", "read", False) == "D:read."
+    assert skins.tool_end_text("read bad", "read", True) == "D:read!"
+
+
+def test_unclaimed_welcome_error_and_tool_lines_answer_none(isolated):
+    use("""
+def on_status(default):
+    return "nope"
+""")
+    assert skins.welcome_text() is None
+    assert skins.error_text() is None
+    assert skins.tool_start_text("read a", "read") is None
+    assert skins.tool_end_text("read done", "read", False) is None
+
+
+def test_a_wrong_typed_tool_line_loses_only_that_surface(isolated):
+    use("""
+SURFACES = ("tool_start", "tool_end")
+
+
+def on_tool_start(summary, tool):
+    return 42
+
+
+def on_tool_end(summary, tool, error):
+    return "ok"
+""")
+    assert skins.tool_start_text("read a", "read") is None
+    assert skins.owns("tool_start") is False
+    assert skins.tool_end_text("read done", "read", False) == "ok"
+    assert any("tool_start" in line for line in isolated), isolated
+
+
+def test_the_classic_tool_lines_belong_to_a_claiming_skin(isolated, monkeypatch, capsys):
+    import io
+
+    from rich.console import Console
+
+    from beeagent.ui import components as comp
+
+    use("""
+SURFACES = ("tool_start", "tool_end")
+
+
+def on_tool_start(summary, tool):
+    return "[#7cb342]go[/] " + tool
+
+
+def on_tool_end(summary, tool, error):
+    return ""
+""")
+    buf = io.StringIO()
+    monkeypatch.setattr(comp, "console", Console(file=buf, width=100))
+    comp.render_tool_start("read", {"path": "a"})
+    comp.render_tool_end("read", {"path": "a"}, "hi", False)
+    out = buf.getvalue()
+    assert "go read" in out, out
+    assert "✅" not in out and "❌" not in out, out
+
+
+def test_the_classic_tool_lines_without_a_skin_are_unchanged(isolated, monkeypatch, capsys):
+    import io
+
+    from rich.console import Console
+
+    from beeagent.ui import components as comp
+
+    use("""
+def on_status(default):
+    return "nope"
+""")
+    buf = io.StringIO()
+    monkeypatch.setattr(comp, "console", Console(file=buf, width=100))
+    comp.render_tool_start("read", {"path": "a"})
+    comp.render_tool_end("read", {"path": "a"}, "hi", True)
+    out = buf.getvalue()
+    assert "read" in out and "a" in out, out
+    assert "❌" in out, out
+
+
+def test_the_classic_welcome_and_error_belong_to_a_claiming_skin(
+        isolated, monkeypatch):
+    import io
+
+    from rich.console import Console
+
+    from beeagent.ui import components as comp
+
+    use("""
+SURFACES = ("welcome", "error")
+
+
+def on_welcome(default):
+    return "WELCOME"
+
+
+def on_error(default):
+    return ""
+""")
+    buf = io.StringIO()
+    monkeypatch.setattr(comp, "console", Console(file=buf, width=100))
+    comp.print_welcome()
+    comp.render_error("boom")
+    out = buf.getvalue()
+    assert "WELCOME" in out, out
+    assert "Type a request" not in out, out
+    assert "boom" not in out, out
+
+
+def test_the_tui_tool_and_error_lines_belong_to_a_claiming_skin(isolated):
+    import asyncio
+
+    from beeagent.config.schema import BeeConfig
+    from beeagent.ui.tui import BeeCodeApp
+
+    use("""
+SURFACES = ("tool_start", "tool_end", "error")
+
+
+def on_tool_start(summary, tool):
+    return "TS:" + tool
+
+
+def on_tool_end(summary, tool, error):
+    return "TE:" + tool
+
+
+def on_error(default):
+    return "ER"
+""")
+
+    async def go():
+        app = BeeCodeApp(config=BeeConfig())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._on_agent_event("tool_start", {"tool": "read", "args": {"path": "a"}})
+            app._on_agent_event("tool_end", {"tool": "read", "output": "hi",
+                                             "error": False})
+            app._on_agent_event("error", {"message": "boom"})
+            await pilot.pause()
+            text = "\n".join(line.text for line in app.chatlog.lines)
+            assert "TS:read" in text, text
+            assert "TE:read" in text, text
+            assert "ER" in text, text
+            assert "boom" not in text, text
+
+    asyncio.run(go())
+
+
+def test_the_tui_welcome_line_belongs_to_a_claiming_skin(isolated):
+    import asyncio
+
+    from beeagent.config.schema import BeeConfig
+    from beeagent.ui.tui import BeeCodeApp
+
+    use("""
+SURFACES = ("welcome",)
+
+
+def on_welcome(default):
+    return "SHIP WELCOME"
+""")
+
+    async def go():
+        app = BeeCodeApp(config=BeeConfig())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            text = "\n".join(line.text for line in app.chatlog.lines)
+            assert "SHIP WELCOME" in text, text
+
+    asyncio.run(go())

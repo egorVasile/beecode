@@ -193,7 +193,7 @@ def banner_static() -> Text:
 # The phone logo: the same word at xscale 1 — 35 cells wide, no animation, no
 # screen clear. Chosen when the one-time question was answered "yes" and this
 # launch runs on Termux (see ui/platform.py).
-COMPACT_ROWS = _pixel_text("BEECODE", xscale=1, sep="")
+COMPACT_ROWS = _pixel_text("BEECODE", xscale=1, sep=" ")
 COMPACT_WIDTH = max(len(r) for r in COMPACT_ROWS)
 
 
@@ -339,9 +339,19 @@ def print_banner(animate: Optional[bool] = None):
     console.print()
 
 def print_welcome():
+    try:
+        from beeagent.core import skins
+
+        mine = skins.welcome_text()
+    except Exception:
+        mine = None
+    if mine == "":
+        return                        # the skin wants no welcome panel at all
     console.print()
     panel = Panel(
-        Align.center(Text("Type a request, or '/' for commands — 'quit' to exit", style="dim")),
+        Align.center(markup_text(mine) if mine is not None else
+                     Text("Type a request, or '/' for commands — 'quit' to exit",
+                          style="dim")),
         **skin.frame_kwargs(BORDER, 'prompt'),
         padding=(0, 2),
     )
@@ -350,10 +360,20 @@ def print_welcome():
 
 def render_tool_start(tool_name: str, tool_args: dict):
     tool_name = strip_terminal(tool_name or "")
-    args_str = ", ".join(f"{k}={v!r}" for k, v in tool_args.items())
+    args = tool_args if isinstance(tool_args, dict) else {}
+    args_str = ", ".join(f"{k}={v!r}" for k, v in args.items())
     if len(args_str) > 60:
         args_str = args_str[:57] + "..."
+    try:
+        from beeagent.core import skins
 
+        mine = skins.tool_start_text(f"{tool_name} {args_str}".strip(), tool_name)
+    except Exception:
+        mine = None
+    if mine is not None:
+        if mine:
+            console.print(markup_text(mine))
+        return
     text = Text()
     text.append("  ⏳ ", style="bold")
     text.append(f"{tool_name}", style="bold #ffcc00")
@@ -361,6 +381,21 @@ def render_tool_start(tool_name: str, tool_args: dict):
     console.print(text)
 
 def render_tool_end(tool_name: str, tool_args: dict, output: str, error: bool):
+    # A skin holding `tool_end` owns this whole block — including the diagram
+    # picture and the error tail below, which are display, not evidence: the
+    # model's own copy travels separately. "" hides the block, None keeps ours.
+    try:
+        from beeagent.core import skins
+
+        mine = skins.tool_end_text(
+            f"{tool_name or '?'} {'failed' if error else 'done'}",
+            str(tool_name or ""), bool(error))
+    except Exception:
+        mine = None
+    if mine is not None:
+        if mine:
+            console.print(markup_text(mine))
+        return
     # Paths, queries and output are model- or file-authored: they are printed as
     # Text, never interpolated into markup that a stray `[/]` could break.
     output = strip_terminal(output or "")
@@ -493,9 +528,17 @@ def render_response(text: str):
     console.print()
 
 def render_error(message: str):
+    try:
+        from beeagent.core import skins
+
+        mine = skins.error_text()
+    except Exception:
+        mine = None
+    if mine == "":
+        return                        # the skin takes the blame silently
     console.print()
     panel = Panel(
-        Text(message, style="red"),
+        markup_text(mine) if mine is not None else Text(message, style="red"),
         **skin.frame_kwargs("bold red", 'error'),
         title="[bold red]Error[/]",
         title_align="center",
