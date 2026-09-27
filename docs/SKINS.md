@@ -835,7 +835,7 @@ draw the reply itself — outline, lists and all — in both interfaces.
 
 ## 8. Reference packs
 
-Five shipped packs are the other half of this document; read them before asking why
+Six shipped packs are the other half of this document; read them before asking why
 something is missing here.
 
 | pack | what it teaches |
@@ -846,6 +846,7 @@ something is missing here.
 | `skin-hud` | **surfaces**: claiming four lines, answering for them, drawing a timed strip, and asking only for what the screen can hold |
 | `skin-shimmer` | **the answer**: a ramp-coloured outline, list markers and headings that walk it, a railed streaming line, heavy borders on every panel, and a two-row HUD |
 | `skin-prism` | **the whole screen**: seven surfaces at once — a crest that loops across the logo under a palette that rotates on its own slower clock, border colours that sit at different points of one cycle per panel, an answer that keeps every character the model wrote, and a two-row HUD |
+| `skin-claude` | **the chrome**: coral pixel wordmark, per-role coral borders, crab welcome, and `●` tool lines — nine surfaces, no animation, the model's answer untouched |
 | `skin-hive` / `skin-work` / `skin-terminal` | legacy slot packs: colours and callables, no `on_frame` at all |
 | `plain` | frameless interface through the slots |
 
