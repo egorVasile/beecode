@@ -5,9 +5,11 @@ Two things used to make that unsafe: the bytes shown could be the wrong bytes
 of the project), and one enormous line came back whole, which is not an excerpt
 of a file but the file.
 """
+import os
+
 from beeagent.i18n import L
 
-from ._path_policy import guard
+from ._path_policy import guard, is_inside
 from ._seen import remember, stamp_of
 from .base import BaseTool, ToolResult, read_text_preserving
 
@@ -35,6 +37,9 @@ class ReadTool(BaseTool):
     # cut and the model is told exactly what it did not see.
     MAX_LINE_CHARS = 2000
     MAX_OUTPUT_CHARS = 200_000
+    # Input cap: the output is bounded, but the read was not — a gigabyte log
+    # was loaded whole into memory before a single line was cut.
+    MAX_INPUT_BYTES = 10_000_000
 
     def execute(self, path: str, offset: int = 0, limit: int = 2000) -> ToolResult:
         try:
@@ -59,6 +64,27 @@ class ReadTool(BaseTool):
                     output=f"{path} is a directory — use list_directory to see its contents",
                     error=True,
                 )
+            try:
+                if target.stat().st_size > self.MAX_INPUT_BYTES:
+                    return ToolResult(
+                        output=L(f"{path} is larger than "
+                                 f"{self.MAX_INPUT_BYTES // 1_000_000} MB — too big to "
+                                 f"read whole; use bash or grep to look inside it",
+                                 f"{path} больше {self.MAX_INPUT_BYTES // 1_000_000} МБ — "
+                                 f"целиком не читаем; смотри внутрь через bash или grep"),
+                        error=True)
+            except OSError:
+                pass
+            # Backstop for the check-to-open gap: the path was guarded, then a
+            # swap to a symlink (or a rename outside) redirects the open. The
+            # writer has the same backstop in reject_symlink_target.
+            if os.path.islink(target) or not is_inside(target.resolve()):
+                return ToolResult(
+                    output=L(f"{path} changed into a link outside the working "
+                             f"directory while it was being read — refusing",
+                             f"{path} во время чтения стал ссылкой наружу рабочей "
+                             f"папки — отказываюсь"),
+                    error=True, metadata={"refused": "outside-working-directory"})
             # The stamp is taken BEFORE the bytes are read: remembering the state
             # measured afterwards is how an edit raced a save that landed while we
             # were reading and still reported "Replaced".

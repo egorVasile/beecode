@@ -75,11 +75,28 @@ class Message:
             d["tool_result"] = self.tool_result
         return d
 
+def _safe_sid(session_id: str) -> str:
+    """A session id that cannot escape the sessions directory.
+
+    `../../evil` and absolute ids used to normalise outside `.beeagent/sessions`
+    on save/load. A separator, a dot-dot or a drive prefix is refused loudly
+    rather than scrubbed: silent scrubbing turns two different ids into one
+    file. The rest of the alphabet is kept verbatim.
+    """
+    text = session_id or ""
+    if (not text or text in (".", "..") or len(text) > 128
+            or re.search(r"[\\/]|\.\.|^[A-Za-z]:", text)):
+        raise ValueError(f"bad session id {session_id!r}")
+    if re.search(r"[^A-Za-z0-9._-]", text):
+        raise ValueError(f"bad session id {session_id!r}")
+    return text
+
+
 class Session:
     def __init__(self, session_id: str = None):
         # Seconds are not unique: two sessions started in the same second share an
         # id, and the second save quietly overwrites the first transcript.
-        self.session_id = session_id or (
+        self.session_id = _safe_sid(session_id) if session_id else (
             datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(3))
         self.messages: list[Message] = []
         self.created_at = datetime.now().isoformat()
@@ -165,18 +182,27 @@ class Session:
 
     @classmethod
     def load(cls, session_id: str, workdir: str = ".") -> "Session":
-        path = Path(workdir) / ".beeagent" / "sessions" / f"{session_id}.json"
+        # A truncated file used to die with a bare KeyError; a foreign id with a
+        # write outside the sessions dir. Neither resumes anything.
+        safe = _safe_sid(session_id)
+        path = Path(workdir) / ".beeagent" / "sessions" / f"{safe}.json"
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
             raise ValueError(f"session {session_id} is unreadable ({e.__class__.__name__})") from e
-        session = cls(session_id=data["id"])
-        session.created_at = data["created_at"]
+        if not isinstance(data, dict) or not isinstance(data.get("messages"), list):
+            raise ValueError(f"session {session_id} is not a session file")
+        session = cls(session_id=str(data.get("id") or safe))
+        if session.session_id != safe:
+            raise ValueError(f"session {session_id} names a different id")
+        session.created_at = str(data.get("created_at") or "")
         for m in data["messages"]:
+            if not isinstance(m, dict):
+                raise ValueError(f"session {session_id} has a broken message")
             session.messages.append(Message(
-                role=m["role"],
-                content=m["content"],
-                tool_calls=m.get("tool_calls", []),
+                role=str(m.get("role") or "user"),
+                content=str(m.get("content") or ""),
+                tool_calls=m.get("tool_calls", []) if isinstance(m.get("tool_calls", []), list) else [],
                 tool_result=m.get("tool_result"),
             ))
         return session

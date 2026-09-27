@@ -11,9 +11,10 @@ Streaming yields (kind, text) tuples:
   ("reasoning", str)  -- thinking-block tokens (model-dependent)
 """
 from typing import AsyncIterator
+import asyncio
 import inspect
 
-from .base import BaseProvider
+from .base import BaseProvider, ProviderStreamError, default_idle_timeout
 
 
 # Keyless providers, fastest and largest-prompt first. Measured 2026-09-21
@@ -224,6 +225,14 @@ async def _await_or_keep(response):
     return await response if inspect.isawaitable(response) else response
 
 
+async def _await_or_keep_bounded(created, timeout: float):
+    """_await_or_keep with a ceiling: a dead keyless endpoint used to hold the
+    turn open forever, because nothing on this path had a timeout at all."""
+    if inspect.isawaitable(created):
+        return await asyncio.wait_for(created, timeout)
+    return created
+
+
 class G4fProvider(BaseProvider):
     name = "g4f"
     # Every id here answered through the pinned path in one measured request
@@ -360,9 +369,21 @@ class G4fProvider(BaseProvider):
         - merge consecutive user messages to keep strict alternation
         """
         sanitized: list[dict] = []
-        for msg in messages:
+        for msg in messages or []:
+            # A torn transcript row (None, a string) used to raise AttributeError
+            # out of every g4f call instead of being skipped.
+            if not isinstance(msg, dict):
+                continue
             role = msg.get("role", "user")
             content = msg.get("content") or ""
+            # A torn row's int/list/dict content used to die on .strip() with
+            # AttributeError. Multimodal lists keep their text part.
+            if isinstance(content, list):
+                content = " ".join(
+                    str(p.get("text")) for p in content
+                    if isinstance(p, dict) and p.get("text")) or ""
+            elif not isinstance(content, str):
+                content = str(content) if content is not None else ""
 
             if role == "system":
                 sanitized.append({"role": "system", "content": content})
@@ -404,15 +425,19 @@ class G4fProvider(BaseProvider):
         # this model" on the face of a product whose whole promise is no sign-in.
         failed: list[str] = []
 
+        # No hang-forever: the keyless path had no timeout at all, and a dead
+        # endpoint held the turn open indefinitely.
+        idle = default_idle_timeout()
         for cls in provider_classes:
             name = getattr(cls, "__name__", "auto")
             client = AsyncClient(provider=cls)
             try:
-                response = await _await_or_keep(client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    stream=stream,
-                ))
+                response = await _await_or_keep_bounded(
+                    client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        stream=stream,
+                    ), idle)
                 if stream:
                     parts = []
                     async for chunk in response:
@@ -454,11 +479,11 @@ class G4fProvider(BaseProvider):
             # the rate limit that actually happened.
             got_any = False
             try:
-                stream = await _await_or_keep(client.chat.completions.create(
+                stream = await _await_or_keep_bounded(client.chat.completions.create(
                     model=model,
                     messages=messages,
                     stream=True,
-                ))
+                ), default_idle_timeout())
                 got_any = False
                 async for chunk in stream:
                     if not chunk.choices:
@@ -470,6 +495,11 @@ class G4fProvider(BaseProvider):
                         yield ("content", content)
                     reasoning = _reasoning_text(delta)
                     if reasoning:
+                        # Reasoning counts as stream text (same as base.py's
+                        # reader): a reasoning-only stream already on screen
+                        # followed by "empty stream" used to glue a second
+                        # model's answer behind the first one's thinking.
+                        got_any = True
                         yield ("reasoning", reasoning)
                 if got_any:
                     return
@@ -486,5 +516,7 @@ class G4fProvider(BaseProvider):
                 # the real cause (rate limit, dead endpoint) went unsaid.
                 last_error = f"{getattr(cls, '__name__', 'auto')}: {e}"
 
-        raise RuntimeError(f"g4f streamed nothing for '{model}': {last_error}"
-                           f"{_retry_hint(model, str(last_error))}")
+        # ProviderStreamError, not RuntimeError: the base contract promises it,
+        # and retry-handling callers only catch that type.
+        raise ProviderStreamError(f"g4f streamed nothing for '{model}': {last_error}"
+                                  f"{_retry_hint(model, str(last_error))}")

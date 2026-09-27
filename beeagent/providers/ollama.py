@@ -22,7 +22,7 @@ class OllamaProvider(BaseProvider):
 
     def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3",
                  idle_timeout: float | None = None):
-        self.base_url = base_url.rstrip("/")
+        self.base_url = (base_url or "http://localhost:11434").rstrip("/")
         self.default_model = model
         self.models = [model]
         # A local model on a phone answers slowly; the budget the agent uses to
@@ -35,6 +35,33 @@ class OllamaProvider(BaseProvider):
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=self._timeout())
+
+    def discover_models(self) -> list[str]:
+        """The daemon's own catalogue, not the one model it was built with.
+
+        A daemon holding N models used to show as one: the picker offered the
+        default id and the rest were invisible. Best-effort — a daemon that
+        does not answer leaves the default list alone.
+        """
+        import json as _json
+
+        try:
+            with httpx.Client(
+                    timeout=httpx.Timeout(15.0, connect=CONNECT_TIMEOUT)) as client:
+                response = client.get(f"{self.base_url}/api/tags")
+        except httpx.HTTPError:
+            return list(self.models)
+        if response.status_code != 200:
+            return list(self.models)
+        try:
+            body = _json.loads(response.text or "{}")
+        except ValueError:
+            return list(self.models)
+        found = [m.get("name") for m in body.get("models") or []
+                 if isinstance(m, dict) and m.get("name")]
+        if found:
+            self.models = [str(n) for n in found]
+        return list(self.models)
 
     async def chat(self, messages: list[dict], model: str = "", stream: bool = False) -> str:
         model = model or self.default_model

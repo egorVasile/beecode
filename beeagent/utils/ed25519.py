@@ -119,17 +119,25 @@ def sign(seed: bytes, message: bytes) -> bytes:
 
 def verify(signature: bytes, message: bytes, public: bytes) -> bool:
     """True only for a 64-byte signature from a real key over this exact message."""
+    # Untrusted network bytes arrive in any shape: non-bytes must be False,
+    # not a TypeError out of len().
+    if not isinstance(signature, (bytes, bytearray)) or \
+            not isinstance(public, (bytes, bytearray)) or \
+            not isinstance(message, (bytes, bytearray)):
+        return False
     if len(signature) != 64 or len(public) != 32:
         return False
     try:
-        point_r = _decode(signature[:32])
-        point_a = _decode(public)
-        s = int.from_bytes(signature[32:], "little")
+        point_r = _decode(bytes(signature[:32]))
+        point_a = _decode(bytes(public))
+        s = int.from_bytes(bytes(signature[32:]), "little")
+        # RFC 8032 demands s < l. The old bound (2**255-1) accepted s+l, which
+        # verifies identically — a malleated signature that must not verify.
+        if s >= l:
+            return False
         x_check, y_check, z_check, t_check = _scalarmult(BASEPOINT, s)
-        combined = _edwards(point_r, _scalarmult(point_a, _hint(signature[:32] + public + message)))
+        combined = _edwards(point_r, _scalarmult(point_a, _hint(bytes(signature[:32]) + bytes(public) + bytes(message))))
         x2, y2, z2, _t2 = combined
     except (ValueError, IndexError):
-        return False
-    if s >= 2 ** 255 - 1:          # the scalar must be reduced, or it is malleable
         return False
     return (x_check * z2 - x2 * z_check) % q == 0 and (y_check * z2 - y2 * z_check) % q == 0

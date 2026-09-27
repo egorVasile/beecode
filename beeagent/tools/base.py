@@ -81,12 +81,18 @@ def write_text_preserving(path, text: str) -> int:
     Raises OSError for a symlinked target (see `reject_symlink_target`) and for a
     short write; the target keeps its old bytes in both cases.
     """
+    import tempfile
+
     target = str(path)
-    tmp = target + ".beecode-tmp"
     # Encode before anything is created. Text mode writes characters, so a lone
     # surrogate used to fail halfway and leave half a file on disk — the very
     # truncate-before-validate this function exists to avoid.
     payload = text.encode("utf-8")
+    parent = os.path.dirname(os.path.abspath(target)) or "."
+    # Unique temp: a predictable "<target>.beecode-tmp" let a pre-created
+    # symlink redirect the write into an arbitrary file.
+    descriptor, tmp = tempfile.mkstemp(dir=parent, prefix=".beecode-tmp-")
+    os.close(descriptor)
     try:
         reject_symlink_target(target)
         # Binary mode: no newline translation to fight the caller's `newline=""`,
@@ -118,7 +124,21 @@ class BaseTool:
     aliases: tuple[str, ...] = ()
     # Set for anything a plugin or MCP server provided: its own `is_safe()` is a
     # claim we do not trust, and permissions treat it as unsafe until granted.
-    from_extension: bool = False
+    #
+    # A one-way latch, not a plain flag: the object belongs to the extension's
+    # own code, which used to flip it back to False after registration and walk
+    # past the grant gate (and past readonly) as a "core safe" tool. True sticks;
+    # only the loader ever sets it, and only to True.
+    _from_extension: bool = False
+
+    @property
+    def from_extension(self) -> bool:
+        return bool(self._from_extension)
+
+    @from_extension.setter
+    def from_extension(self, value: bool) -> None:
+        if value:
+            self._from_extension = True
     # Set by the loop before execute(): True when the user granted this tool for
     # the session or runs in `auto`. A tool that can do both a harmless and a
     # config-loading kind of work uses it to pick the harmless one alone.

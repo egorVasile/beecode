@@ -603,11 +603,15 @@ class Agent:
                     nudge_pending = False
 
                 prompt_str = json.dumps(messages)
-                if self.context.trimmed and not trim_reported:
+                shed = list(getattr(self.context, "shed", []) or [])
+                if (self.context.trimmed or shed) and not trim_reported:
                     # Tell the user why the model may look forgetful this turn.
+                    # Shed header parts (skills, permissions) used to vanish
+                    # with trimmed==0 and no event at all.
                     trim_reported = True
                     if callback:
-                        callback("context_trimmed", {"dropped": self.context.trimmed})
+                        callback("context_trimmed", {"dropped": self.context.trimmed,
+                                                     "shed": shed})
                 cached = self.economy.check_cache(prompt_str, model)
                 if cached and not _carries_a_call(self.parser, cached):
                     if callback:

@@ -42,16 +42,26 @@ _HEAVY_CLASSES = (
     (re.compile("[\U00003000-\U0000303F\U00003040-\U000030FF\U00003100-\U0000312F"
                 "\U00003400-\U00004DBF\U00004E00-\U00009FFF\U0000AC00-\U0000D7AF"
                 "\U0000F900-\U0000FAFF]"), 1.6),
+    # Fullwidth forms: measured 2.0 per glyph (U+FF21), the 1.6 above under-read
+    # a run of them twofold at scale.
+    (re.compile("[\U0000FF00-\U0000FFEF]"), 2.0),
+    # Astral CJK (extensions B–I, 20000–323AF): measured 3–4 tokens per glyph
+    # against cl100k_base — the 1.6 above under-read them, so they get their
+    # own class. The upper bound has headroom for the next extension.
+    (re.compile("[\U00020000-\U00032FFF]"), 4.0),
     (re.compile("[\U00002190-\U000021FF\U00002500-\U0000257F\U00002580-\U0000259F"
                 "\U000025A0-\U000025FF\U00002600-\U000027BF\U00002800-\U000028FF]"), 2.0),
 )
 
 # Everything left — Latin letters, digits, punctuation, whitespace, and the
 # scripts that cost about the same as Cyrillic. Real size for English prose is
-# ~0.24 and for Russian ~0.43, so this stays a deliberate over-count: with no
-# tokenizer there is no way to tell a cheap string from an expensive one, and
-# the two directions do not cost the same.
-_DEFAULT_WEIGHT = 0.6
+# ~0.24 and for Russian ~0.43, but a run of one Cyrillic glyph costs 1.0 per
+# character (measured 2026-09-27: 'А'*5000 -> 5000 tokens), and with no
+# tokenizer there is no way to tell cheap prose from an expensive run. The two
+# directions do not cost the same, so the weight is the worst measured price:
+# over-counting trims early, under-counting sends an oversized request the
+# endpoint then trims behind our back.
+_DEFAULT_WEIGHT = 1.0
 
 
 def _encoding(model: str):
@@ -78,6 +88,8 @@ def rough_count(text: str) -> int:
     Public because the tests price it against the real tokenizer, which is the
     only way to show it errs on the safe side without an Android device.
     """
+    if not isinstance(text, str):
+        text = str(text) if text is not None else ""
     left = text
     total = 0.0
     for pattern, weight in _HEAVY_CLASSES:
@@ -111,6 +123,8 @@ def cut_tokens(text: str, tokens: int, model: str = "gpt-4", head: float = 0.7) 
     costs roughly twice the tokens that estimate allows, so a char-based clip
     kept sending messages that were still too big.
     """
+    if not isinstance(text, str):
+        text = str(text) if text is not None else ""
     if tokens <= 0:
         return "", "", count_tokens(text, model)
     try:

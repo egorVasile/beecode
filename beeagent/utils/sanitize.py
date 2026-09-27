@@ -56,10 +56,17 @@ def strip_terminal(text: str) -> str:
 
 
 def _needs_work(text: str) -> bool:
-    return any(char in text for char in ("\r", "\u202a", "\u200b", "\ufeff")) or \
-        bool(_C1.search(text))
+    # The gate must cover everything the cleaners below remove: the old list
+    # missed RLO (\u202e), the other bidi controls, BS/BEL/VT/FF and the rest of
+    # C0, so hostile bytes sailed through strip_terminal() untouched — and
+    # has_terminal_risk() reported them as safe.
+    return any(char in text for char in ("\r", "\u202a", "\ufeff")) or \
+        bool(_C1.search(text)) or bool(_BIDI_AND_ZERO_WIDTH.search(text)) or \
+        bool(_OTHER_C0.search(text))
 
 
 def has_terminal_risk(text: str) -> bool:
     """Whether stripping changed anything — used by tests and by /doctor."""
+    if not isinstance(text, str):
+        return False
     return strip_terminal(text) != text

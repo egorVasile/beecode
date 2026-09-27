@@ -151,6 +151,13 @@ class TrustStore:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            # Torn, not absent: set it aside before the next save overwrites
+            # years of answers with an empty file.
+            try:
+                if self.path.exists():
+                    self.path.replace(self.path.with_name(self.path.name + ".torn"))
+            except OSError:
+                pass
             return                      # absent or torn: nobody has agreed yet
         folders = raw.get("folders") if isinstance(raw, dict) else None
         if isinstance(folders, dict):
@@ -168,10 +175,23 @@ class TrustStore:
                 folders.pop(key, None)
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_name(self.path.name + ".tmp")
-            tmp.write_text(json.dumps(self.data, indent=2, ensure_ascii=False),
-                           encoding="utf-8")
-            os.replace(tmp, self.path)
+            # Unique temp: two processes answering at once shared one ".tmp"
+            # and interleaved writes.
+            import tempfile
+            descriptor, tmp_name = tempfile.mkstemp(
+                dir=str(self.path.parent), prefix=self.path.name + ".",
+                suffix=".tmp")
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(self.data, indent=2, ensure_ascii=False))
+                tmp = Path(tmp_name)
+                os.replace(tmp, self.path)
+            finally:
+                try:
+                    if os.path.exists(tmp_name):
+                        os.remove(tmp_name)
+                except OSError:
+                    pass
             if os.name == "posix":
                 try:
                     self.path.chmod(0o600)

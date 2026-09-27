@@ -128,8 +128,13 @@ def _respect_project_trust(config: BeeConfig, workdir) -> BeeConfig:
                 "the permission gate stays at its defaults",
                 "⚠ BeeCode не может определить, доверяешь ли ты этой папке — "
                 "уровень допуска остаётся по умолчанию"))
+        # A trust-layer failure is not a licence to trust the folder: drop the
+        # folder-controlled gate fields exactly as for an untrusted folder.
+        # (The old code built `defaults` and returned `config` untouched.)
         defaults = BeeConfig()
-        defaults.economy = config.economy
+        config.permissions.mode = defaults.permissions.mode
+        config.permissions.allowed = []
+        config.vpn_command = ""
         return config
 
     dropped = []
@@ -188,5 +193,7 @@ def save_config(config: BeeConfig, workdir: str = "."):
                 os.remove(tmp_name)
             except OSError:
                 pass
-    if config.api_keys or any(p.key for p in config.custom_providers):
+    # pool_token is a credential exactly like api_keys; the old condition left
+    # a file holding only pool_token world-readable, even on POSIX.
+    if config.api_keys or config.pool_token or any(p.key for p in config.custom_providers):
         _restrict(config_path)

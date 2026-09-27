@@ -168,7 +168,14 @@ def _adopt(raw: object) -> dict:
         if not isinstance(stored, dict):
             dropped += len(stored) if isinstance(stored, (list, tuple)) else 0
             continue
-        for key, entry in list(stored.items())[:limit]:
+        # Newest by last_seen survive: the old slice kept file order and the
+        # first fix kept oldest-first — both dropped the live rows against the
+        # "oldest out" rule. Evict the stalest, keep the recently seen.
+        def _seen(item) -> float:
+            _key, entry = item
+            return _seconds(entry.get("last_seen")) if isinstance(entry, dict) else 0.0
+        ordered = sorted(stored.items(), key=_seen, reverse=True)
+        for key, entry in ordered[:limit]:
             if not isinstance(entry, dict):
                 dropped += 1
                 continue

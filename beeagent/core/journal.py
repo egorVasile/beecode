@@ -266,12 +266,18 @@ def _snapshot_of(target: str, action: str) -> bytes:
 
 def _write_blob(path: Path, data: bytes) -> None:
     """The snapshot through its own temporary file, so a half blob never exists."""
-    tmp = Path(str(path) + ".part")
+    # Unique temp with the pid in it: two processes undoing at once shared one
+    # ".part" and interleaved blobs.
+    import tempfile
+    tmp_name = ""
     try:
-        with open(tmp, "wb") as handle:
+        descriptor, tmp_name = tempfile.mkstemp(
+            dir=str(path.parent), prefix=path.name + ".", suffix=".part")
+        with os.fdopen(descriptor, "wb") as handle:
             handle.write(data)
             handle.flush()
-        os.replace(str(tmp), str(path))
+        os.replace(tmp_name, str(path))
+        tmp_name = ""
     except OSError as e:
         raise JournalError(L(
             f"the undo journal could not store the previous bytes in {path} "
@@ -279,9 +285,9 @@ def _write_blob(path: Path, data: bytes) -> None:
             f"журнал не смог сохранить прежние байты в {path} "
             f"({e.__class__.__name__}: {e}) — похоже, диск полон"))
     finally:
-        if tmp.exists():
+        if tmp_name and Path(tmp_name).exists():
             try:
-                tmp.unlink()
+                Path(tmp_name).unlink()
             except OSError:
                 pass
 
@@ -611,23 +617,32 @@ def _undo_new(root: Path, workdir, entry: dict, result: dict) -> dict:
 
 def _write_manifest(root: Path, entries_list: list[dict]) -> None:
     """Rewrite the index — after a trim or an undo — through its own temp file."""
+    import tempfile
+
     manifest = root / MANIFEST_NAME
-    tmp = Path(str(manifest) + ".part")
     body = "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries_list)
+    descriptor, tmp_name = tempfile.mkstemp(
+        dir=str(root), prefix=MANIFEST_NAME + ".", suffix=".part")
     try:
-        with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(body)
             handle.flush()
-        os.replace(str(tmp), str(manifest))
+        os.replace(tmp_name, str(manifest))
     except OSError as e:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+        try:
+            if os.path.exists(tmp_name):
+                os.remove(tmp_name)
+        except OSError:
+            pass
         raise JournalError(L(
             f"the undo journal could not rewrite {manifest} ({e.__class__.__name__}: {e})",
             f"журналу не удалось перезаписать {manifest} ({e.__class__.__name__}: {e})"))
+    finally:
+        try:
+            if os.path.exists(tmp_name):
+                os.remove(tmp_name)
+        except OSError:
+            pass
 
 
 def _retire(root: Path, entry: dict) -> None:

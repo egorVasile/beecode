@@ -105,9 +105,28 @@ class PluginManager:
         except (OSError, json.JSONDecodeError):
             return {"installed": {}}
 
+    @staticmethod
+    def _atomic_write(path: Path, text: str) -> None:
+        """State files through a unique temp: a crash mid-write used to leave a
+        torn JSON that the next load swallowed as "nothing installed"."""
+        import tempfile
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, tmp_name = tempfile.mkstemp(dir=str(path.parent),
+                                                prefix=path.name + ".",
+                                                suffix=".tmp")
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            Path(tmp_name).replace(path)
+        finally:
+            try:
+                if os.path.exists(tmp_name):
+                    os.remove(tmp_name)
+            except OSError:
+                pass
+
     def _save_state(self, state: dict) -> None:
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        self.state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        self._atomic_write(self.state_path, json.dumps(state, indent=2))
 
     def installed(self) -> dict[str, dict]:
         return self._state().get("installed", {})
@@ -193,11 +212,34 @@ class PluginManager:
                 continue
             trust.record_install(root, digest, name=item.name, kind="plugin")
 
+    def _plugin_dir(self, name: str) -> Path:
+        """The install dir for `name`, jailed inside plugins_dir.
+
+        A crafted item handed straight to install()/uninstall() bypasses the
+        find_git/market checks: `../../victim` resolved outside and rmtree
+        below deleted it. Names outside the folder alphabet never resolve.
+        """
+        from beeagent.plugins.catalog import install_name_ok
+        if not install_name_ok(name):
+            raise MarketError(L(f"refusing a plugin name that is not a folder name: {name!r}",
+                                f"отказываюсь от имени плагина, которое не имя папки: {name!r}"))
+        dst = self.plugins_dir / name
+        try:
+            here = self.plugins_dir.resolve()
+            there = dst.resolve() if dst.exists() else (here / name)
+        except OSError:
+            raise MarketError(L(f"refusing to resolve {name!r}",
+                                f"отказываюсь резолвить {name!r}"))
+        if there != here / name or here not in there.parents:
+            raise MarketError(L(f"refusing {name!r}: outside the plugins folder",
+                                f"отказываюсь от {name!r}: вне папки плагинов"))
+        return dst
+
     def _install_builtin(self, item: CatalogItem) -> None:
         src = TEMPLATES_DIR / item.source["path"]
         if not src.is_dir():
             raise ValueError(f"builtin template missing: {src}")
-        dst = self.plugins_dir / item.name
+        dst = self._plugin_dir(item.name)
         if dst.exists():
             shutil.rmtree(dst)
         self.plugins_dir.mkdir(parents=True, exist_ok=True)
@@ -214,13 +256,23 @@ class PluginManager:
         self._save_mcp_config(cfg)
 
     def _install_git(self, item: CatalogItem) -> None:
+        from beeagent.plugins.catalog import _git_url_refused, install_name_ok
+
         url = item.source["url"]
-        dst = self.plugins_dir / item.name
+        # A crafted item handed straight to install() bypasses find_git: the
+        # name is the rmtree target below, so validate it here too.
+        if not install_name_ok(item.name):
+            raise MarketError(L(f"refusing to install under {item.name!r}",
+                                f"отказываюсь ставить в {item.name!r}"))
+        if _git_url_refused(url):
+            raise MarketError(L(f"refusing to clone {url!r}",
+                                f"отказываюсь клонировать {url!r}"))
+        dst = self._plugin_dir(item.name)
         if dst.exists():
             shutil.rmtree(dst)
         self.plugins_dir.mkdir(parents=True, exist_ok=True)
         res = subprocess.run(
-            ["git", "clone", "--depth", "1", url, str(dst)],
+            ["git", "clone", "--depth", "1", "--", url, str(dst)],
             capture_output=True, timeout=180,
         )
         if res.returncode != 0:
@@ -275,8 +327,11 @@ class PluginManager:
                 f"sha256 для «{entry.name}» не совпал: индекс обещал {entry.sha256}, "
                 f"по адресу {entry.provenance} лежит {digest} — ничего не записано"))
 
-        dst = self.plugins_dir / entry.name
+        dst = self._plugin_dir(entry.name)
         staging = self.plugins_dir / f"{entry.name}.market-partial"
+        if staging.resolve() != (self.plugins_dir.resolve() / f"{entry.name}.market-partial"):
+            raise MarketError(L(f"refusing staging outside the plugins folder",
+                                f"отказываюсь от стейджинга вне папки плагинов"))
         shutil.rmtree(staging, ignore_errors=True)
         self.plugins_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -304,7 +359,9 @@ class PluginManager:
             cfg.get("servers", {}).pop(name, None)
             self._save_mcp_config(cfg)
         else:
-            dst = self.plugins_dir / name
+            # Jailed like the install paths: a hostile plugins.json entry
+            # ("../../../victim") used to rmtree outside the folder.
+            dst = self._plugin_dir(name)
             if dst.exists():
                 shutil.rmtree(dst)
         self._save_state(state)
@@ -330,10 +387,20 @@ class PluginManager:
                 return found
         return []
 
+    def _marker_names(self) -> list[str]:
+        """Installed names that are safe to resolve: a hostile plugins.json
+        ("../../outside") used to make the loader glob — and execute plugin.py
+        — outside the plugins folder."""
+        from beeagent.plugins.catalog import install_name_ok
+        return [name for name in self.installed()
+                if install_name_ok(name)]
+
     def installed_skill_dirs(self) -> list[Path]:
         """Enabled skill/plugin dirs that contain a SKILL.md."""
         out = []
         for name, entry in self.installed().items():
+            if name not in self._marker_names():
+                continue
             if not entry.get("enabled", True) or entry.get("type") == "mcp":
                 continue
             out.extend(self._find_marker(name, "SKILL.md"))
@@ -343,6 +410,8 @@ class PluginManager:
         """Enabled plugin dirs with an entry-point plugin.py."""
         out = []
         for name, entry in self.installed().items():
+            if name not in self._marker_names():
+                continue
             if not entry.get("enabled", True) or entry.get("type") == "mcp":
                 continue
             out.extend(self._find_marker(name, "plugin.py"))
@@ -357,8 +426,7 @@ class PluginManager:
             return {"servers": {}}
 
     def _save_mcp_config(self, cfg: dict) -> None:
-        self.mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        self.mcp_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        self._atomic_write(self.mcp_path, json.dumps(cfg, indent=2))
 
     def mcp_servers(self) -> dict[str, dict]:
         servers = self._mcp_config().get("servers", {})

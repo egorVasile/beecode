@@ -327,6 +327,8 @@ def render_tool_end(tool_name: str, tool_args: dict, output: str, error: bool):
     # Paths, queries and output are model- or file-authored: they are printed as
     # Text, never interpolated into markup that a stray `[/]` could break.
     output = strip_terminal(output or "")
+    safe_name = str(tool_name or "")
+    args = tool_args if isinstance(tool_args, dict) else {}
     if error:
         icon = "❌"
         color = "red"
@@ -334,46 +336,61 @@ def render_tool_end(tool_name: str, tool_args: dict, output: str, error: bool):
         icon = "✅"
         color = "green"
 
+    def _detail(key: str, cap: int = 0) -> str:
+        value = str(args.get(key, "") or "")
+        return value[:cap] if cap else value
+
     if tool_name == "write" and not error:
-        path = tool_args.get("path", "file")
-        console.print(f"    [bold #7cb342]●[/] [#8fbf6f]created file[/] [dim]{path}[/]")
-        _render_code_preview(tool_args.get("content", ""))
+        console.print(Text.assemble(("    ", ""), ("●", "bold #7cb342"),
+                                    (" created file ", "#8fbf6f"),
+                                    (_detail("path"), "dim")))
+        _render_code_preview(args.get("content", ""))
     elif tool_name == "edit" and not error:
-        path = tool_args.get("path", "file")
-        console.print(f"    [bold #7cb342]●[/] [#8fbf6f]modified[/] [dim]{path}[/]")
+        console.print(Text.assemble(("    ", ""), ("●", "bold #7cb342"),
+                                    (" modified ", "#8fbf6f"),
+                                    (_detail("path"), "dim")))
     elif tool_name == "bash" and not error:
-        cmd = tool_args.get("command", "")[:60]
-        console.print(f"    [bold #7cb342]●[/] [#8fbf6f]executed[/] [dim]{cmd}[/]")
+        console.print(Text.assemble(("    ", ""), ("●", "bold #7cb342"),
+                                    (" executed ", "#8fbf6f"),
+                                    (_detail("command", 60), "dim")))
         if output.strip():
             _render_bash_output(output)
     elif tool_name == "read" and not error:
-        path = tool_args.get("path", "file")
-        console.print(f"    [bold #ffd54f]●[/] [#8fbf6f]read[/] [dim]{path}[/]")
+        console.print(Text.assemble(("    ", ""), ("●", "bold #ffd54f"),
+                                    (" read ", "#8fbf6f"),
+                                    (_detail("path"), "dim")))
     elif tool_name == "grep" and not error:
-        pattern = tool_args.get("pattern", "")
-        console.print(f"    [bold #ffd54f]●[/] [#8fbf6f]searched[/] [dim]{pattern}[/]")
+        console.print(Text.assemble(("    ", ""), ("●", "bold #ffd54f"),
+                                    (" searched ", "#8fbf6f"),
+                                    (_detail("pattern"), "dim")))
     elif tool_name == "glob" and not error:
-        pattern = tool_args.get("pattern", "")
-        console.print(f"    [bold #ffd54f]●[/] [#8fbf6f]found files[/] [dim]{pattern}[/]")
+        console.print(Text.assemble(("    ", ""), ("●", "bold #ffd54f"),
+                                    (" found files ", "#8fbf6f"),
+                                    (_detail("pattern"), "dim")))
     elif tool_name == "git" and not error:
-        cmd = tool_args.get("command", "")[:60]
-        console.print(f"    [bold #ffcc00]●[/] [#c0ca33]git[/] [dim]{cmd}[/]")
+        console.print(Text.assemble(("    ", ""), ("●", "bold #ffcc00"),
+                                    (" git ", "#c0ca33"),
+                                    (_detail("command", 60), "dim")))
     elif tool_name == "web_search" and not error:
-        query = tool_args.get("query", "")[:60]
-        console.print(f"    [bold #7cb342]●[/] [#8fbf6f]searched web[/] [dim]{query}[/]")
+        console.print(Text.assemble(("    ", ""), ("●", "bold #7cb342"),
+                                    (" searched web ", "#8fbf6f"),
+                                    (_detail("query", 60), "dim")))
     elif tool_name == "todo" and not error:
-        action = tool_args.get("action", "")
-        console.print(f"    [bold #ffcc00]●[/] [#ffd54f]todo:[/] [dim]{action}[/]")
+        console.print(Text.assemble(("    ", ""), ("●", "bold #ffcc00"),
+                                    (" todo: ", "#ffd54f"),
+                                    (_detail("action"), "dim")))
     elif tool_name == "diagram" and not error:
         # The picture is the result: the model reads it back from the tool output,
         # and the user should not have to open a file to see what was drawn.
-        console.print("    [bold #7cb342]●[/] [#8fbf6f]diagram[/]")
+        console.print(Text.assemble(("    ", ""), ("●", "bold #7cb342"),
+                                    (" diagram", "#8fbf6f")))
         console.print(Panel(Text(output), **skin.frame_kwargs(BORDER, 'output'), padding=(0, 1)))
     else:
-        console.print(f"    [bold {color}]{icon}[/] [{color}]{tool_name}[/]")
+        console.print(Text.assemble(("    ", ""), (icon, "bold " + color),
+                                    (" ", ""), (safe_name, color)))
 
     if error and output:
-        console.print(f"    [red]{output[:200]}[/]")
+        console.print(Text.assemble(("    ", ""), (output[:200], "red")))
 
 def _render_code_preview(content: str):
     content = strip_terminal(content or "")
@@ -523,9 +540,11 @@ def models_table(models: list[str], provider: str = "g4f") -> Table:
     table.add_column("Provider", style="dim")
     for i, model in enumerate(models, 1):
         measured = windows.measured(model)
-        table.add_row(str(i), model,
-                      ("✔ " if measured else "~ ") + format_window(advertised_window(model)),
-                      provider)
+        # Model ids arrive from endpoints: raw strings let "[/]" raise
+        # MarkupError at render, past every handler try.
+        table.add_row(Text(str(i)), Text(model),
+                      Text(("✔ " if measured else "~ ") + format_window(advertised_window(model))),
+                      Text(provider))
     table.caption = Text(
         L("✔ window measured on this machine · ~ claimed by the provider · requests are capped "
           "at 32k tokens unless you raise max_context_tokens\n"
@@ -550,7 +569,7 @@ def providers_table(providers: list[dict]) -> Table:
     table.add_column("Type", style="dim")
     table.add_column("Description")
     for p in providers:
-        table.add_row(p["name"], p["type"], p["desc"])
+        table.add_row(Text(p["name"]), Text(p["type"]), Text(p["desc"]))
     return table
 
 
@@ -566,7 +585,7 @@ def commands_table(commands: list) -> Table:
     table.add_column("Description")
     table.add_column("Usage", style="dim")
     for c in commands:
-        table.add_row("/" + c.name, c.description, c.usage or "")
+        table.add_row(Text("/" + c.name), Text(c.description), Text(c.usage or ""))
     return table
 
 
@@ -584,9 +603,13 @@ def tools_table(tools: list) -> Table:
     for t in tools:
         # Which column the model can actually reach: it will not call a tool that
         # needs a grant the user has not given, so this is where the user sees why.
-        table.add_row(t.name,
-                      "as is" if t.is_safe() else L("needs /allow", "нужен /allow"),
-                      t.description)
+        try:
+            runs = "as is" if t.is_safe() else L("needs /allow", "нужен /allow")
+        except Exception:
+            runs = L("needs /allow", "нужен /allow")
+        # Descriptions arrive from plugins/MCP: raw strings let "[/]" raise
+        # MarkupError at render, past every handler try.
+        table.add_row(Text(t.name), Text(runs), Text(t.description))
     table.caption = Text(
         L("'as is' runs on its own · 'needs /allow' waits for /allow <tool> · "
           "/permissions readonly stops everything that writes, even 'as is'",

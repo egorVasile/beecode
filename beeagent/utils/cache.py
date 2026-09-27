@@ -18,8 +18,19 @@ class ResponseCache:
         self.ttl_seconds = ttl_seconds
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _text(value) -> str:
+        # Callers pass model output and session rows; None or a non-string used
+        # to die in len() with TypeError instead of a cache miss/store.
+        if isinstance(value, str):
+            return value
+        return str(value) if value is not None else ""
+
     def _key(self, prompt: str, model: str) -> str:
-        data = f"{prompt}|||{model}"
+        # Length-prefixed: "a"+"|||"+"m|||b" and "a|||m"+"|||"+"b" hashed the
+        # same and one prompt read another's answer. Lengths disambiguate.
+        prompt, model = self._text(prompt), self._text(model)
+        data = f"{len(prompt)}\n{prompt}\n{len(model)}\n{model}"
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
     def _path(self, key: str) -> Path:
@@ -48,11 +59,30 @@ class ResponseCache:
         return answer
 
     def store(self, prompt: str, model: str, response: str):
+        # A bytes/dict answer used to die in json.dumps with TypeError instead
+        # of being cached. Text is cached verbatim; anything else as its str().
+        if not isinstance(response, str):
+            try:
+                json.dumps(response)
+            except (TypeError, ValueError):
+                response = str(response)
         path = self._path(self._key(prompt, model))
         payload = {"saved_at": time.time(), "model": model, "response": response}
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, path)
+        # Unique temp: two processes caching the same prompt shared one
+        # ".json.tmp" and interleaved writes.
+        import tempfile
+        descriptor, tmp_name = tempfile.mkstemp(dir=str(self.cache_dir),
+                                                prefix=".cache-", suffix=".tmp")
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False))
+            os.replace(tmp_name, path)
+        finally:
+            try:
+                if os.path.exists(tmp_name):
+                    os.remove(tmp_name)
+            except OSError:
+                pass
         self.prune()
 
     def prune(self, keep: int = 500) -> int:
@@ -68,16 +98,26 @@ class ResponseCache:
         removed = 0
         for candidate in self.cache_dir.glob("*.json"):
             try:
-                entries.append((candidate.stat().st_mtime, candidate))
+                mtime = candidate.stat().st_mtime
             except OSError:
                 continue
-        for stamp, candidate in entries:
-            if now - stamp > self.ttl_seconds:
+            # Expiry is decided by saved_at inside the entry (what get()
+            # enforces), not by mtime: a touch resurrected the expired. mtime
+            # stays as the tie-break below, so equal saved_at evict oldest
+            # first instead of whatever order the directory lists.
+            try:
+                saved_at = float(json.loads(
+                    candidate.read_text(encoding="utf-8")).get("saved_at", 0))
+            except (OSError, ValueError, TypeError, AttributeError):
+                saved_at = 0
+            entries.append((saved_at, mtime, candidate))
+        for saved_at, _mtime, candidate in entries:
+            if now - saved_at > self.ttl_seconds:
                 candidate.unlink(missing_ok=True)
                 removed += 1
         if len(entries) - removed > keep:
-            survivors = sorted((s, c) for s, c in entries if c.exists())
-            for _, candidate in survivors[:len(survivors) - keep]:
+            survivors = sorted(((s, m, c) for s, m, c in entries if c.exists()))
+            for _, _, candidate in survivors[:len(survivors) - keep]:
                 candidate.unlink(missing_ok=True)
                 removed += 1
         return removed

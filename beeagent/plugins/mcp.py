@@ -34,6 +34,11 @@ def _resolve_command(command: str) -> str:
     return command
 
 
+# cmd.exe metacharacters plus quoting-breakers: a `"` in an argument breaks out
+# of CreateProcess quoting, newlines smuggle a second command line.
+_CMD_META = set("&|<>()^%!`\"") | {"\n", "\r", "\x00"}
+
+
 def spawn_argv(command: str, args: list[str]) -> list[str]:
     """Full argv for create_subprocess_exec.
 
@@ -42,7 +47,18 @@ def spawn_argv(command: str, args: list[str]) -> list[str]:
     """
     resolved = _resolve_command(command)
     if Path(resolved).suffix.lower() in (".cmd", ".bat"):
-        comspec = os.environ.get("COMSPEC", "cmd.exe")
+        # cmd.exe re-parses its command line: `&|><^%` in an argument are
+        # command separators/redirections, and COMSPEC from the environment is
+        # a hijackable interpreter path. Both used to reach the shell unquoted.
+        for arg in args:
+            if any(ch in str(arg) for ch in _CMD_META):
+                raise ValueError(
+                    f"refusing an MCP argument {str(arg)[:60]!r}: cmd.exe would "
+                    f"read it as a command, not as text")
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        comspec = str(Path(system_root) / "System32" / "cmd.exe")
+        if not Path(comspec).exists():
+            comspec = "cmd.exe"
         return [comspec, "/c", resolved, *args]
     return [resolved, *args]
 
@@ -230,8 +246,23 @@ class McpManager:
             return {}
 
     def _save_cache(self, cache: dict) -> None:
+        # Atomic like the plugin state: a torn cache used to read as "no
+        # tools" and hide every server until the next connect.
+        import tempfile
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.cache_path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+        descriptor, tmp_name = tempfile.mkstemp(
+            dir=str(self.cache_path.parent),
+            prefix=self.cache_path.name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(cache, indent=2))
+            Path(tmp_name).replace(self.cache_path)
+        finally:
+            try:
+                if os.path.exists(tmp_name):
+                    os.remove(tmp_name)
+            except OSError:
+                pass
 
     def cached_tools(self, server: str) -> list[dict] | None:
         return self._cache().get(server, {}).get("tools")

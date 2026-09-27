@@ -70,7 +70,11 @@ _MESSAGE_FOR = {
 def _reason(status: int, body: object) -> str:
     detail = ""
     if isinstance(body, dict):
-        detail = str(body.get("error") or "")
+        # A gateway in front may answer FastAPI-style; do not drop message/detail.
+        error = body.get("error")
+        if isinstance(error, dict):
+            error = error.get("message") or error.get("code") or ""
+        detail = str(error or body.get("message") or body.get("detail") or "")
     known = _MESSAGE_FOR.get(status)
     if known:
         from beeagent.i18n import L
@@ -109,20 +113,48 @@ def install_key():
 
     from beeagent.utils import ed25519
 
-    override = os.environ.get("BEECODE_POOL_KEY_FILE") or ""
-    path = Path(override) if override else Path.home() / ".beecode" / "pool-key.json"
+    override = (os.environ.get("BEECODE_POOL_KEY_FILE") or "").strip()
+    path = Path(os.path.expanduser(override)) if override \
+        else Path.home() / ".beecode" / "pool-key.json"
     seed = None
     if path.exists():
         try:
             stored = json.loads(path.read_text(encoding="utf-8"))
-            raw = bytes.fromhex(str(stored.get("seed") or ""))
+            # Valid JSON of the wrong shape (list/str/null) used to kill the
+            # whole client with AttributeError instead of regenerating the key.
+            raw = bytes.fromhex(str(stored.get("seed") or "")
+                                if isinstance(stored, dict) else "")
             seed = raw if len(raw) == 32 else None
-        except (OSError, ValueError):
+        except (OSError, ValueError, AttributeError):
             seed = None
+        if seed is not None and os.name == "posix":
+            # A key born under a loose umask stayed 0644: repair on every load.
+            try:
+                path.chmod(0o600)
+            except OSError:
+                pass
     if seed is None:
         seed = secrets.token_bytes(32)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"seed": seed.hex()}), encoding="utf-8")
+        # Atomic write: crash/full disk between truncate and write left a torn
+        # key that the next start then silently replaced (seat lost).
+        import tempfile
+        descriptor, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix="pool-key.",
+                                                suffix=".tmp")
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump({"seed": seed.hex()}, handle)
+            try:
+                os.chmod(tmp_name, 0o600)
+            except OSError:
+                pass          # Windows has no file bits to set
+            os.replace(tmp_name, path)
+        finally:
+            try:
+                if os.path.exists(tmp_name):
+                    os.remove(tmp_name)
+            except OSError:
+                pass
         try:
             path.chmod(0o600)
         except OSError:
@@ -159,14 +191,24 @@ def enroll(url: str, timeout: float = ENROLL_TIMEOUT) -> dict:
     refuses every later request that cannot sign with the key beside it.
     """
     seed, public, device = install_key()
-    endpoint = url.rstrip("/") + "/v1/enroll"
+    endpoint = (url or "").strip().rstrip("/") + "/v1/enroll"
     body = json.dumps({"device": device, "public_key": public}).encode()
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(endpoint, content=body,
-                               headers={"Content-Type": "application/json"})
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(endpoint, content=body,
+                                   headers={"Content-Type": "application/json"})
+    except httpx.HTTPError as e:
+        # The first enroll of the day finds a free instance asleep — say so,
+        # not a raw traceback.
+        raise PoolError(_asleep((url or "").strip(), e)) from e
     if response.status_code != 200:
         raise PoolError(_reason(response.status_code, _safe_json(response)))
-    return _safe_json(response) or {}
+    data = _safe_json(response) or {}
+    # A 200 with an unexpected shape used to become a bare KeyError at the
+    # caller ("token"). Fail here, with the pool's own words when there are any.
+    if not data.get("token"):
+        raise PoolError(_reason(response.status_code, data))
+    return data
 
 
 def pool_status(url: str, token: str, timeout: float = ENROLL_TIMEOUT) -> dict:
@@ -245,8 +287,8 @@ class PoolProvider(BaseProvider):
     list_source = ("the pool", "пул")
 
     def __init__(self, url: str = "", token: str = "", idle_timeout: float | None = None):
-        self.url = (url or "").rstrip("/")
-        self.token = token or ""
+        self.url = (url or "").strip().rstrip("/")
+        self.token = (token or "").strip()
         self.idle_timeout = float(idle_timeout) if idle_timeout else default_idle_timeout()
 
     @property
@@ -326,9 +368,14 @@ class PoolProvider(BaseProvider):
             raise PoolError(_reason(response.status_code, _safe_json(response)))
         body = _safe_json(response) or {}
         choices = body.get("choices") or []
-        if not choices:
+        # Upstream may hand back non-objects; .get on them used to raise
+        # AttributeError out of chat(). Non-objects carry no answer.
+        if not choices or not isinstance(choices[0], dict):
             return ""
-        return str((choices[0].get("message") or {}).get("content") or "")
+        message = choices[0].get("message") or {}
+        if not isinstance(message, dict):
+            return ""
+        return str(message.get("content") or "")
 
     async def chat_stream(self, messages: list[dict], model: str = "") -> AsyncIterator:
         token = self._require()
@@ -434,8 +481,13 @@ class PoolProvider(BaseProvider):
                 reason)
             raise PoolError(reason)
         body = _safe_json(response) or {}
-        found = self.remember_live_models(
-            [item.get("id") for item in body.get("data") or [] if item.get("id")])
+        ids: list[str] = []
+        for item in body.get("data") or []:
+            # A gateway may hand back non-objects; .get on them used to raise
+            # AttributeError past the model-list error handling.
+            if isinstance(item, dict) and item.get("id"):
+                ids.append(str(item["id"]))
+        found = self.remember_live_models(ids)
         if not found:
             # An empty answer is the pool's answer, but it is not a catalogue the
             # picker can show, so the shipped list stays on screen — labelled.

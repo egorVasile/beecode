@@ -26,7 +26,7 @@ class OpenAICompatProvider(BaseProvider):
     def __init__(self, base_url: str, api_key: str = "", model: str = "gpt-4",
                  name: str = "openai_compat", models: list | tuple = (),
                  idle_timeout: float | None = None):
-        self.base_url = base_url.rstrip("/")
+        self.base_url = (base_url or "").rstrip("/")
         self.api_key = api_key
         self.default_model = model
         self.name = name

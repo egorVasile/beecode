@@ -133,7 +133,7 @@ class CraxProvider(BaseProvider):
     def __init__(self, api_key: str = "", base_url: str = BASE_URL,
                  idle_timeout: float | None = None, ask: Optional[Callable] = None):
         self.keys = keys_from(api_key)
-        self.base_url = base_url.rstrip("/")
+        self.base_url = (base_url or BASE_URL).rstrip("/")
         self.idle_timeout = float(idle_timeout) if idle_timeout else default_idle_timeout()
         self.spent: dict[int, float] = {}      # key index -> retry not before
         # The REPL installs this: it is the only place allowed to ask a question.
@@ -153,6 +153,9 @@ class CraxProvider(BaseProvider):
         """
         out = []
         for schema in schemas or []:
+            # A None entry used to raise AttributeError out of the turn.
+            if not isinstance(schema, dict):
+                continue
             text = str(schema.get("description", ""))
             for stop in (". ", "; ", " — "):
                 cut = text.find(stop)
@@ -179,9 +182,13 @@ class CraxProvider(BaseProvider):
         pending: list[str] = []
         counter = 0
         for message in messages:
+            if not isinstance(message, dict):
+                continue
             role = message.get("role", "user")
             content = message.get("content") or ""
             calls = message.get("tool_calls") or []
+            if not isinstance(calls, list):
+                calls = []
             if role == "tool":
                 if pending:
                     call_id = pending.pop(0)
@@ -193,6 +200,7 @@ class CraxProvider(BaseProvider):
                 out.append({"role": "tool", "tool_call_id": call_id, "content": str(content)})
                 continue
             if role == "assistant" and calls:
+                first = calls[0] if isinstance(calls[0], dict) else {}
                 counter += 1
                 call_id = f"call_{counter:04d}"
                 pending.append(call_id)
@@ -202,8 +210,8 @@ class CraxProvider(BaseProvider):
                     "tool_calls": [{
                         "id": call_id, "type": "function",
                         "function": {
-                            "name": str(calls[0].get("tool", "")),
-                            "arguments": json.dumps(calls[0].get("args") or {}, ensure_ascii=False),
+                            "name": str(first.get("tool", "")),
+                            "arguments": json.dumps(first.get("args") or {}, ensure_ascii=False),
                         },
                     }],
                 })
@@ -361,7 +369,14 @@ class CraxProvider(BaseProvider):
             if response.status_code == 200:
                 body = _json_or_empty(response.text)
                 choices = body.get("choices") or []
-                return str((choices[0].get("message") or {}).get("content") or "") if choices else ""
+                # Non-objects from upstream used to raise AttributeError out of
+                # chat() instead of answering "". Non-objects carry no answer.
+                if not choices or not isinstance(choices[0], dict):
+                    return ""
+                message = choices[0].get("message") or {}
+                if not isinstance(message, dict):
+                    return ""
+                return str(message.get("content") or "")
             error = classify(response.status_code, _json_or_empty(response.text),
                              _retry_after(response), response.text)
             await self._handle_limit(index, error)

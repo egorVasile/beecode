@@ -699,7 +699,13 @@ async def run_repl(agent, config, session=None):
                     # not two that disagree about what they cancel.
                     _stop_active_task()
                 if res.output is not None:
-                    console.print(res.output)
+                    # A raw str from a handler is rendered as rich markup: a
+                    # "[/]" from external bytes raised MarkupError here, past
+                    # dispatch's try. Tables/Text pass through untouched.
+                    from rich.text import Text as _Text
+                    out = _Text(res.output) if isinstance(res.output, str) \
+                        else res.output
+                    console.print(out)
                 if res.action == "update":
                     await _run_update()
                 if res.action == "thinking_pager":

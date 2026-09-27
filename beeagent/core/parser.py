@@ -499,6 +499,11 @@ class CommandParser:
         #    tool is named by the tag, so the body is the arguments themselves.
         for match in _TAG_PATTERN.finditer(remaining):
             body = match.group(2).strip()
+            # `<tool_call read>{"path":…}` (tag bracket missing) used to parse
+            # as `{'input': '>{"path":…}'}`: a leading `>` is the tag's own
+            # bracket, never an argument.
+            if body.startswith(">"):
+                body = body[1:].strip()
             tool_name = match.group(1)
             args: dict = {}
             if body[:1] in "{[":

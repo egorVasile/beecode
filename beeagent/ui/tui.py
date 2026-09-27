@@ -419,7 +419,11 @@ class BeeCodeApp(App):
         frames around one answer is what a half-wired door looks like.
         """
         from beeagent.core import skins
+        from beeagent.utils.sanitize import strip_terminal
 
+        # Sanitize before the skin branch too: an answer surface would otherwise
+        # receive raw model bytes, escapes included.
+        text = strip_terminal(text)
         try:
             mine = skins.answer_render(text, True)
         except Exception:
@@ -429,6 +433,8 @@ class BeeCodeApp(App):
             self.chatlog.write(mine)
             return
         self.chatlog.write(Text("🐝 BeeCode", style="bold green"))
+        # The answer is model bytes: escapes reach the emulator through
+        # Markdown untouched (OSC 52 writes the clipboard).
         self.chatlog.write(Markdown(text))
 
     def _repaint_stream(self) -> None:

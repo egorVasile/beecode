@@ -80,8 +80,12 @@ class Catalog:
         """
         if not ("://" in url or url.startswith("git@") or url.endswith(".git")):
             return None
+        if _git_url_refused(url):
+            return None
         name = url.rstrip("/").split("/")[-1].removesuffix(".git")
         if not name or name in ("//", ":"):
+            return None
+        if not install_name_ok(name):
             return None
         return CatalogItem(
             name=name,
@@ -382,6 +386,21 @@ def fetch_market(url: str, token: str = "", timeout: float = MARKET_TIMEOUT) -> 
     return parse_market(body, host=host)
 
 
+class _RedirectRefused(Exception):
+    """A redirect hop refused for SSRF, carried past the network except."""
+
+
+def _ssrf_refused(url: str) -> str:
+    """Why an artifact URL must not be fetched, or "" when it may be.
+
+    The download address comes from someone else's index entry: without this,
+    `http://169.254.169.254/` in the catalogue is a request into the cloud
+    metadata service or the LAN. Reuses the fetch tool's verdict.
+    """
+    from beeagent.tools.web_fetch import refuse_reason
+    return refuse_reason(url)
+
+
 def fetch_bytes(url: str, timeout: float = MARKET_TIMEOUT) -> bytes:
     """The bytes behind an index entry, from the public source it names.
 
@@ -392,10 +411,34 @@ def fetch_bytes(url: str, timeout: float = MARKET_TIMEOUT) -> bytes:
     if not url.startswith(("http://", "https://")):
         raise MarketError(L(f"the index names no download to fetch ({url or 'empty'})",
                             f"в индексе нет адреса для скачивания ({url or 'пусто'})"))
+    refused = _ssrf_refused(url)
+    if refused:
+        raise MarketError(refused)
     httpx = _httpx()
     try:
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            response = client.get(url, headers=market_headers(""))
+        # Manual redirect walk with a check on every hop: follow_redirects=True
+        # fetched whatever the first hop pointed at, including intranet hosts.
+        with httpx.Client(timeout=timeout, follow_redirects=False) as client:
+            hops = 0
+            while True:
+                response = client.get(url, headers=market_headers(""))
+                if response.status_code in (301, 302, 303, 307, 308) and hops < 5:
+                    nxt = response.headers.get("location") or ""
+                    if not nxt:
+                        break
+                    url = nxt if "://" in nxt else str(
+                        httpx.URL(url).join(nxt))
+                    refused = _ssrf_refused(url)
+                    if refused:
+                        # Raise outside the try below: wrapped, the reason
+                        # ("internal address, no request was sent") turned into
+                        # "did not answer (MarketError)".
+                        raise _RedirectRefused(refused)
+                    hops += 1
+                    continue
+                break
+    except _RedirectRefused as e:
+        raise MarketError(str(e)) from None
     except Exception as e:
         raise MarketError(L(
             f"the download at {urlsplit(url).hostname or url} did not answer "
@@ -420,7 +463,9 @@ def _member_name(name: str) -> str:
     """A path from an archive, checked before it reaches a disk.
 
     Zip and tar members are strings a stranger chose: absolute paths and `..` are
-    how an archive escapes the folder it is unpacked into.
+    how an archive escapes the folder it is unpacked into. Windows adds its own
+    spellings — ADS (`file:evil`), device names (`COM1`, `nul.txt`), trailing
+    dots/spaces the filesystem silently strips — so those are refused too.
     """
     text = (name or "").replace("\\", "/")
     if not text or text.startswith("/") or re.match(r"^[A-Za-z]:", text):
@@ -430,7 +475,47 @@ def _member_name(name: str) -> str:
     if not parts or any(p == ".." for p in parts):
         raise MarketError(L(f"an archived path escapes the install folder: {name!r}",
                             f"путь в архиве выходит из папки установки: {name!r}"))
+    for part in parts:
+        low = part.lower()
+        if ":" in part or _WINDOWS_DEVICE.match(low.split(".")[0]) or low != low.rstrip(". "):
+            raise MarketError(L(f"an archived path is not a portable name: {name!r}",
+                                f"путь в архиве не переносимое имя: {name!r}"))
     return "/".join(parts)
+
+
+def _git_url_refused(url: str) -> bool:
+    """True when a git URL must never reach `git clone`.
+
+    `ext::sh -c …`, `-c`/`--upload-pack` option injection and `ssh://` proxy
+    commands are remote-code execution with one install command; the same shapes
+    the `git` tool refuses never reach the installer either.
+    """
+    text = (url or "").strip()
+    low = text.lower()
+    if "\x00" in text or "\n" in text or "\r" in text:
+        return True
+    if low.startswith("ext::") or "::" in text:
+        return True
+    if low.startswith("-"):
+        return True
+    # Option tokens, not substrings: "--upload-pack" as a segment is an attack,
+    # "my-cool-repo" is a name. Split on URL separators and compare whole
+    # segments (and their `=`/`:` option spellings).
+    segments = re.split(r"[/?#&=:]", low)
+    bad = {"-c", "--config", "--upload-pack", "--receive-pack", "--exec",
+           "--upload-archive"}
+    if any(seg in bad or seg.startswith("--upload-pack=") or
+           seg.startswith("--receive-pack=") or seg == "-c" or
+           seg.startswith("-c=") or seg.startswith("-c:")
+           for seg in segments if seg):
+        return True
+    for seg in segments:
+        # ssh transport options smuggled into any scheme's segment.
+        if "proxycommand" in seg or "sshcommand" in seg:
+            if seg.startswith("-") or "=" in seg or seg in (
+                    "proxycommand", "sshcommand"):
+                return True
+    return False
 
 
 # What a folder may be called on the machines BeeCode runs on.
@@ -445,10 +530,20 @@ def install_name_ok(name: str) -> bool:
     market entry reaches the filesystem outside `.beeagent/plugins/` -- so a
     separator, a dot-dot, or a Windows device name is a refusal, not a surprise.
     """
-    text = (name or "").strip()
+    raw = name or ""
+    # Windows silently strips trailing dots/spaces ("evil " installs as "evil"),
+    # so leading/trailing whitespace and trailing dots are refused, not trimmed:
+    # trimming turns two index names into one folder.
+    if raw != raw.strip() or raw != raw.rstrip(". "):
+        return False
+    text = raw.strip()
     if not text or len(text) > 60 or text in (".", ".."):
         return False
-    if text != Path(text).name or _BAD_FOLDER.search(text) or _WINDOWS_DEVICE.match(text):
+    if ":" in text:
+        return False
+    if text != Path(text).name or _BAD_FOLDER.search(text):
+        return False
+    if _WINDOWS_DEVICE.match(text.split(".")[0]):
         return False
     return True
 

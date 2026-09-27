@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import secrets
 from pathlib import Path
@@ -156,7 +157,21 @@ def remember(model: str, tokens: int, provider=None) -> None:
     data[key] = int(tokens)
     try:
         CACHE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        # Atomic like usage/Session: a torn windows.json used to wipe every
+        # measured window on the next load.
+        import tempfile
+        descriptor, tmp_name = tempfile.mkstemp(dir=str(CACHE.parent),
+                                                prefix="windows.", suffix=".tmp")
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(data, indent=2, sort_keys=True))
+            os.replace(tmp_name, CACHE)
+        finally:
+            try:
+                if os.path.exists(tmp_name):
+                    os.remove(tmp_name)
+            except OSError:
+                pass
         _CACHED[key] = int(tokens)       # keep the in-memory copy in step
     except OSError:
         pass

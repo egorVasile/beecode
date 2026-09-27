@@ -173,18 +173,27 @@ class ReplContext:
 
 # --- dynamic completion sources ------------------------------------------
 
-def _cached_models(name: str, fetch, allow_fetch: bool, fallback: list[str]) -> list[str]:
+def _workdir_of(ctx=None) -> str:
+    agent = getattr(ctx, "agent", None) if ctx is not None else None
+    return (getattr(agent, "workdir", None) or ".") if agent is not None else "."
+
+
+def _cached_models(name: str, fetch, allow_fetch: bool, fallback: list[str],
+                   workdir: str = ".") -> list[str]:
     """Model list for an endpoint that reports its own catalogue.
 
     Completion runs on every keystroke, so it must never touch the network:
     only an explicit /models (or the picker) may fetch, everything else reads
     the cache the last explicit call wrote.
+
+    The cache lives in the project's own `.beeagent`: keyed to CWD it served
+    one project's list to another checkout.
     """
     from time import time
 
     from beeagent import __version__
 
-    path = Path(".beeagent") / f"models_{name}.json"
+    path = Path(workdir) / ".beeagent" / f"models_{name}.json"
     cached: list[str] = []
     fresh = False
     if path.exists():
@@ -251,11 +260,13 @@ def available_models(ctx: ReplContext, fetch: bool = False) -> list[str]:
             return list(discover())
         declared = list(getattr(provider, "models", None) or [])
         return _cached_models(name, lambda: _off_loop(discover),
-                              allow_fetch=fetch, fallback=declared)
+                              allow_fetch=fetch, fallback=declared,
+                              workdir=_workdir_of(ctx))
     list_models = getattr(provider, "list_models", None)
     if callable(list_models):
         declared = list(getattr(provider, "models", None) or [])
-        return _cached_models(name, lambda: list_models(), allow_fetch=fetch, fallback=declared)
+        return _cached_models(name, lambda: list_models(), allow_fetch=fetch,
+                              fallback=declared, workdir=_workdir_of(ctx))
     return list(getattr(provider, "models", None) or [])
 
 
@@ -579,9 +590,11 @@ def _cmd_models(ctx, args):
     table.add_column("served by", style="dim")
     for i, model in enumerate(models, 1):
         measured = windows.measured(model)
-        table.add_row(str(i), model,
-                      ("✔ " if measured else "~ ") + format_window(advertised_window(model)),
-                      ", ".join(upstream_map.get(model, [])[:3]) or "—")
+        # Model ids arrive from the endpoint: Text(), or "[/]" raises
+        # MarkupError at render, past every handler try.
+        table.add_row(Text(str(i)), Text(model),
+                      Text(("✔ " if measured else "~ ") + format_window(advertised_window(model))),
+                      Text(", ".join(upstream_map.get(model, [])[:3]) or "—"))
     table.caption = Text(
         L("✔ window measured on this machine · ~ claimed by the model name · requests are capped "
           "at 32k tokens unless you raise max_context_tokens\n"
@@ -1019,19 +1032,23 @@ def _key_state(ctx, name: str) -> str:
                 f"{name} <url> <ключи> [модели ...]"))
 
 
-def _persist_config(ctx) -> None:
-    """Write the config the user just changed.
+def _persist_config(ctx) -> bool:
+    """Write the config the user just changed; True when it reached the disk.
 
     `/lang` and `/permissions` saved; `/model`, `/provider` and `/mode` did not,
     so a restart came back on the previous model and the picker looked like it
     had forgotten what was chosen.
+
+    A full disk used to be answered with silence and a "saved" that never
+    happened. Callers that promise a save check the return value.
     """
     from beeagent.config.loader import save_config
 
     try:
         save_config(ctx.config, ctx.agent.workdir if ctx.agent is not None else ".")
     except OSError:
-        pass
+        return False
+    return True
 
 
 def _skin_slot_table(skin, only: str = "") -> Table:
@@ -1262,10 +1279,16 @@ def _cmd_allow(ctx, args):
                       "режим только чтения игнорирует разрешения — сначала /permissions ask"))
     perms.grant(name)
     ctx.agent.sync_config_permissions()
-    return _ok(L(f"✅ {name} allowed for this session; write it into "
-                 f"permissions.allowed in beeagent.json to keep it",
-                 f"✅ {name} разрешён на эту сессию; впиши в permissions.allowed "
-                 f"в beeagent.json, чтобы осталось"))
+    # sync_config_permissions mutates the in-memory config, so the *next* command
+    # that saves (e.g. /model) persists the grant silently. Say so plainly.
+    return _ok(L(f"✅ {name} allowed for this session — and the next command that "
+                 f"saves the config (e.g. /model) will keep it on disk; write it "
+                 f"into permissions.allowed in beeagent.json to keep it for sure, "
+                 f"or /allow remove {name} to drop it",
+                 f"✅ {name} разрешён на эту сессию — и следующая команда, "
+                 f"сохраняющая конфиг (например /model), оставит это на диске; "
+                 f"впиши в permissions.allowed в beeagent.json, чтобы осталось "
+                 f"точно, или /allow remove {name}, чтобы снять"))
 
 
 def _cmd_tools(ctx, args):
@@ -1453,7 +1476,9 @@ def _counts_table(title: str, rows: list, first: str = "model") -> Table:
     for name in STATS_COLUMNS[2:]:
         table.add_column(name, justify="right")
     for row in rows:
-        table.add_row(str(row.get("model") or "?"), str(row.get("provider") or "—"),
+        # Model/provider names come from endpoints: Text() against "[/]".
+        # The number cells are ours (digits and marks), safe as plain strings.
+        table.add_row(Text(str(row.get("model") or "?")), Text(str(row.get("provider") or "—")),
                       *_counts_row(row))
     return table
 
@@ -1774,16 +1799,36 @@ def _cmd_save(ctx, args):
 
 
 def _cmd_export(ctx, args):
-    path = args[0] if args else f".beeagent/exports/{ctx.session.session_id}.md"
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    from beeagent.tools._path_policy import guard
+    from beeagent.tools.base import write_text_preserving
+
+    workdir = _workdir_of(ctx)
+    if args:
+        # Any argued path used to be written anywhere (../../.., absolute):
+        # the full transcript — tokens and all — landed wherever words pointed.
+        target, refusal = guard(args[0], "export")
+        if refusal:
+            return _err(refusal)
+    else:
+        # The default belongs to the project, not to wherever the process was
+        # started: guard() jails to CWD, so this one is built from workdir.
+        # The session id alphabet is jail-safe (see core/session._safe_sid).
+        target = Path(workdir) / ".beeagent" / "exports" / f"{ctx.session.session_id}.md"
     lines = [f"# BeeCode session {ctx.session.session_id}", ""]
     for m in ctx.session.messages:
         lines.append(f"## {m.role}")
         lines.append(m.content or "")
         lines.append("")
-    p.write_text("\n".join(lines), encoding="utf-8")
-    return _ok(f"exported to {p}")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_text_preserving(target, "\n".join(lines))
+    except OSError as e:
+        return _err(L(f"export failed: {e}", f"экспорт не удался: {e}"))
+    try:
+        shown = target.relative_to(Path(workdir))
+    except ValueError:
+        shown = target
+    return _ok(f"exported to {shown}")
 
 
 def _cmd_continue(ctx, args):
@@ -1792,7 +1837,7 @@ def _cmd_continue(ctx, args):
         return CommandResult(output=res.output, action=None)
     sid = args[0]
     try:
-        ctx.session = Session.load(sid)
+        ctx.session = Session.load(sid, _workdir_of(ctx))
     except Exception as e:
         return _err(f"Could not load session '{sid}': {e}")
     return _ok(f"loaded session {sid}")
@@ -1890,8 +1935,11 @@ def _catalog_table(items, installed: dict, title: str) -> Table:
             status = L("✅ installed", "✅ установлен")
         else:
             status = L("⏸ disabled", "⏸ выключен")
-        table.add_row(TYPE_ICON.get(item.type, "•"), item.name,
-                      item.description, status)
+        # Text(), not raw strings: a description from someone else's catalog
+        # carrying "[/]" used to raise rich.errors.MarkupError at render time —
+        # past the handler's try, straight into the user's face.
+        table.add_row(TYPE_ICON.get(item.type, "•"), Text(item.name),
+                      Text(item.description), Text(status))
     return table
 
 
@@ -1979,8 +2027,11 @@ def _market_table(market, installed: dict, title: str, query: str = "") -> Table
         status = "" if record is None else (
             L("✅ installed", "✅ установлен") if record.get("enabled", True)
             else L("⏸ disabled", "⏸ выключен"))
-        table.add_row(TYPE_ICON.get(entry.type, "•"), entry.name, entry.id,
-                      entry.description, entry.license, entry.provenance, status)
+        # Text(): the index is someone else's bytes; raw strings let "[/]"
+        # raise MarkupError at render, past every handler try.
+        table.add_row(TYPE_ICON.get(entry.type, "•"), Text(entry.name), Text(entry.id),
+                      Text(entry.description), Text(entry.license),
+                      Text(entry.provenance), Text(status))
     table.caption = Text(
         _market_line(market) + "\n" + L(
             "install: /plugin install <id> · the bytes come from the public commit, "
@@ -2161,7 +2212,7 @@ def _cmd_skills(ctx, args):
     table.add_column("name", style="bold #ffcc00")
     table.add_column(L("description", "описание"))
     for s in skills:
-        table.add_row(f"📚 {s.name}", s.description)
+        table.add_row(Text(f"📚 {s.name}"), Text(s.description))
     table.caption = Text(L("open it: /skill <name>", "открыть: /skill <name>"), style="dim")
     return CommandResult(output=table)
 
@@ -2175,8 +2226,12 @@ def _cmd_skill(ctx, args):
     for s in skills:
         if s.name == name:
             from rich.markdown import Markdown
+
+            from beeagent.utils.sanitize import strip_terminal
+            # SKILL.md is someone else's bytes: terminal escapes reach the
+            # emulator through Markdown untouched (OSC 52 writes the clipboard).
             return CommandResult(output=Panel(
-                Markdown(s.body()),
+                Markdown(strip_terminal(s.body())),
                 title=bee_title(f"📚 {s.name}"), title_align="center",
                 border_style=BORDER, box=box.ROUNDED, padding=(0, 1),
             ))
@@ -2210,7 +2265,7 @@ def _cmd_mcp(ctx, args):
             else:
                 state = L("⚪ run /mcp connect", "⚪ нужен /mcp connect")
             command = f"{cfg.get('command', '')} {' '.join(cfg.get('args', []) or [])}".strip()
-            table.add_row(name, command, str(len(cached)), state)
+            table.add_row(Text(name), Text(command), Text(str(len(cached))), Text(state))
         table.caption = Text("/mcp connect <name> · /mcp add <name> <cmd> [args]",
                              style="dim")
         return CommandResult(output=table)
@@ -2224,8 +2279,11 @@ def _cmd_mcp(ctx, args):
                            f"{name}: (нет кэша — /mcp connect {name})"))
                 continue
             lines.append(f"{name}:")
+            # Descriptions arrive from the MCP server: strip terminal escapes
+            # before they reach the renderer.
+            from beeagent.utils.sanitize import strip_terminal
             lines.extend(
-                f"  - {t.get('name')}: {(t.get('description') or '')[:90]}"
+                f"  - {t.get('name')}: {strip_terminal(str(t.get('description') or ''))[:90]}"
                 for t in cached)
         return CommandResult(output=Text("\n".join(lines) or L("(empty)", "(пусто)")))
 
@@ -2344,9 +2402,10 @@ def _cmd_tasks(ctx, args):
             continue
         done = bool(task.get("done"))
         left += 0 if done else 1
-        table.add_row(str(task.get("id", "?")),
-                      "✔" if done else "…",
-                      str(task.get("text", ""))[:90])
+        # Task text is model-authored: Text(), or "[/]" raises MarkupError.
+        table.add_row(Text(str(task.get("id", "?"))),
+                      Text("✔" if done else "…"),
+                      Text(str(task.get("text", ""))[:90]))
     table.caption = Text(L(f"{left} still open", f"открытых осталось: {left}"), style="dim")
     return CommandResult(output=table)
 
@@ -2384,7 +2443,11 @@ def _cmd_pool(ctx, args):
             return _err(L("give a full address: /pool url https://pool.example.com",
                           "нужен полный адрес: /pool url https://pool.example.com"))
         config.pool_url = url.rstrip("/")
-        _persist_config(ctx)
+        if not _persist_config(ctx):
+            return _err(L("the address is set for this session, but beeagent.json "
+                          "could not be written — it will be forgotten on restart",
+                          "адрес задан на эту сессию, но beeagent.json не записался — "
+                          "после перезапуска он забудется"))
         _pool_provider_refresh(ctx)
         note = "" if url.startswith("https://") else L(
             "\n  ⚠️ plain http — your seat token travels in the clear",
@@ -2405,16 +2468,24 @@ def _cmd_pool(ctx, args):
         if not token:
             return _err(L("the pool gave no seat token", "пул не дал токен места"))
         config.pool_token = token
-        _persist_config(ctx)
+        saved = _persist_config(ctx)
         _pool_provider_refresh(ctx)
         text = Text()
         text.append(L("🐝 seat taken. ", "🐝 место получено. ", ), style="bold #ffcc00")
-        text.append(L(f"token …{token[-4:]} saved in beeagent.json — "
-                      f"{body.get('requests_per_day', '?')} requests and "
-                      f"{body.get('tokens_per_day', '?')} tokens a day.",
-                      f"токен …{token[-4:]} сохранён в beeagent.json — "
-                      f"{body.get('requests_per_day', '?')} запросов и "
-                      f"{body.get('tokens_per_day', '?')} токенов в сутки."), style="dim")
+        if saved:
+            text.append(L(f"token …{token[-4:]} saved in beeagent.json — "
+                          f"{body.get('requests_per_day', '?')} requests and "
+                          f"{body.get('tokens_per_day', '?')} tokens a day.",
+                          f"токен …{token[-4:]} сохранён в beeagent.json — "
+                          f"{body.get('requests_per_day', '?')} запросов и "
+                          f"{body.get('tokens_per_day', '?')} токенов в сутки."), style="dim")
+        else:
+            text.append(L(f"token …{token[-4:]} works for this session, but "
+                          f"beeagent.json could not be written — enroll again "
+                          f"after restart.",
+                          f"токен …{token[-4:]} работает на эту сессию, но "
+                          f"beeagent.json не записался — после перезапуска "
+                          f"запиши место заново."), style="bold yellow")
         if not body.get("approved", True):
             text.append("\n" + L("the pool owner has to approve this seat before it answers.",
                                  "владелец пула должен подтвердить это место, иначе оно не работает."),

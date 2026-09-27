@@ -8,6 +8,7 @@ or dead network costs an update notice, not a boot.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
@@ -54,12 +55,24 @@ def write_cache(workdir=".", **fields) -> dict:
     path = _cache_file(workdir)
     body = read_cache(workdir)
     body.update(fields)
+    # Unique temp like trust/session: one ".json.tmp" let two processes share
+    # a half-written cache.
+    import tempfile
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(body), encoding="utf-8")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.replace(path)
+        descriptor, tmp_name = tempfile.mkstemp(dir=str(path.parent),
+                                                prefix=path.name + ".",
+                                                suffix=".tmp")
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(body))
+            Path(tmp_name).replace(path)
+        finally:
+            try:
+                if os.path.exists(tmp_name):
+                    os.remove(tmp_name)
+            except OSError:
+                pass
     except OSError:
         return body
     return body
@@ -82,7 +95,13 @@ def fetch_latest(timeout: float = TIMEOUT) -> str:
 def check(workdir=".", force: bool = False) -> dict:
     """Look once and remember. Returns the cache, which may say "too recent"."""
     cached = read_cache(workdir)
-    if not force and time.time() - float(cached.get("checked_at", 0)) < INTERVAL:
+    # A hand-edited cache ("checked_at": "bad") used to crash the background
+    # thread with ValueError instead of checking.
+    try:
+        recently = time.time() - float(cached.get("checked_at", 0)) < INTERVAL
+    except (TypeError, ValueError):
+        recently = False
+    if not force and recently:
         return cached
     latest = fetch_latest()
     if not latest:

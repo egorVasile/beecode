@@ -200,6 +200,15 @@ class GrepTool(BaseTool):
             matcher, refusal = _compile_include(str(include))
             if refusal:
                 return ToolResult(output=refusal, error=True)
+        # No timeout exists for `re` on this platform: a 30-char evil pattern
+        # held the tool for 109 s. Bound the pattern and, below, the line.
+        if len(pattern) > 500:
+            return ToolResult(
+                output=L("that pattern is too long to run safely (over 500 characters) — "
+                         "narrow it",
+                         "этот образец слишком длинный для безопасного запуска (больше "
+                         "500 символов) — сузь его"),
+                error=True)
         try:
             regex = re.compile(pattern)
         except (re.error, TypeError, ValueError) as e:
@@ -229,7 +238,10 @@ class GrepTool(BaseTool):
             if info not in _PLAIN_UTF8:
                 other_encodings[info] = other_encodings.get(info, 0) + 1
             for number, line in enumerate(lines, 1):
-                if regex.search(line):
+                # A single 2 MB line under an evil pattern is the 109-second
+                # hang: search a bounded head of absurdly long lines instead.
+                probe = line if len(line) <= 100_000 else line[:100_000]
+                if regex.search(probe):
                     if len(matches) < MAX_MATCHES:
                         body = line if len(line) <= MAX_MATCH_CHARS else line[:MAX_MATCH_CHARS] + "…"
                         matches.append(f"{f}:{number}: {body}")

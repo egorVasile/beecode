@@ -24,10 +24,17 @@ MODE_HELP = {
 }
 
 
+def _norm(name: str) -> str:
+    """One spelling for tool names: JSON grants, /allow and the registry."""
+    return (name or "").strip().lower()
+
+
 class Permissions:
     def __init__(self, mode: str = ASK, allowed: list[str] | None = None):
         self.mode = mode if mode in MODES else ASK
-        self.granted: set[str] = set(allowed or ())
+        # "Bash" / " bash " from beeagent.json never matched tool.name == "bash",
+        # so the grant silently did nothing. Normalise on the way in.
+        self.granted: set[str] = {_norm(n) for n in (allowed or ()) if _norm(n)}
         # Tools the user was asked about and refused this session, so the model
         # gets one clear no instead of asking the user over and over.
         self.denied_this_run: set[str] = set()
@@ -39,13 +46,17 @@ class Permissions:
         return True
 
     def grant(self, name: str) -> None:
-        self.granted.add(name)
-        self.denied_this_run.discard(name)
+        key = _norm(name)
+        if not key:
+            return
+        self.granted.add(key)
+        self.denied_this_run.discard(key)
 
     def revoke(self, name: str) -> bool:
-        if name not in self.granted:
+        key = _norm(name)
+        if key not in self.granted:
             return False
-        self.granted.discard(name)
+        self.granted.discard(key)
         return True
 
     def allows(self, tool) -> bool:
@@ -59,13 +70,25 @@ class Permissions:
         """
         if self.mode == AUTO:
             return True
-        core_safe = not getattr(tool, "from_extension", False) \
-            and bool(getattr(tool, "is_safe", lambda: False)())
+        # A plugin's is_safe() is attacker-controlled code: an exception in it
+        # must deny, never crash the loop.
+        try:
+            claimed_safe = bool(tool.is_safe()) if hasattr(tool, "is_safe") else False
+        except Exception:
+            claimed_safe = False
+        try:
+            writes = bool(getattr(tool, "writes_files", False))
+        except Exception:
+            writes = True
+        core_safe = not bool(getattr(tool, "from_extension", False)) and claimed_safe
         if self.mode == READONLY:
             # `is_safe()` means "only reads"; a tool can be safe to look with and
             # still write its own state file. Read-only means nothing changes.
-            return core_safe and not getattr(tool, "writes_files", False)
-        return core_safe or getattr(tool, "name", "") in self.granted
+            # A missing writes_files attribute defaults to writable (deny).
+            if not hasattr(tool, "writes_files"):
+                return False
+            return core_safe and not writes
+        return core_safe or _norm(getattr(tool, "name", "")) in self.granted
 
     def refusal(self, tool) -> str:
         """The text handed back to the model — and shown to the user."""
@@ -99,7 +122,15 @@ class Permissions:
 
     def prompt_section(self, tools) -> str:
         """What the model is told about the gate, so it stops fighting it."""
-        unsafe = [t.name for t in tools.list_tools() if not t.is_safe()]
+        def _unsafe(tool) -> bool:
+            try:
+                claimed = bool(tool.is_safe())
+            except Exception:
+                return True
+            # An extension's "safe" still needs a grant — do not advertise it
+            # as "reading tools always work".
+            return (not claimed) or bool(getattr(tool, "from_extension", False))
+        unsafe = [t.name for t in tools.list_tools() if _unsafe(t)]
         if not unsafe or self.mode == AUTO:
             return ""
         blocked = [n for n in unsafe if n not in self.granted]

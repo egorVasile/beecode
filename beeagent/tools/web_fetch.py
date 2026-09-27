@@ -90,7 +90,15 @@ def refuse_reason(url: str) -> str:
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
-        return ""
+        # POSIX resolvers also accept decimal ("2130706433"), hex ("0x7f.0.0.1")
+        # and octal ("0177.0.0.1") spellings of the same loopback — all refused.
+        try:
+            import socket
+            import struct
+            packed = socket.inet_aton(host)
+            address = ipaddress.ip_address(struct.unpack("!I", packed)[0])
+        except (OSError, ValueError, AttributeError, struct.error):
+            return ""
     if (address.is_loopback or address.is_private or address.is_link_local
             or address.is_reserved or address.is_multicast):
         return L(f"{host} is an internal address (loopback, a private range, or a "
@@ -208,20 +216,40 @@ class WebFetchTool(BaseTool):
     def _download(target: str):
         """(status, final url, content-type, bytes, capped) or a ToolResult failure."""
         try:
-            with httpx.Client(timeout=TIMEOUT_SECONDS, follow_redirects=True,
+            # Manual redirect walk: follow_redirects=True used to skip the
+            # check on the landing URL, so a link to a public page bouncing to
+            # 169.254.169.254 was fetched (SSRF).
+            with httpx.Client(timeout=TIMEOUT_SECONDS, follow_redirects=False,
                               headers={"User-Agent": USER_AGENT}) as client:
-                with client.stream("GET", target) as response:
-                    status = response.status_code
-                    final_url = str(response.url)
-                    content_type = response.headers.get("content-type") or ""
-                    raw = bytearray()
-                    capped = False
-                    for chunk in response.iter_bytes():
-                        raw.extend(chunk)
-                        if len(raw) > MAX_RESPONSE_BYTES:
-                            capped = True
-                            break
-                    return (status, final_url, content_type, bytes(raw), capped)
+                hops = 0
+                while True:
+                    with client.stream("GET", target) as response:
+                        status = response.status_code
+                        if status in (301, 302, 303, 307, 308) and hops < 5:
+                            nxt = response.headers.get("location") or ""
+                            if not nxt:
+                                return (status, str(response.url),
+                                        response.headers.get("content-type") or "",
+                                        b"", False)
+                            target = httpx.URL(nxt) if "://" in nxt else \
+                                response.url.join(nxt)
+                            target = str(target)
+                            refused = refuse_reason(target)
+                            if refused:
+                                return ToolResult(output=refused, error=True,
+                                                  metadata={"refused": True})
+                            hops += 1
+                            continue
+                        final_url = str(response.url)
+                        content_type = response.headers.get("content-type") or ""
+                        raw = bytearray()
+                        capped = False
+                        for chunk in response.iter_bytes():
+                            raw.extend(chunk)
+                            if len(raw) > MAX_RESPONSE_BYTES:
+                                capped = True
+                                break
+                        return (status, final_url, content_type, bytes(raw), capped)
         except (httpx.HTTPError, OSError) as exc:
             return ToolResult(
                 output=L(f"the page never answered: {exc.__class__.__name__}: {exc}",

@@ -77,7 +77,15 @@ class GlobTool(BaseTool):
                         continue
                 except OSError:
                     continue
-                if item.is_symlink() and not is_inside(item):
+                # A file *under* a symlinked directory is not itself a link:
+                # resolve first, then judge. The old check let dir-symlinks
+                # leak outside names into the listing.
+                try:
+                    inside = is_inside(item.resolve())
+                except OSError:
+                    escaped += 1
+                    continue
+                if not inside:
                     escaped += 1
                     continue
                 if len(found) >= MAX_RESULTS:
