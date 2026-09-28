@@ -208,6 +208,22 @@ def _detect_opencode(home: Path, appdata: Path | None = None) -> AgentFinding:
         finding.providers.append(FoundProvider(
             agent="opencode", name=_slug(str(pid)), url=url, models=models,
             key=key, key_from=where, note=note))
+    # Same endpoint, one account: a keyless entry pointing at the exact URL of
+    # a keyed one reuses that seat. No key material is guessed — the user's own
+    # stored key, on the identical host, with the provenance in the note.
+    keyed = {}
+    for p in finding.providers:
+        norm = (p.url or "").strip().rstrip("/").lower()
+        if p.key and norm and norm not in keyed:
+            keyed[norm] = p
+    for p in finding.providers:
+        if p.key or not (p.url or "").strip():
+            continue
+        donor = keyed.get(p.url.strip().rstrip("/").lower())
+        if donor is not None:
+            p.key, p.key_from = donor.key, donor.key_from
+            p.note = (f"same endpoint as {donor.name} — key copied from its seat"
+                      + (f"; {p.note}" if p.note else ""))
     if not finding.providers:
         finding.detail = "config found, no providers inside"
     return finding

@@ -216,6 +216,34 @@ def test_opencode_auth_json_supplies_keys_missing_from_config(tmp_path, monkeypa
     assert by_name["crax"].key_from == "opencode-auth"
 
 
+def test_opencode_keyless_entry_reuses_key_of_same_endpoint(tmp_path, monkeypatch):
+    """One endpoint, one account: a keyless alias of a keyed URL is not keyless.
+
+    No key material is invented — the stored key of the identical host is
+    reused, and the note says where it came from.
+    """
+    home = tmp_path / "home"
+    conf = home / ".config" / "opencode"
+    conf.mkdir(parents=True)
+    (conf / "opencode.json").write_text(json.dumps({
+        "provider": {
+            "main": {"options": {"baseURL": "https://same.test/v1"},
+                     "models": {"m": {}}},
+            "alias": {"options": {"baseURL": "https://same.test/v1/"},
+                      "models": {"m": {}}},
+        },
+    }), encoding="utf-8")
+    auth_dir = home / ".local" / "share" / "opencode"
+    auth_dir.mkdir(parents=True)
+    (auth_dir / "auth.json").write_text(json.dumps({
+        "main": {"type": "api", "key": "sk-test-shared-qqqq"},
+    }), encoding="utf-8")
+    found = {f.id: f for f in ai.scan(home, home)}["opencode"]
+    by_name = {p.name: p for p in found.providers}
+    assert by_name["alias"].key == "sk-test-shared-qqqq"
+    assert "same endpoint as main" in by_name["alias"].note
+
+
 def _ctx(config=None):
     from beeagent.ui.commands import ReplContext
 
