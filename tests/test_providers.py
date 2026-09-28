@@ -944,3 +944,24 @@ def test_the_new_honesties_are_written_in_two_languages(monkeypatch):
     assert "не читается" in str(crax_error) and "не весь ответ" in str(crax_error)
     assert "ответил" in str(ollama_error.value), str(ollama_error.value)
 
+
+def test_saved_custom_endpoints_keep_their_names_after_a_restart():
+    """Two customs used to collapse into one nameless entry at startup.
+
+    Registered without a name, the second was silently refused and
+    `/providers use <name>` answered "not configured" for both — until the
+    endpoint was added again in the same session.
+    """
+    from beeagent.config.schema import BeeConfig, CustomProvider
+    from beeagent.core.agent import Agent
+
+    config = BeeConfig(custom_providers=[
+        CustomProvider(name="aaa", type="openai_compat",
+                       url="https://a.test/v1", model="m1"),
+        CustomProvider(name="bbb", type="openai_compat",
+                       url="https://b.test/v1", model="m2"),
+    ])
+    agent = Agent(config=config)
+    assert agent.providers.select("aaa").base_url == "https://a.test/v1"
+    assert agent.providers.select("bbb").default_model == "m2"
+

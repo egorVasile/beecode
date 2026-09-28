@@ -21,6 +21,9 @@ What "not trusted" costs, by design:
 * `permissions.mode`, `permissions.allowed` and `vpn_command` in that folder's
   `beeagent.json` are read but not applied — the gate stays at the defaults the
   program ships with;
+* the same for `pool_url`, `pool_token`, `api_keys` and `custom_providers`,
+  unless this install is the one that wrote the file (see `config/loader.py`):
+  a clone cannot decide where your prompts, your keys and your pool seat go;
 * everything that cannot hurt (model, language, theme, timeouts) still loads, so
   opening a stranger's checkout to read code with BeeCode stays pleasant.
 
@@ -593,6 +596,36 @@ def _config_gate_claims(path: Path) -> list[str]:
                        "a shell after one confirmation",
                        "beeagent.json задаёт vpn_command — BeeCode запустил бы его через "
                        "оболочку после одного подтверждения"))
+    # An address is a claim about where this machine's work goes, which is the
+    # same decision the permission gate makes: the folder cannot take it alone.
+    from beeagent.config.schema import BeeConfig
+
+    pool_url = str(raw.get("pool_url") or "").strip()
+    if pool_url and pool_url != BeeConfig().pool_url:
+        lines.append(L(f"beeagent.json points the pool at \"{pool_url}\" — every prompt "
+                       "would travel there",
+                       f"beeagent.json направляет пул на \"{pool_url}\" — каждый запрос "
+                       "уходил бы туда"))
+    if str(raw.get("pool_token") or "").strip():
+        lines.append(L("beeagent.json brings a pool seat token, so this install would answer "
+                       "as a seat somebody else enrolled",
+                       "beeagent.json приносит токен места в пуле — эта установка отвечала "
+                       "бы как место, которое занял кто-то другой"))
+    keys = raw.get("api_keys")
+    if isinstance(keys, dict) and keys:
+        lines.append(L(f"beeagent.json supplies {len(keys)} API key(s) "
+                       f"({', '.join(sorted(keys)[:8])}) — traffic would leave under accounts "
+                       "you did not choose",
+                       f"beeagent.json приносит ключей: {len(keys)} "
+                       f"({', '.join(sorted(keys)[:8])}) — трафик уходил бы с чужих аккаунтов"))
+    providers = raw.get("custom_providers")
+    if isinstance(providers, list) and providers:
+        where = ", ".join(str(p.get("url") or p.get("name") or "?") for p in providers[:4]
+                          if isinstance(p, dict))
+        lines.append(L(f"beeagent.json defines {len(providers)} provider endpoint(s) "
+                       f"({where}) — prompts would be sent to them",
+                       f"beeagent.json определяет провайдеров(а): {len(providers)} "
+                       f"({where}) — запросы уходили бы к ним"))
     return lines
 
 
@@ -703,6 +736,17 @@ def _grant_and_apply(ctx, gate: ProjectTrust) -> str:
     restored = _restore_config_gate(agent, gate)
     report.extend(restored)
 
+    # Saved is not working: the agent built its providers from the config as
+    # it stood at startup, so without this the lines above promise seats and
+    # endpoints the running session still does not have.
+    if agent is not None and getattr(agent, "config", None) is not None:
+        from beeagent.core import provider_setup
+
+        try:
+            provider_setup.register_live_config(agent, agent.config)
+        except Exception:
+            pass
+
     if agent is not None and hasattr(agent, "reload_extensions"):
         errors = agent.reload_extensions() or []
         after = sorted(getattr(agent.plugins, "tool_names", []) or [])
@@ -780,6 +824,27 @@ def _restore_config_gate(agent, gate: ProjectTrust) -> list[str]:
                        "you confirm it on screen",
                        "vpn_command взят из beeagent.json — он запустится только "
                        "после подтверждения на экране"))
+    if raw.pool_url != config.pool_url:
+        config.pool_url = raw.pool_url
+        lines.append(L(f"the pool is now \"{raw.pool_url}\" (beeagent.json said so)",
+                       f"пул теперь \"{raw.pool_url}\" (так в beeagent.json)"))
+    if raw.pool_token and raw.pool_token != config.pool_token:
+        config.pool_token = raw.pool_token
+        lines.append(L("this folder's pool seat token is now in use",
+                       "токен места в пуле этой папки теперь используется"))
+    new_keys = {k: v for k, v in raw.api_keys.items() if k not in config.api_keys}
+    if new_keys:
+        config.api_keys.update(raw.api_keys)
+        lines.append(L(f"API key(s) from this folder are now in use: {', '.join(sorted(new_keys))}",
+                       f"ключ(и) из этой папки теперь используются: {', '.join(sorted(new_keys))}"))
+    known = {(p.name, p.url) for p in config.custom_providers}
+    new_providers = [p for p in raw.custom_providers if (p.name, p.url) not in known]
+    if new_providers:
+        config.custom_providers = config.custom_providers + new_providers
+        lines.append(L(f"provider endpoint(s) from this folder are now registered: "
+                       f"{', '.join(p.name for p in new_providers)}",
+                       f"провайдер(ы) из этой папки теперь зарегистрированы: "
+                       f"{', '.join(p.name for p in new_providers)}"))
     return lines
 
 

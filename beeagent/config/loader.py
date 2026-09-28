@@ -125,9 +125,11 @@ def _respect_project_trust(config: BeeConfig, workdir) -> BeeConfig:
             return config
     except Exception:
         _warn(L("⚠ BeeCode cannot tell whether this folder is one you agreed to — "
-                "the permission gate stays at its defaults",
+                "the permission gate stays at its defaults, and the folder's pool, "
+                "seat, keys and endpoints are not applied",
                 "⚠ BeeCode не может определить, доверяешь ли ты этой папке — "
-                "уровень допуска остаётся по умолчанию"))
+                "уровень допуска остаётся по умолчанию, а пул, место, ключи и "
+                "эндпоинты папки не применяются"))
         # A trust-layer failure is not a licence to trust the folder: drop the
         # folder-controlled gate fields exactly as for an untrusted folder.
         # (The old code built `defaults` and returned `config` untouched.)
@@ -135,6 +137,10 @@ def _respect_project_trust(config: BeeConfig, workdir) -> BeeConfig:
         config.permissions.mode = defaults.permissions.mode
         config.permissions.allowed = []
         config.vpn_command = ""
+        config.pool_url = defaults.pool_url
+        config.pool_token = ""
+        config.api_keys = {}
+        config.custom_providers = []
         return config
 
     dropped = []
@@ -160,9 +166,54 @@ def _respect_project_trust(config: BeeConfig, workdir) -> BeeConfig:
                          "beeagent.json задавал vpn_command (запуск через оболочку) — "
                          "он снят"))
         config.vpn_command = ""
+    # Where the prompts go is the same class of claim as who may run a tool. A
+    # folder that names a pool, a seat, a key or an endpoint decides that this
+    # machine's work leaves it — and it decides that before the first question,
+    # silently, for a user who cloned an unrelated project.
+    #
+    # Only a file this install never wrote: `save_config` vouches for the bytes it
+    # put here, and a key the user typed is not an attack.
+    if not _written_here(workdir):
+        if config.pool_url != defaults.pool_url:
+            dropped.append(L(f"beeagent.json pointed the pool at \"{config.pool_url}\" — the "
+                             "address that ships with BeeCode is used until you trust the folder",
+                             f"beeagent.json направлял в пул \"{config.pool_url}\" — "
+                             "используется адрес из поставки BeeCode, пока папке не доверяешь"))
+            config.pool_url = defaults.pool_url
+        if config.pool_token:
+            dropped.append(L("beeagent.json carried a pool seat token — this install answers as "
+                             "its own seat (/pool enroll), not as the one the folder brought",
+                             "beeagent.json нёс токен места в пуле — эта установка отвечает как "
+                             "своё место (/pool enroll), а не как то, что принесла папка"))
+            config.pool_token = ""
+        if config.api_keys:
+            dropped.append(L(f"beeagent.json supplied {len(config.api_keys)} API key(s) "
+                             f"({', '.join(sorted(config.api_keys)[:8])}) — none is used",
+                             f"beeagent.json приносил ключей: {len(config.api_keys)} "
+                             f"({', '.join(sorted(config.api_keys)[:8])}) — ни один не используется"))
+            config.api_keys = {}
+        if config.custom_providers:
+            where = ", ".join(str(getattr(p, "url", "") or getattr(p, "name", ""))
+                              for p in config.custom_providers[:4])
+            dropped.append(L(f"beeagent.json defined {len(config.custom_providers)} provider "
+                             f"endpoint(s) ({where}) — they are not registered",
+                             f"beeagent.json определял провайдеров(а): "
+                             f"{len(config.custom_providers)} ({where}) — они не зарегистрированы"))
+            config.custom_providers = []
     if dropped:
         _note_gate(gate, dropped)
     return config
+
+
+def _written_here(workdir) -> bool:
+    """Did this install write the config in that folder, at the bytes it has now?"""
+    from beeagent.core import trust
+
+    try:
+        digest = trust.digest_file(Path(workdir or ".") / CONFIG_FILE)
+        return bool(digest) and trust.store().granted_bytes(trust.folder_key(workdir), digest)
+    except Exception:
+        return False
 
 
 def _note_gate(gate, dropped) -> None:
@@ -197,3 +248,24 @@ def save_config(config: BeeConfig, workdir: str = "."):
     # a file holding only pool_token world-readable, even on POSIX.
     if config.api_keys or config.pool_token or any(p.key for p in config.custom_providers):
         _restrict(config_path)
+    _vouch_for_saved_config(config_path, workdir)
+
+
+def _vouch_for_saved_config(config_path, workdir) -> None:
+    """Record the bytes this install just wrote, so a later start can tell them apart.
+
+    `beeagent.json` is where a user's own `/key`, `/providers` and `/pool url` land,
+    and it is also what a cloned repository arrives with. To a reader the two files
+    look the same; a hash of what this program wrote is the only thing that says
+    which one it is. Without it the gate that stops a clone from choosing where
+    your prompts go also throws away the key you saved five minutes ago.
+    """
+    from beeagent.core import trust
+
+    try:
+        digest = trust.digest_file(config_path)
+        if digest:
+            trust.store().grant_bytes(trust.folder_key(workdir), digest,
+                                      name=CONFIG_FILE, kind="config", how="saved")
+    except Exception:
+        pass                            # a refused note must not lose the save

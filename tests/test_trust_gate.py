@@ -336,3 +336,49 @@ def test_a_path_through_a_link_reaches_the_same_record_as_the_real_folder(projec
         shutil.rmtree(str(link), ignore_errors=True)
         if link.exists():
             link.unlink(missing_ok=True)
+
+
+def test_trusting_a_folder_puts_its_keys_to_work_not_just_on_disk(project):
+    """`/trust yes` restores the folder's seats and endpoints into the live agent.
+
+    Dropping them at load is only half the gate: without a live re-register
+    the answer "now in use" was a lie until restart — the config held the key
+    while the running provider still had none.
+    """
+    from beeagent.config.loader import load_config
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core.agent import Agent
+
+    (project / "beeagent.json").write_text(json.dumps({
+        "model": "x",
+        "pool_url": "https://pool.example/v1",
+        "pool_token": "seat-from-a-clone",
+        "api_keys": {"groq": "gsk_live_trusttest"},
+        "custom_providers": [
+            {"name": "mine", "type": "openai_compat",
+             "url": "https://mine.test/v1", "model": "m0"},
+        ],
+    }), encoding="utf-8")
+    config = load_config(str(project))
+    assert config.api_keys == {}, "an untrusted folder's keys must not load"
+    assert config.custom_providers == []
+    assert config.pool_token == ""
+
+    agent = Agent(config=config, workdir=str(project))
+    gate = ProjectTrust(str(project))
+
+    class Ctx:
+        pass
+    ctx = Ctx()
+    ctx.agent = agent
+    report = trust._grant_and_apply(ctx, gate)
+    assert gate.trusted is True
+    assert config.api_keys.get("groq") == "gsk_live_trusttest"
+    assert config.pool_token == "seat-from-a-clone"
+    assert [p.name for p in config.custom_providers] == ["mine"]
+    live = agent.providers.select("groq")
+    assert live is not None
+    assert agent.providers.select("mine").base_url == "https://mine.test/v1"
+    pool = agent.providers.get("pool")
+    assert pool.token == "seat-from-a-clone"
+    assert "gsk_live_trusttest" not in report, "tails only, even in the grant report"

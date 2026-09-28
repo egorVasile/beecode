@@ -187,7 +187,16 @@ def sandbox(seeds: dict = None):
     os.environ["USERPROFILE"] = home
     os.environ["BEECODE_TRUST_PROMPT"] = "0"          # never block boot on a prompt
     os.environ["BEECODE_POOL_KEY_FILE"] = str(Path(home) / "pool-key.json")
-    os.environ["BEECODE_TRUST_FILE"] = str(Path(home) / "trusted.json")
+    trust_file = Path(home) / "trusted.json"
+    os.environ["BEECODE_TRUST_FILE"] = str(trust_file)
+    # The work folder must be trusted, or _respect_project_trust strips the
+    # custom providers the probe configures before the agent ever sees them.
+    # folder_key resolves and case-folds, so compute the exact key it will use.
+    from beeagent.core import trust as _trust
+    key = _trust.folder_key(work)
+    trust_file.write_text(json.dumps({"folders": {
+        key: {"decision": "trusted", "updated": "2026-01-01T00:00:00"}}}),
+                           encoding="utf-8")
     cwd = os.getcwd()
     try:
         for name, text in (seeds or {}).items():
@@ -473,12 +482,11 @@ def cmd_oneshot() -> None:
     install_guard(log)
     import asyncio
     config_text = json.dumps({
-        # The class name it registers under, not the custom entry's label:
-        # Agent() builds OpenAICompatProvider(base_url=...) and that class keeps
-        # ``name = "openai_compat"``, so ``select()`` must ask for that.
-        "provider": "openai_compat",
+        # A custom endpoint under its own name: Agent() registers it as
+        # "deadhost" and ``select()`` must ask for that.
+        "provider": "deadhost",
         "custom_providers": [
-            {"name": "openai_compat", "type": "openai_compat", "url": UNREACHABLE_URL,
+            {"name": "deadhost", "type": "openai_compat", "url": UNREACHABLE_URL,
              "model": "x", "key": "k"}],
         "stream_idle_timeout": 3,
     })

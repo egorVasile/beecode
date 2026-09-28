@@ -646,6 +646,8 @@ def _cmd_providers(ctx, args):
             return _providers_models(ctx, args[1:])
         if first == "context":
             return _providers_context(ctx, args[1:])
+        if first in ("import", "borrow", "from"):
+            return _providers_import(ctx, args[1:])
         if first == "use":
             if len(args) < 2:
                 return _err(L("name the provider: /providers use <name> — /providers lists them",
@@ -702,11 +704,13 @@ def _cmd_providers(ctx, args):
         L("switch: /providers <name> · add an endpoint: /providers add · change one: "
           "/providers edit <name> · keys only: /providers key <name> · models: "
           "/providers models <name> [a,b,c] · context: /providers context <name> "
-          "[tokens|0, 0 is unlimited] · remove yours: /providers remove <name>",
+          "[tokens|0, 0 is unlimited] · borrow: /providers import · remove yours: "
+          "/providers remove <name>",
           "переключить: /providers <имя> · добавить: /providers add · изменить: "
           "/providers edit <имя> · только ключи: /providers key <имя> · модели: "
           "/providers models <имя> [a,b,c] · контекст: /providers context <имя> "
-          "[токены|0, 0 это безлимит] · удалить своё: /providers remove <имя>"),
+          "[токены|0, 0 это безлимит] · взять: /providers import · удалить своё: "
+          "/providers remove <имя>"),
         style="dim")
     return CommandResult(output=table)
 
@@ -881,6 +885,95 @@ def _providers_context(ctx, args) -> CommandResult:
     if ctx.agent is not None:
         ctx.agent.sync_context()
     return _ok(message)
+
+
+def _providers_import(ctx, args) -> CommandResult:
+    """Borrow endpoints from the other AI agents on this machine.
+
+    `/providers import` scans their config files (read-only, nothing leaves
+    the machine) and lists who was found and what each one offers; `/providers
+    import <number|name>` saves one through the same validated door as `/key`.
+    Keys are shown by their tails only, here and everywhere else.
+    """
+    import os
+    from pathlib import Path
+
+    from beeagent.core import agent_import, provider_setup
+    from beeagent.providers.presets import BY_NAME
+    from beeagent.ui.components import providers_table
+
+    home = Path.home()
+    appdata = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming"))
+    findings = agent_import.scan(home, appdata)
+
+    numbered = []
+    rows = []
+    for finding in findings:
+        if not finding.found and not finding.providers:
+            status = L("not found", "не найден")
+            rows.append({"name": finding.label, "type": "—", "desc": status})
+            continue
+        head = finding.detail or L("found", "найден")
+        rows.append({"name": finding.label, "type": "—", "desc": head})
+        for provider in finding.providers:
+            tail = provider_setup.mask_key(provider.key) if provider.key else ""
+            key = L("key " + tail, "ключ " + tail) if tail else L("no key", "без ключа")
+            models = ", ".join(provider.models[:4]) + (" …" if len(provider.models) > 4 else "")
+            what = (provider.url or L("built-in endpoint", "встроенный эндпоинт"))
+            desc = f"{what} · {key}" + (f" · {models}" if models else "")
+            if provider.note:
+                desc += f" · {provider.note}"
+            importable = bool(provider.url) or \
+                (provider.name in BY_NAME and provider.key)
+            if importable:
+                numbered.append(provider)
+                rows.append({"name": f"{len(numbered)}. {provider.name}",
+                             "type": finding.label, "desc": desc})
+            else:
+                rows.append({"name": provider.name, "type": finding.label, "desc": desc})
+    table = providers_table(rows)
+    table.caption = Text(
+        L("take one: /providers import <number|name> — keys are asked from files "
+          "you already own, and only tails ever reach the screen",
+          "забрать: /providers import <номер|имя> — ключи читаются из файлов, "
+          "которыми ты уже владеешь, а на экран попадают только хвосты"),
+        style="dim")
+    if not args:
+        from beeagent.ui.editor import running_app
+        from beeagent.ui.import_picker import open_picker
+
+        if running_app() is not None:
+            # The full picker (a button per row) only makes sense with a screen
+            # to draw it on; the table above is still the answer this command
+            # returns, so the classic REPL and a fallback caller see the same
+            # thing either way.
+            message, refusal = open_picker(
+                ctx, findings, numbered,
+                workdir=ctx.agent.workdir if ctx.agent is not None else ".")
+            if refusal:
+                return _err(refusal)
+            table.caption = Text(message, style="dim") if message else table.caption
+        return CommandResult(output=table)
+    want = " ".join(args).strip().lower()
+    pick = None
+    if want.isdigit():
+        index = int(want) - 1
+        if 0 <= index < len(numbered):
+            pick = numbered[index]
+    else:
+        for provider in numbered:
+            if provider.name.lower() == want:
+                pick = provider
+                break
+    if pick is None:
+        return _err(L(f"nothing importable called {args[0]!r} — numbers and names "
+                      f"are in the list above",
+                      f"ничего забираемого под именем {args[0]!r} нет — номера и "
+                      f"имена в списке выше"))
+    message, refusal = agent_import.import_provider(
+        ctx.config, ctx.agent, pick,
+        workdir=ctx.agent.workdir if ctx.agent is not None else ".")
+    return _err(refusal) if refusal else _ok(message)
 
 
 def _remove_provider(ctx, name: str) -> CommandResult:

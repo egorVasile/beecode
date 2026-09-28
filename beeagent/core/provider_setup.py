@@ -593,6 +593,91 @@ def _register(config, agent, name: str, url: str, keys: str,
         agent.context.model = models[0]
 
 
+def register_custom_endpoint(agent, config, custom, replace: bool = False) -> None:
+    """One saved endpoint into the running agent, under its own name.
+
+    `Agent.__init__` used to register every custom endpoint nameless, so two of
+    them collapsed into one "openai_compat" entry, the second silently refused —
+    and `/providers use <name>` answered "not configured" until the endpoint
+    was added again in the same session. Names, models and timeouts ride along
+    now, exactly like the `/providers add` path below does.
+    """
+    from beeagent.providers.ollama import OllamaProvider
+    from beeagent.providers.openai_compat import OpenAICompatProvider
+
+    name = str(getattr(custom, "name", "") or "").strip().lower()
+    if not name:
+        raise ValueError("a custom endpoint without a name")
+    idle = max(10, int(getattr(config, "stream_idle_timeout", 90) or 90))
+    if getattr(custom, "type", "") == "ollama":
+        agent.providers.register(OllamaProvider(
+            base_url=getattr(custom, "url", ""),
+            model=getattr(custom, "model", "") or "llama3",
+            idle_timeout=idle, name=name), replace=replace)
+        return
+    models = cached_models(name) or [getattr(custom, "model", "") or "gpt-4"]
+    agent.providers.register(OpenAICompatProvider(
+        base_url=getattr(custom, "url", ""),
+        api_key=getattr(custom, "key", "") or "",
+        model=models[0], name=name, models=models,
+        idle_timeout=idle), replace=replace)
+
+
+def register_live_config(agent, config) -> None:
+    """(Re)register everything the config holds, into the running agent.
+
+    The agent builds its providers once, from the config as it stood at
+    startup — so values that arrive later (`/trust yes` restoring a folder's
+    keys, seats and endpoints) were saved but never worked until a restart,
+    while the answer said they were "now in use". This repeats exactly what
+    startup does, so a restored value behaves like a restarted one.
+    """
+    if agent is None or config is None:
+        return
+    from beeagent.providers.presets import ENDPOINTS, key_for
+
+    from beeagent.providers.presets import BY_NAME
+
+    for custom in getattr(config, "custom_providers", None) or []:
+        try:
+            name = str(getattr(custom, "name", "") or "").strip().lower()
+            if name in BY_NAME:
+                # A hand-edited config shadowing a built-in: refused here the
+                # same way `apply` refuses it, never by swapping the live one.
+                raise ValueError(f"{name} is a built-in provider name")
+            register_custom_endpoint(agent, config, custom, replace=True)
+        except Exception as exc:
+            errors = getattr(agent, "provider_errors", None)
+            if isinstance(errors, list):
+                errors.append(f"{getattr(custom, 'name', '?')}: {exc}")
+    for endpoint in ENDPOINTS:
+        try:
+            key = key_for(endpoint, getattr(config, "api_keys", None) or {})
+        except Exception:
+            continue
+        if key:
+            try:
+                agent.attach_preset(endpoint.name, key)
+            except Exception:
+                continue
+    try:
+        pool = agent.providers.get("pool")
+    except Exception:
+        pool = None
+    if pool is not None:
+        try:
+            pool.url = (getattr(config, "pool_url", "") or "").rstrip("/")
+            pool.token = getattr(config, "pool_token", "") or ""
+        except Exception:
+            pass
+    try:
+        sync = getattr(agent, "sync_context", None)
+        if callable(sync):
+            sync()
+    except Exception:
+        pass
+
+
 def forget(config, agent, name: str, workdir: str = ".") -> tuple:
     """Drop one custom endpoint: its entry, its keys, its live registration.
 

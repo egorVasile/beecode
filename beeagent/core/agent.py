@@ -167,13 +167,11 @@ class Agent:
         self.provider_errors: list[str] = []
         # Providers the user configured in beeagent.json; without this they are
         # advertised by /providers but /provider <name> silently fell back to g4f.
+        from beeagent.core import provider_setup
+
         for custom in self.config.custom_providers:
             try:
-                if custom.type == "ollama":
-                    self.providers.register(OllamaProvider(base_url=custom.url, model=custom.model))
-                elif custom.type == "openai_compat":
-                    self.providers.register(OpenAICompatProvider(
-                        base_url=custom.url, api_key=custom.key or "", model=custom.model))
+                provider_setup.register_custom_endpoint(self, self.config, custom)
             except Exception as e:
                 self.provider_errors.append(f"{custom.name}: {e}")
 

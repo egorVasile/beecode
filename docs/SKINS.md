@@ -189,7 +189,7 @@ your pack so it passes both, and check it with the command above.
 
 ## 3. The hooks
 
-All fourteen are optional. `beeagent.core.skins` looks them up by name on whatever you
+All seventeen are optional. `beeagent.core.skins` looks them up by name on whatever you
 registered — a module, an instance, a dict of callables.
 
 | hook | called | receives | what it is for |

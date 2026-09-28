@@ -21,9 +21,12 @@ class OllamaProvider(BaseProvider):
     list_source = (NAME, NAME)
 
     def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3",
-                 idle_timeout: float | None = None):
+                 idle_timeout: float | None = None, name: str = "ollama"):
         self.base_url = (base_url or "http://localhost:11434").rstrip("/")
         self.default_model = model
+        # Named like every other provider: two local daemons used to collapse
+        # into one "ollama" entry, and the second was silently refused.
+        self.name = name or "ollama"
         self.models = [model]
         # A local model on a phone answers slowly; the budget the agent uses to
         # explain a silence is the budget this client waits on, not a number
