@@ -241,7 +241,11 @@ def handle_callback(event: str, data: dict):
 
     elif event == "tool_error":
         render_error(L(f"tool '{data.get('tool')}' failed: {data.get('message')}",
-                       f"инструмент '{data.get('tool')}' упал: {data.get('message')}"))
+                       f                        "инструмент '{data.get('tool')}' упал: {data.get('message')}"))
+
+    elif event == "ask":
+        _note("??", f"agent asks: {data.get('question', '')}",
+              f"агент спрашивает: {data.get('question', '')}")
 
     elif event == "tool_denied":
         render_tool_denied(data.get("tool", ""), data.get("args") or {})

@@ -36,6 +36,8 @@ from beeagent.tools.web_fetch import WebFetchTool
 from beeagent.tools.web_search import WebSearchTool
 from beeagent.tools.git import GitTool
 from beeagent.tools.todo import TodoTool
+from beeagent.tools.think import ThinkTool
+from beeagent.tools.ask import AskTool
 from beeagent.core.queue import PendingQueue
 from beeagent.core.session import Session
 from beeagent.core.context import ContextManager
@@ -60,8 +62,8 @@ _PROMISE_TO_ACT = re.compile(
     re.I,
 )
 ACT_NOW = ("[SYSTEM: you described a next step but sent no tool call, so nothing ran. "
-           "Either send the ```json {\"tool\": ..., \"args\": {...}}``` block now, "
-           "or answer without promising to act.]")
+           "Either call a tool now (use `think` to plan, `ask` to ask the user, or "
+           "any other tool) or answer without promising to act.]")
 
 # Sent back when a call was recognised but could not be read. It goes into the
 # transcript, not just the request: an attempt really was made and refused.
@@ -93,6 +95,30 @@ def _gave_up_on_calls() -> str:
 _ABANDONED = ("abandoned: the user cancelled this answer, so its result was never "
               "read. The tool had already started and may still have finished its "
               "work — check what it changed before doing it again.")
+
+
+def _ask_user(callback, question: str) -> str:
+    """Pause the tool loop and ask the user a question.
+
+    This runs inside ``asyncio.to_thread`` (a worker thread) and reads from
+    the real terminal via ``input()`` — no event-loop gymnastics needed.
+    """
+    try:
+        import sys
+
+        # The callback announces the question to the UI layer (plugin/skin)
+        # so the question is visible even when input() blocks below.
+        if callable(callback):
+            # The UI can't reply synchronously here, but it can print the
+            # question so the user sees it before the input() prompt.
+            callback("ask", {"question": question})
+
+        print(f"\n[ASK] {question}")
+        sys.stdout.flush()
+        answer = input("> ").strip()
+        return answer or "(user did not answer)"
+    except (EOFError, KeyboardInterrupt):
+        return "(user did not answer)"
 
 
 def _as_tool_result(raw) -> ToolResult:
@@ -199,7 +225,8 @@ class Agent:
         for tool_cls in [ReadTool, WriteTool, EditTool, BashTool,
                          GrepTool, GlobTool, ListDirectoryTool, WebSearchTool,
                          WebFetchTool, GitTool, TodoTool, DiagramTool,
-                         DiagnosticsTool, PatchTool, MoveTool, RemoveTool]:
+                         DiagnosticsTool, PatchTool, MoveTool, RemoveTool,
+                         ThinkTool, AskTool]:
             self.tools.register(tool_cls())
 
         self.economy = EconomyManager(
@@ -570,6 +597,10 @@ class Agent:
         # still owe a result. Defined before anything can be cancelled, because the
         # cancel handler below is what reads it.
         call_row = None
+        # The tool instance currently executing (None between calls), so the
+        # cancel handler can interrupt it — bash, for example, would otherwise
+        # leave an orphan process running.
+        running_tool = None
 
         try:
             provider = self._provider_or_pool(callback)
@@ -811,12 +842,19 @@ class Agent:
                     if callback:
                         callback("tool_start", {"tool": cmd.tool, "args": args})
 
+                    ask_tool = tool if isinstance(tool, AskTool) else None
+                    if ask_tool:
+                        ask_tool.on_ask = lambda q: _ask_user(callback, q)
+
                     try:
+                        running_tool = tool
                         # Tools are sync (subprocess, MCP, file IO); running them
                         # in a worker thread keeps the prompt and stream alive.
                         raw = await asyncio.to_thread(tool.execute, **args)
                     except Exception as e:
                         raw = ToolResult(output=f"ERROR: {e}", error=True)
+                    finally:
+                        running_tool = None
 
                     # All of the bookkeeping is inside one guard, and the result is
                     # fitted to the ToolResult shape first: an extension that
@@ -867,6 +905,12 @@ class Agent:
                 callback("error", {"message": "Max turns reached without a final answer"})
             return "Max turns reached"
         except asyncio.CancelledError:
+            # Kill the tool that was in flight: a bash command left orphaned
+            # can write files indefinitely after the agent loop has stopped.
+            if running_tool is not None:
+                interrupt = getattr(running_tool, "interrupt", None)
+                if callable(interrupt):
+                    interrupt()
             # Answer every call the last assistant row still owes, not just the one
             # in flight: a cancel can land between two calls of one turn, and one
             # unanswered call is enough for a native-tools provider to reject the

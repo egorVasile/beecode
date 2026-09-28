@@ -601,3 +601,73 @@ def test_coerce_args_does_not_guess_meaning_from_dict_order():
 
     positional = EditTool().coerce_args({"path": "p", "arg1": "F", "arg2": "R"})
     assert positional == {"path": "p", "old_text": "F", "new_text": "R"}
+
+
+# --- think tool ------------------------------------------------------------
+
+def test_think_stores_plan(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from beeagent.tools.think import ThinkTool
+    tool = ThinkTool()
+    result = tool.execute("plan: read, edit, test")
+    assert not result.error
+    assert "plan" in result.output.lower()
+    plan = ThinkTool.current()
+    assert "read" in plan["summary"]
+    assert plan["status"] == "reasoning"
+
+
+def test_think_persists_to_disk(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from beeagent.tools.think import ThinkTool
+    tool = ThinkTool()
+    tool.execute("step1: fix typo\nstep2: add tests")
+    plan_path = tmp_path / ".beeagent" / "plan.json"
+    assert plan_path.is_file()
+    import json
+    saved = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert "fix typo" in saved["summary"]
+
+
+def test_think_restores_from_disk(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from beeagent.tools.think import ThinkTool
+    plan_dir = tmp_path / ".beeagent"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "plan.json").write_text(
+        '{"summary": "existing plan", "steps": ["a", "b"], "status": "in_progress"}',
+        encoding="utf-8")
+    restored = ThinkTool.restore(str(tmp_path))
+    assert "existing plan" in restored["summary"]
+    assert restored["status"] == "in_progress"
+    assert restored["steps"] == ["a", "b"]
+
+
+# --- ask tool ---------------------------------------------------------------
+
+def test_ask_returns_question_when_no_callback(tmp_path):
+    from beeagent.tools.ask import AskTool
+    tool = AskTool()
+    result = tool.execute("confirm?")
+    assert result.error
+    assert "ASK" in result.output or "not available" in result.output
+
+
+def test_ask_calls_callback_when_set(tmp_path):
+    from beeagent.tools.ask import AskTool
+    tool = AskTool()
+    captured = []
+    tool.on_ask = lambda q: ToolResult(output=f"User says: yes", error=False)
+    result = tool.execute("confirm?")
+    assert not result.error
+    assert "yes" in result.output
+
+
+def test_ask_registered_in_agent(tmp_path):
+    """Agent.__init__() registers AskTool and ThinkTool by name."""
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core.agent import Agent
+    agent = Agent(config=BeeConfig(), workdir=str(tmp_path))
+    names = agent.tools.list_names()
+    assert "ask" in names
+    assert "think" in names
