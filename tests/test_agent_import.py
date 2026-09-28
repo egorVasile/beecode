@@ -190,6 +190,32 @@ def test_opencode_merges_json_and_jsonc_and_marks_disabled(tmp_path, monkeypatch
     assert "disabled" in by_name["dead"].note
 
 
+def test_opencode_auth_json_supplies_keys_missing_from_config(tmp_path, monkeypatch):
+    """`opencode auth login` seats live in auth.json, not in the config files.
+
+    An endpoint with no `apiKey` in its options must still arrive with a key
+    when the auth store holds one for the same provider id.
+    """
+    home = tmp_path / "home"
+    conf = home / ".config" / "opencode"
+    conf.mkdir(parents=True)
+    (conf / "opencode.json").write_text(json.dumps({
+        "provider": {
+            "crax": {"options": {"baseURL": "https://gpt.crax.lol/v1"},
+                     "models": {"m": {}}},
+        },
+    }), encoding="utf-8")
+    auth_dir = home / ".local" / "share" / "opencode"
+    auth_dir.mkdir(parents=True)
+    (auth_dir / "auth.json").write_text(json.dumps({
+        "crax": {"type": "api", "key": "crk-test-aaaabbbb"},
+    }), encoding="utf-8")
+    found = {f.id: f for f in ai.scan(home, home)}["opencode"]
+    by_name = {p.name: p for p in found.providers}
+    assert by_name["crax"].key == "crk-test-aaaabbbb"
+    assert by_name["crax"].key_from == "opencode-auth"
+
+
 def _ctx(config=None):
     from beeagent.ui.commands import ReplContext
 

@@ -134,11 +134,35 @@ def _slug(*parts: str) -> str:
     return text[:48] or "imported"
 
 
-def _detect_opencode(home: Path) -> AgentFinding:
+def _auth_keys(home: Path, appdata: Path | None = None) -> dict:
+    """OpenCode keeps `opencode auth login` seats out of the config files.
+
+    `~/.local/share/opencode/auth.json` (or the platform equivalent) maps a
+    provider id to `{"type": ..., "key": ...}` — without it every passwordless
+    endpoint shows up keyless, which is exactly the complaint that sent us here.
+    """
+    candidates = [home / ".local" / "share" / "opencode" / "auth.json",
+                  home / "Library" / "Application Support" / "opencode" / "auth.json"]
+    xdg = (os.environ.get("XDG_DATA_HOME") or "").strip()
+    if xdg:
+        candidates.append(Path(xdg) / "opencode" / "auth.json")
+    if appdata is not None:
+        candidates.append(appdata / "opencode" / "auth.json")
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        data = _read_json(candidate)
+        if isinstance(data, dict):
+            return data
+    return {}
+
+
+def _detect_opencode(home: Path, appdata: Path | None = None) -> AgentFinding:
     finding = AgentFinding(id="opencode", label="OpenCode")
     base = home / ".config" / "opencode"
     providers: dict = {}
     disabled: set[str] = set()
+    parsed_any = False
     for name in ("opencode.json", "opencode.jsonc"):
         candidate = base / name
         if not candidate.is_file():
@@ -147,15 +171,20 @@ def _detect_opencode(home: Path) -> AgentFinding:
             else _read_jsonc(candidate)
         if data is None:
             continue
+        parsed_any = True
         file_providers = data.get("provider")
         if isinstance(file_providers, dict):
             providers.update(file_providers)
         for pid in data.get("disabled_providers", []) or []:
             disabled.add(str(pid).lower())
+    if not parsed_any:
+        return finding
     if not providers:
         finding.found, finding.detail = True, "no providers configured"
         return finding
     finding.found = True
+    auth = _auth_keys(home, appdata)
+    auth_by_slug = {_slug(str(k)): v for k, v in auth.items()}
     for pid, entry in providers.items():
         if not isinstance(entry, dict):
             continue
@@ -166,6 +195,12 @@ def _detect_opencode(home: Path) -> AgentFinding:
         models = entry.get("models")
         models = [str(m) for m in models] if isinstance(models, dict) else []
         note = ""
+        if not key:
+            seat = auth_by_slug.get(_slug(str(pid)))
+            if isinstance(seat, dict) and str(seat.get("key") or "").strip():
+                key, where = str(seat["key"]).strip(), "opencode-auth"
+            elif isinstance(seat, str) and seat.strip():
+                key, where = seat.strip(), "opencode-auth"
         if str(pid).lower() in disabled:
             note = "disabled in opencode.jsonc"
         elif not key and str(options.get("apiKey") or "").strip():
@@ -589,7 +624,7 @@ def scan(home=None, appdata=None) -> list:
     home = Path(home) if home is not None else Path.home()
     appdata = Path(appdata) if appdata is not None else None
     detectors = (
-        lambda: _detect_opencode(home),
+        lambda: _detect_opencode(home, appdata),
         lambda: _detect_codex(home),
         lambda: _detect_gemini(home),
         lambda: _detect_claude(home),
