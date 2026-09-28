@@ -74,7 +74,8 @@ def _read_json(path: Path):
 
 
 def _strip_jsonc(text: str) -> str:
-    """JSON with // line comments and /* */ spans removed, strings intact."""
+    """JSON with // line comments, /* */ spans and trailing commas removed,
+    strings intact."""
     out, i, n, quote = [], 0, len(text), ""
     while i < n:
         ch = text[i]
@@ -103,7 +104,8 @@ def _strip_jsonc(text: str) -> str:
             continue
         out.append(ch)
         i += 1
-    return "".join(out)
+    cleaned = "".join(out)
+    return re.sub(r",\s*([}\]])", r"\1", cleaned)
 
 
 def _read_jsonc(path: Path):
@@ -135,19 +137,22 @@ def _slug(*parts: str) -> str:
 def _detect_opencode(home: Path) -> AgentFinding:
     finding = AgentFinding(id="opencode", label="OpenCode")
     base = home / ".config" / "opencode"
-    data = None
+    providers: dict = {}
+    disabled: set[str] = set()
     for name in ("opencode.json", "opencode.jsonc"):
         candidate = base / name
         if not candidate.is_file():
             continue
         data = _read_json(candidate) if name.endswith(".json") \
             else _read_jsonc(candidate)
-        if data is not None:
-            break
-    if data is None:
-        return finding
-    providers = data.get("provider")
-    if not isinstance(providers, dict):
+        if data is None:
+            continue
+        file_providers = data.get("provider")
+        if isinstance(file_providers, dict):
+            providers.update(file_providers)
+        for pid in data.get("disabled_providers", []) or []:
+            disabled.add(str(pid).lower())
+    if not providers:
         finding.found, finding.detail = True, "no providers configured"
         return finding
     finding.found = True
@@ -161,7 +166,9 @@ def _detect_opencode(home: Path) -> AgentFinding:
         models = entry.get("models")
         models = [str(m) for m in models] if isinstance(models, dict) else []
         note = ""
-        if not key and str(options.get("apiKey") or "").strip():
+        if str(pid).lower() in disabled:
+            note = "disabled in opencode.jsonc"
+        elif not key and str(options.get("apiKey") or "").strip():
             note = "key names an env var that is not set here"
         finding.providers.append(FoundProvider(
             agent="opencode", name=_slug(str(pid)), url=url, models=models,

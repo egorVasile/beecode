@@ -154,6 +154,42 @@ def test_jsonc_fallback_reads_past_comments(tmp_path, monkeypatch):
     assert found.providers[0].url == "https://a.test/v1"
 
 
+def test_opencode_merges_json_and_jsonc_and_marks_disabled(tmp_path, monkeypatch):
+    """Providers live in both files; the scan must read both.
+
+    `opencode.json` holds the two endpoints in use, `opencode.jsonc` the long
+    tail of experiments — and a trailing comma, which is why the first version
+    of this detector saw neither. Disabled ones are still offered, flagged.
+    """
+    home = tmp_path / "home"
+    conf = home / ".config" / "opencode"
+    conf.mkdir(parents=True)
+    (conf / "opencode.json").write_text(json.dumps({
+        "provider": {
+            "llm7": {"options": {"baseURL": "https://api.llm7.io/v1",
+                                "apiKey": "{env:LLM7_API_KEY}"},
+                     "models": {"m": {}}},
+        },
+    }), encoding="utf-8")
+    (conf / "opencode.jsonc").write_text(
+        "{\n\"provider\": {\n"
+        "  \"crax\": {\"options\": {\"baseURL\": \"https://gpt.crax.lol/v1\"},\n"
+        "            \"models\": {\"gpt-5-6-luna\": {}}},\n"
+        "  \"dead\": {\"options\": {\"baseURL\": \"https://dead.test/v1\"},\n"
+        "           \"models\": {}},\n"
+        "},\n"
+        "\"disabled_providers\": [\"dead\"]\n}\n",
+        encoding="utf-8")
+    monkeypatch.setenv("LLM7_API_KEY", ENV_KEY)
+    found = {f.id: f for f in ai.scan(home, home)}["opencode"]
+    assert found.found
+    by_name = {p.name: p for p in found.providers}
+    assert set(by_name) == {"llm7", "crax", "dead"}
+    assert by_name["llm7"].key == ENV_KEY
+    assert by_name["crax"].url == "https://gpt.crax.lol/v1"
+    assert "disabled" in by_name["dead"].note
+
+
 def _ctx(config=None):
     from beeagent.ui.commands import ReplContext
 
