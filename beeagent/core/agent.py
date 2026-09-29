@@ -256,6 +256,8 @@ class Agent:
         self.plugins = PluginLoader(self, gate_project=True)
         try:
             self.plugins.load_all()
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            raise
         except Exception:
             # A broken extension must never take the agent down.
             self.plugins.load_errors.append("plugin loader failed")
@@ -291,6 +293,8 @@ class Agent:
         self.plugins.reset()
         try:
             self.plugins.load_all()
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            raise
         except Exception as e:
             self.plugins.load_errors.append(f"plugin loader failed: {e}")
         self.context.skills_section = self.plugins.skills_prompt_section()
@@ -421,13 +425,19 @@ class Agent:
                         last_error = "эндпоинт вернул эхо нашего промпта"
                     else:
                         return content
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     last_error = _reason(e, last_error)   # fall through to retry
                 finally:
                     if stream is not None:
                         try:
                             await stream.aclose()
-                        except Exception:
+                        except (OSError, RuntimeError):
+                            # Aclose on a still-running generator raises
+                            # RuntimeError; closing is best-effort either way.
+                            # CancelledError is deliberately NOT caught: a
+                            # cancel must propagate, never be laundered here.
                             pass
                 if emitted and callback:
                     # Partial text already reached the UI; have it drop that
@@ -441,11 +451,13 @@ class Agent:
                 elif self._is_prompt_echo(text, messages):
                     last_error = "эндпоинт вернул эхо нашего промпта"
                 else:
-                    # Non-stream fallback: the UI never saw this text, so
-                    # emit it as one delta or the answer is silently lost.
                     if callback:
                         callback("stream_delta", {"text": text})
                     return text
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                last_error = f"non-stream chat timed out after {idle * 2}s"
             except Exception as e:
                 last_error = _reason(e, last_error)
 
@@ -705,8 +717,17 @@ class Agent:
                     else:
                         response = await self._stream_response(provider, messages, callback, model)
                         parsed = self.parser.parse(response)
-                except Exception as e:
+                except asyncio.CancelledError:
+                    raise
+                except RuntimeError as e:
                     error_msg = f"Error calling provider: {e}"
+                    if callback:
+                        callback("error", {"message": error_msg})
+                    return error_msg
+                except Exception as e:
+                    # Programming bugs or unexpected failures: report the
+                    # type so the traceback is recoverable from the message.
+                    error_msg = f"Provider error ({type(e).__name__}): {e}"
                     if callback:
                         callback("error", {"message": error_msg})
                     return error_msg
@@ -851,20 +872,18 @@ class Agent:
                         # Tools are sync (subprocess, MCP, file IO); running them
                         # in a worker thread keeps the prompt and stream alive.
                         raw = await asyncio.to_thread(tool.execute, **args)
+                    except asyncio.CancelledError:
+                        raise
                     except Exception as e:
                         raw = ToolResult(output=f"ERROR: {e}", error=True)
                     finally:
                         running_tool = None
 
-                    # All of the bookkeeping is inside one guard, and the result is
-                    # fitted to the ToolResult shape first: an extension that
-                    # answers with a bare string has run its call, and reading
-                    # `.output` off it here used to raise out of run() *after* the
-                    # assistant row carrying the call was written — a transcript
-                    # ending on a call with no result, replayed by every later turn.
                     try:
                         result = _as_tool_result(raw)
                         output = result.output if result.output.strip() else "(empty output)"
+                    except asyncio.CancelledError:
+                        raise
                     except Exception as e:
                         result = ToolResult(
                             output=f"ERROR: the tool answered in a shape BeeCode "

@@ -457,6 +457,8 @@ class G4fProvider(BaseProvider):
                 if text and text.strip():
                     return text
                 failed.append(f"{name}: empty response")
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 failed.append(f"{name}: {' '.join(str(e).split())[:160]}")
 
@@ -505,12 +507,10 @@ class G4fProvider(BaseProvider):
                     return
                 last_error = "empty stream"
                 # empty stream -> try next provider
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 if got_any:
-                    # Half an answer already reached the user. Falling through to
-                    # the next provider here glued two different replies into one
-                    # message — the caller resets the stream and asks again, which
-                    # is the only honest recovery left.
                     raise
                 # Swallowing this left the user staring at "empty response" while
                 # the real cause (rate limit, dead endpoint) went unsaid.

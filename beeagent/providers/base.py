@@ -7,6 +7,7 @@ helpers say where a list of names came from — from the endpoint, or from the
 package. A provider that reads its lines itself gets all of that wrong in its own
 private way, which is how a half answer reaches a user as a complete one.
 """
+import asyncio
 from abc import ABC, abstractmethod
 from typing import AsyncIterator, Callable
 import json
@@ -292,6 +293,8 @@ async def raise_for_api_status(response, source: str = "") -> None:
         if read is not None and not getattr(response, "is_stream_consumed", True):
             await read()
         text = response.text or ""
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        raise
     except Exception:                     # noqa: BLE001 — no body is not a crash
         text = ""
     raise api_error(status, text, source)
@@ -359,6 +362,8 @@ def default_idle_timeout() -> float:
     try:
         from beeagent.config.schema import BeeConfig
         return float(max(10, int(BeeConfig().stream_idle_timeout or 90)))
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        raise
     except Exception:                   # noqa: BLE001 — a broken config is not a crash
         return 90.0
 
