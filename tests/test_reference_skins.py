@@ -976,7 +976,11 @@ def test_the_events_these_packs_watch_are_the_events_the_agent_emits():
     """Names drift, and a skin watching a name nobody sends is dead code that
     looks alive. Read off the emitter's source, because there is no registry of
     event names to import."""
-    source = (ROOT / "beeagent" / "core" / "agent.py").read_text(encoding="utf-8")
+    core = ROOT / "beeagent" / "core"
+    source = "\n".join(
+        (core / name).read_text(encoding="utf-8")
+        for name in ("agent.py", "executor.py", "streaming.py",
+                     "provider_setup.py"))
     emitted = set(re.findall(r'callback\("([a-z_]+)"', source))
     if not emitted:                                         # pragma: no cover
         pytest.skip("the emitter's call shape changed; re-read agent.py")

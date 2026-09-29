@@ -10,9 +10,8 @@ from .base import BaseTool, ToolResult
 class AskTool(BaseTool):
     name = "ask"
     description = (
-        "Ask the user a question when you need their input, confirmation or "
-        "clarification.  This pauses the task and waits for an answer.  Be "
-        "specific about what you need — a yes/no question gets a faster reply."
+        "Ask the user a question mid-task and wait for the answer. "
+        "Yes/no questions get faster replies."
     )
     parameters = {
         "type": "object",

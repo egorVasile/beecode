@@ -198,12 +198,22 @@ def worker_error(log: str) -> str:
 
 
 def agent_source() -> str:
-    """`core/agent.py` as text: the list of events the loop can emit is read
-    from it, so this file cannot drift behind a loop that learned a new event."""
+    """The loop as text: the list of events it can emit is read from it, so
+    this file cannot drift behind a loop that learned a new event.
+
+    The loop used to be one file (`core/agent.py`); it is now four —
+    the orchestrator, `core/executor.py` (tool calls), `core/streaming.py`
+    (tokens and retries) and `core/provider_setup.py` (endpoint and model
+    resolution) — so all four are read.
+    """
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent
-    return (root / "beeagent" / "core" / "agent.py").read_text(encoding="utf-8")
+    core = root / "beeagent" / "core"
+    return "\n".join(
+        (core / name).read_text(encoding="utf-8")
+        for name in ("agent.py", "executor.py", "streaming.py",
+                     "provider_setup.py"))
 
 
 # --- the eight events, each driven through the real loop -------------------
@@ -448,6 +458,7 @@ def test_the_interface_has_a_branch_for_every_loop_event(tmp_path):
         "tool_renamed": {"from": "reed", "to": "read"},
         "tool_unknown": {"tool": "quantum_flux_capacitor"},
         "nudged": {},
+        "ask": {"question": "delete the scratch file?"},
     }
     # Text that only moves the live stream line, never the log.
     stream_only = {"status", "stream_delta", "reasoning_delta"}

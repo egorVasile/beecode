@@ -16,6 +16,7 @@ Those are exactly the four fields `ui/provider_form.py` shows.
 Keys are secrets: nothing here ever returns a whole key in a message — `mask_key`
 and `key_tails` are the only way a key leaves this file towards a screen.
 """
+import asyncio
 import json
 import re
 import time
@@ -713,3 +714,142 @@ def forget(config, agent, name: str, workdir: str = ".") -> tuple:
     if dropped:
         parts.append(L("endpoint removed", "эндпоинт удалён"))
     return parts, ""
+
+
+# --- provider resolution: moved out of Agent (core/agent.py) ------------------
+# The agent loop needs three answers per turn — which endpoint, which model,
+# and whether the context budget follows them — and all three used to live in
+# the god object. Behaviour is unchanged; only the address moved.
+
+def sync_context(agent) -> None:
+    """Point the context budget at the active provider.
+
+    A custom endpoint with its own context rule (0 = unlimited, N = a
+    ceiling just for it) wins for that provider; everywhere else the
+    global `max_context_tokens` applies. Called at startup and on every
+    model resolution, so a switch takes effect on the next turn, not on
+    the next restart.
+    """
+    unlimited, ceiling = context_for(
+        agent.config, getattr(agent.config, "provider", ""))
+    agent.context.unlimited = unlimited
+    if ceiling:
+        agent.context._window_cap = ceiling
+    else:
+        agent.context._window_cap = agent.config.max_context_tokens or None
+        if unlimited:
+            agent.context._window_cap = None
+
+
+def model_for(agent, provider, callback=None) -> str:
+    """The model id to actually send.
+
+    `config.model` is one global string while every provider has its own
+    catalogue, so a groq key pointed at "gpt-4" only ever answers 404. A
+    provider that lists its models gets the request corrected to one of
+    them; g4f routes any name it advertises, so it is left alone.
+    """
+    wanted = agent.config.model or ""
+    known = list(getattr(provider, "models", None) or [])
+    if not known or wanted in known:
+        return wanted or getattr(provider, "default_model", "")
+    if callable(getattr(provider, "discover_models", None)):
+        return wanted
+    model = known[0]
+    # Deliberate, documented and announced: `/provider groq` with gpt-4 in
+    # config would otherwise 404 forever. The UI prints the substitution
+    # ("this provider has no gpt-4 — answering with …"), so the change is
+    # never silent.
+    agent.config.model = model
+    agent.context.model = model
+    sync_context(agent)
+    if callback:
+        callback("model_switched", {"from": wanted, "to": model})
+    return model
+
+
+def g4f_installed() -> bool:
+    """Is g4f importable here at all — without importing it."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec("g4f") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def provider_or_pool(agent, callback):
+    """The configured provider, unless it cannot exist on this machine.
+
+    g4f is pure Python, but it declares pycryptodome and brotli, which have no
+    Android wheel and no pure-Python fallback, so `pip install beecode` leaves
+    g4f out on a phone (see the Termux section of the README for the recipe
+    that installs it anyway). Without it the default provider is a dead end:
+    the first question would come back "Error calling provider" and the person
+    would conclude BeeCode is broken. The pool is the other half of the same
+    promise — an answer without owning a key — so it takes over, out loud.
+    """
+    name = agent.config.provider or "g4f"
+    # Through the agent's own door, not this module's function: the tests
+    # (and a phone) override `_g4f_installed`, and a direct call here would
+    # walk past the override.
+    installed = type(agent)._g4f_installed()
+    if name != "g4f" or installed:
+        return agent.providers.select(name)
+    pool = agent.providers.get("pool")
+    if pool is None or not getattr(pool, "url", ""):
+        return agent.providers.select(name)
+    agent.config.provider = "pool"
+    if callback:
+        callback("provider_fallback", {"from": "g4f", "to": "pool",
+                                       "seat": bool(pool.token)})
+    return pool
+
+
+def preset_provider(agent, name: str, key: str):
+    """Build the provider for a preset endpoint, with the class that fits it.
+
+    One factory, because `/key <name>` used to build a generic OpenAI client
+    for every name — which replaced crax's provider (two kinds of 429, key
+    rotation, the question it asks) with a plain one, and sent a comma-separated
+    list of keys as a single bearer token.
+    """
+    endpoint = BY_NAME.get(name)
+    if endpoint is None:
+        return None
+    idle = max(10, int(agent.config.stream_idle_timeout or 90))
+    if name == "crax":
+        from beeagent.providers.crax import CraxProvider
+        return CraxProvider(api_key=key, base_url=endpoint.url, idle_timeout=idle,
+                            ask=lambda error: ask_route(agent, error))
+    from beeagent.providers.openai_compat import OpenAICompatProvider
+    return OpenAICompatProvider(base_url=endpoint.url, api_key=key,
+                                model=endpoint.models[0] if endpoint.models else "gpt-4",
+                                name=name, models=endpoint.models)
+
+
+def attach_preset(agent, name: str, key: str) -> bool:
+    """Register (or re-register) a preset endpoint after a key change."""
+    provider = preset_provider(agent, name, key)
+    if provider is None:
+        return False
+    agent.providers.register(provider, replace=True)
+    if name not in agent.ready_presets:
+        agent.ready_presets.append(name)
+    return True
+
+
+async def ask_route(agent, error):
+    """Hand a rate limit to whoever is showing the interface.
+
+    With no UI around — one-shot mode, a plugin driving the agent — there is
+    nobody to ask, so the only safe answer is to wait out what the endpoint
+    said and try again.
+    """
+    if agent.route_question is None:
+        return "wait" if getattr(error, "retry_after", 0) else None
+    try:
+        return await agent.route_question(error)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return "wait"

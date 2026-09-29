@@ -1002,6 +1002,14 @@ class BeeCodeApp(App):
                        f"{tool} не запущено — ты его не разрешал; /allow {tool} разрешит",
                        style="bold red")
             self._count("tool_denied")
+        elif event == "ask":
+            # The model is waiting for an answer: show the question where it
+            # cannot be missed. The reply itself travels through the terminal
+            # the tool thread is reading.
+            self._note("❓", f"agent asks: {data.get('question', '')}",
+                       f"агент спрашивает: {data.get('question', '')}",
+                       style="bold #ffcc00")
+            self._count("ask")
         elif event == "provider_fallback":
             if data.get("seat"):
                 self._note("🐝", "no g4f on this machine — answering through the pool instead",

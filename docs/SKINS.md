@@ -363,6 +363,7 @@ became active on import would replace the interface without being asked.
 | `economy_hit` | — | the answer came from the local cache |
 | `context_trimmed` | `dropped` | history was cut to fit the window |
 | `nudged` | — | the model went quiet and got a nudge |
+| `ask` | `question` | the model asked the user something and waits for input |
 
 Those twelve are `skins.CORE_EVENTS`; `skins.EVENTS` is the whole vocabulary the
 agent emits, including `status`, `response`, `waiting`, `stream_reset`,

@@ -143,6 +143,7 @@ TOOL_DROPPED = "tool_dropped"
 TOOL_RENAMED = "tool_renamed"
 TOOL_UNKNOWN = "tool_unknown"
 TOOL_ERROR = "tool_error"
+ASK = "ask"
 
 #: The events a skin animates on.
 CORE_EVENTS = frozenset({
@@ -154,7 +155,7 @@ CORE_EVENTS = frozenset({
 ALL_EVENTS = CORE_EVENTS | {
     STATUS, RESPONSE, WAITING, STREAM_RESET, MODEL_SWITCHED, PROVIDER_FALLBACK,
     QUEUED_SENT, TOOL_REPAIRED, TOOL_DROPPED, TOOL_RENAMED, TOOL_UNKNOWN,
-    TOOL_ERROR,
+    TOOL_ERROR, ASK,
 }
 EVENTS = ALL_EVENTS
 

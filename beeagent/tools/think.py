@@ -17,9 +17,8 @@ PLAN_FILE = ".beeagent/plan.json"
 class ThinkTool(BaseTool):
     name = "think"
     description = (
-        "Write down your plan before executing it.  Use this for any task with "
-        "three or more steps.  Steps are shown to the user and persist across "
-        "turns so you never lose track of where you are."
+        "Write down your plan before a 3+ step task. Shown to the user, "
+        "kept across turns."
     )
     parameters = {
         "type": "object",

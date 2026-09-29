@@ -515,13 +515,13 @@ def test_a_refused_duplicate_shows_the_state_of_the_row_the_user_can_see():
 
 
 def test_the_model_is_told_to_write_the_plan_before_it_starts():
-    """`/tasks` is only worth anything if something fills the file."""
+    """`think` is only worth anything if the prompt sends the model to it."""
     from beeagent.core.context import SYSTEM_PROMPT, SYSTEM_PROMPT_NATIVE
 
     for prompt in (SYSTEM_PROMPT, SYSTEM_PROMPT_NATIVE):
-        assert "todo" in prompt and "/tasks" in prompt
-        before_first_call = prompt.lower().find("before the first tool call")
-        assert before_first_call != -1 or "first" in prompt.lower()
+        assert "think" in prompt
+        before_first_call = prompt.lower().find("before the first")
+        assert before_first_call != -1, "the plan must come before the first tool call"
 
 
 # ===========================================================================

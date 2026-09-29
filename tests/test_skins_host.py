@@ -263,7 +263,11 @@ def test_the_event_names_are_the_ones_the_agent_loop_really_emits():
     Read off the call sites with an AST, so adding an event in agent.py without
     naming it here fails this test rather than surprising a skin at runtime.
     """
-    tree = ast.parse((ROOT / "beeagent" / "core" / "agent.py").read_text(encoding="utf-8"))
+    core = ROOT / "beeagent" / "core"
+    tree = ast.parse("\n".join(
+        (core / name).read_text(encoding="utf-8")
+        for name in ("agent.py", "executor.py", "streaming.py",
+                     "provider_setup.py")))
     emitted = set()
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call) and getattr(node.func, "id", "") == "callback"

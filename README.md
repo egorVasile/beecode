@@ -309,6 +309,8 @@ plugins and MCP servers):
 | `remove` | Delete one file, or a tree with `recursive=true`; refuses the project folder itself, a link that leaves it, and `.git` without its own flag |
 | `diagnostics` | Run the checkers that are already installed and return `path:line severity message (checker)`. Syntax needs nothing third-party; ruff / pyflakes / mypy / tsc are used only when present and are named as missing when not — so "never checked" can never read as "no problems". it writes nothing (compiles in-process, `--no-cache`, `--no-incremental`), so it runs without a grant — but mypy and tsc, which import plugins named in the repository's own config, are skipped until `/allow diagnostics` |
 | `todo` | Keep a task list while working — and it writes it, to `.beeagent/todo.json` |
+| `think` | Write down the plan before a 3+ step task — shown to the user, kept across turns; writes `.beeagent/plan.json` |
+| `ask` | Ask the user a question mid-task and wait for the answer |
 | `skill` | Load the full instructions of an installed skill. Registered by the built-in skill loader (`SkillTool` in `beeagent/plugins/loader.py`), not by the core tool loop, so `/extensions` does not list it as a plugin |
 | `diagram` | Draw boxes and arrows, and **return the picture as text**, so the model reads back what it drew and fixes the overlaps itself; the same lines go to an `.svg` beside it — a plain name inside the working directory, `diagram.svg` by default |
 
@@ -735,9 +737,9 @@ what is allowed — you do.** A reply from a free endpoint is a guess; guessing
 
 | Mode | What runs without asking | Switch |
 | --- | --- | --- |
-| `ask` (default) | Readers: `read`, `grep`, `glob`, `list_directory`, `skill`, `diagnostics` — plus `todo` and `diagram`, which need no grant but each write one file of their own (`.beeagent/todo.json`, a `.svg`) | `/permissions ask` |
+| `ask` (default) | Readers: `read`, `grep`, `glob`, `list_directory`, `skill`, `diagnostics` — plus `todo`, `diagram`, `think` and `ask`, which need no grant but `todo`/`diagram`/`think` each write one file of their own (`.beeagent/todo.json`, a `.svg`, `.beeagent/plan.json`) | `/permissions ask` |
 | `auto` | Everything | `/permissions auto` |
-| `readonly` | Only the readers — anything that writes is refused here too: `todo`, `diagram`, `patch`, `move`, `remove`, and every tool you granted by hand | `/permissions readonly` |
+| `readonly` | Only the readers — anything that writes is refused here too: `todo`, `diagram`, `think`, `patch`, `move`, `remove`, and every tool you granted by hand | `/permissions readonly` |
 
 `web_search` and `web_fetch` are in none of those lists: `is_safe()` returns
 `False` for them on purpose, because the request leaves the machine and a tool
