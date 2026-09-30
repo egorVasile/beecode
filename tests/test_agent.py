@@ -487,6 +487,49 @@ def test_a_promising_answer_is_nudged_once_and_the_push_stays_out_of_history(tmp
     assert sum("Сейчас прочитаю" in str(m.content) for m in session.messages) == 1
 
 
+def test_an_access_refusal_is_nudged_once_with_the_tools_named(tmp_path, monkeypatch):
+    """"I have no file access" with the tools in context is a refusal, not an
+    answer — seen live when a free-routed model told the user to attach an
+    archive instead of reading the folder."""
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "note.txt").write_text("сорок два", encoding="utf-8")
+
+    class RefuseFirst:
+        name = "refuse-first"
+
+        def __init__(self):
+            self.calls = 0
+            self.seen = []
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            self.seen.append([m.get("content", "") for m in messages])
+            if self.calls == 1:
+                yield ("content", "У меня нет доступа к локальной папке. "
+                                  "Прикрепи архив папки без паролей и ключей.")
+            elif self.calls == 2:
+                yield ("content", '{"tool": "read", "args": {"path": "note.txt"}}')
+            else:
+                yield ("content", "В файле: сорок два")
+
+        async def chat(self, messages, model=""):
+            return "В файле: сорок два"
+
+    agent = Agent(config=BeeConfig(permissions={"mode": "auto"}), workdir=str(tmp_path))
+    endpoint = RefuseFirst()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    session = Session()
+
+    answer = asyncio.run(agent.run("что в note.txt?", session=session))
+
+    assert "сорок два" in answer, "the run continued to a real answer"
+    reminded = [m for m in endpoint.seen[1] if "DO have file access" in str(m)]
+    assert len(reminded) == 1, "the tools reminder reached the model exactly once"
+
+
 def test_a_small_window_still_leaves_a_summary_of_what_was_dropped():
     """digest_room() returned 0 under a tight budget and the history vanished.
 

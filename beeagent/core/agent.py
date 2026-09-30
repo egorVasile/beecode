@@ -66,6 +66,24 @@ ACT_NOW = ("[SYSTEM: you described a next step but sent no tool call, so nothing
            "Either call a tool now (use `think` to plan, `ask` to ask the user, or "
            "any other tool) or answer without promising to act.]")
 
+# A model that answers "I have no file access" is not finished either — the
+# tools are in this conversation, named, with schemas. Seen live 2026-09-30:
+# a free-routed model told the user to attach an archive of the folder instead
+# of reading it. Same one-nudge rule as a promised step: a second refusal
+# stands, because insisting twice is how a loop starts.
+_NO_ACCESS = re.compile(
+    r"(нет доступа|не могу получить доступ|не имею доступа|открой[те]? доступ|"
+    r"прикрепи(те)? (архив|файл|папку)|загрузи(те)? (файл|архив|папку)|"
+    r"no access|don't have access|do not have access|can't access|cannot access|"
+    r"i (am |’m )?(just|only)? ?(a |an )?(text|language|chat|ai|language model)|"
+    r"as an ai\b.{0,80}?(can't|cannot|unable))",
+    re.I,
+)
+YOU_HAVE_TOOLS = ("[SYSTEM: you DO have file access — read, grep, glob and "
+                  "list_directory are in this conversation with their schemas, "
+                  "and the working directory is real. Either call one now or "
+                  "answer without claiming you cannot.]")
+
 # Sent back when a call was recognised but could not be read. It goes into the
 # transcript, not just the request: an attempt really was made and refused.
 _RESEND_CALL = ("[BeeCode] Your tool call arrived broken, so it was not run: {note}. "
@@ -363,7 +381,7 @@ class Agent:
                 if nudge_pending:
                     # The reminder rides on this request only: history stays the
                     # conversation the user actually had.
-                    messages = messages + [{"role": "user", "content": ACT_NOW}]
+                    messages = messages + [{"role": "user", "content": nudge_pending}]
                     nudge_pending = False
 
                 prompt_str = json.dumps(messages)
@@ -467,7 +485,14 @@ class Agent:
                     if not nudged and _PROMISE_TO_ACT.search(response or ""):
                         # "Now I will read the file" is a half-finished turn.
                         nudged = True
-                        nudge_pending = True
+                        nudge_pending = ACT_NOW
+                        if callback:
+                            callback("nudged", {})
+                        continue
+                    if not nudged and _NO_ACCESS.search(response or ""):
+                        # "I have no file access" with the tools in context.
+                        nudged = True
+                        nudge_pending = YOU_HAVE_TOOLS
                         if callback:
                             callback("nudged", {})
                         continue

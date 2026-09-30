@@ -965,3 +965,28 @@ def test_saved_custom_endpoints_keep_their_names_after_a_restart():
     assert agent.providers.select("aaa").base_url == "https://a.test/v1"
     assert agent.providers.select("bbb").default_model == "m2"
 
+
+def _system_case():
+    return [
+        {"role": "system", "content": "You are BeeCode. You have real files."},
+        {"role": "user", "content": "read note.txt"},
+    ]
+
+
+def test_every_wire_transform_keeps_the_system_prompt():
+    """A model answering "I have no file access" is always asked about, and
+    the answer is always "the system prompt never arrived". Lock the other
+    half of that question: every provider's wire transform carries the
+    system message through."""
+    from beeagent.providers.crax import CraxProvider
+    from beeagent.providers.g4f_provider import G4fProvider
+
+    sent = CraxProvider.to_openai_history(_system_case())
+    assert sent[0]["role"] == "system" and "real files" in sent[0]["content"]
+
+    kept = G4fProvider._sanitize_messages(_system_case())
+    roles = [m["role"] for m in kept]
+    assert "system" in roles, f"sanitize dropped it: {roles}"
+    system = next(m for m in kept if m["role"] == "system")
+    assert "real files" in system["content"]
+
