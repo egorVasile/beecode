@@ -558,6 +558,25 @@ def test_the_fallback_list_is_still_the_shipped_one_and_is_never_asked_silently(
     assert provider.serves("a-model-this-install-never-heard-of") is False
 
 
+def test_pool_advertised_windows_are_remembered_for_sizing(tmp_path, monkeypatch):
+    """Without this every pool model reads as DEFAULT_WINDOW 8192 downstream.
+
+    The pool advertises one window per served model; discover files it under
+    model@pool so the context manager sizes the request from it. A probe that
+    measures less still wins — this is a promise, not a measurement.
+    """
+    monkeypatch.chdir(tmp_path)
+    live = Wire(lambda k, u, kw: Reply(status=200, body=json.dumps(
+        {"data": [{"id": "model-from-the-pool", "context_window": 1000000}]})))\
+        .install(monkeypatch)
+    provider = pool_mod.PoolProvider(url="http://pool.invalid", token="seat-token")
+
+    assert provider.discover_models() == ["model-from-the-pool"]
+    from beeagent.core import windows
+
+    assert windows.measured("model-from-the-pool", "pool") == 1000000
+
+
 # --- routing must not be told a lie about the catalogue --------------------
 
 def test_models_reports_what_the_endpoint_answered_not_what_shipped(monkeypatch):

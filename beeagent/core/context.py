@@ -244,7 +244,9 @@ MAX_WINDOW = 32768
 UNLIMITED_WINDOW = 4_000_000
 
 # A measured limit may be trusted further than a guess from the model name.
-MEASURED_MAX_WINDOW = 262144
+# 1M since 2026-09-30: the pool advertises a million tokens per served model
+# and files it as a measurement, so the ceiling has to let it through.
+MEASURED_MAX_WINDOW = 1048576
 
 # The live question is the floor of the request, not the last thing to give way.
 # The header is shed until at least this much of it fits (or all of it, when the

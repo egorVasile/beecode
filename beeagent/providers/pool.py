@@ -482,11 +482,27 @@ class PoolProvider(BaseProvider):
             raise PoolError(reason)
         body = _safe_json(response) or {}
         ids: list[str] = []
+        advertised: dict[str, int] = {}
         for item in body.get("data") or []:
             # A gateway may hand back non-objects; .get on them used to raise
             # AttributeError past the model-list error handling.
             if isinstance(item, dict) and item.get("id"):
                 ids.append(str(item["id"]))
+                try:
+                    window = int(item.get("context_window") or 0)
+                except (TypeError, ValueError):
+                    window = 0
+                if window > 0:
+                    advertised[str(item["id"])] = window
+        if advertised:
+            # The operator's promise, filed under model@pool: measured records
+            # still win (a probe that finds less overwrites), and anything the
+            # pool never named keeps the old guesses. Without this every pool
+            # model reads as DEFAULT_WINDOW 8192.
+            from beeagent.core import windows
+
+            for model, window in advertised.items():
+                windows.remember(model, window, "pool")
         found = self.remember_live_models(ids)
         if not found:
             # An empty answer is the pool's answer, but it is not a catalogue the
