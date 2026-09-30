@@ -322,6 +322,7 @@ class BeeCodeApp(App):
         self._welcome()
         self._update_status()
         self.prompt.focus()
+        self._model_sync_in_background()
 
     def on_resize(self, event) -> None:
         self._fit_to_width()
@@ -1254,6 +1255,43 @@ class BeeCodeApp(App):
         if str(line) != self._status_shown:
             self._status_shown = str(line)
             self.home.query_one("#status", Label).update(line)
+
+    def _model_sync_in_background(self) -> None:
+        """Catalogues move without a release: ask every provider in a daemon
+        thread, then show what changed as a note. No prompt here — the TUI
+        owns the screen, so changed lists are saved, said out loud, and
+        re-asked never."""
+        import os
+        import threading
+
+        def work() -> None:
+            try:
+                from beeagent.core import model_sync
+
+                diffs = model_sync.check_all(self.agent, workdir=os.getcwd())
+            except Exception:
+                return
+            if not diffs:
+                return
+            try:
+                model_sync._save_live(self.agent, os.getcwd(), diffs)
+            except Exception:
+                pass
+            try:
+                self.call_from_thread(self._model_sync_note, model_sync.report(diffs))
+            except Exception:
+                pass
+
+        thread = threading.Thread(target=work, daemon=True,
+                                  name="beecode-model-sync")
+        thread.start()
+
+    def _model_sync_note(self, text: str) -> None:
+        from beeagent.i18n import L
+
+        for line in text.splitlines():
+            self._note("📋", line, line)
+        self._note("💾", L("the new lists are saved.", "новые списки сохранены."))
 
     def _welcome(self) -> None:
         from beeagent.core import skins

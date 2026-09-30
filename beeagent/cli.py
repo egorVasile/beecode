@@ -175,6 +175,12 @@ def main():
         print_banner()
         render_model_info(config.model, config.provider, config.mode,
                           config.permissions.mode)
+        # Catalogues move without a release: ask every provider what it
+        # serves today, report what changed, offer to save. Never blocks
+        # long — parallel, bounded, silent on failure.
+        from beeagent.core import model_sync
+
+        model_sync.startup_check(agent, workdir=os.getcwd(), interactive=True)
         print_welcome()
         asyncio.run(run_repl(agent, config, session=session))
 

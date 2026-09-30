@@ -3,8 +3,11 @@ import asyncio
 from beeagent.config.schema import BeeConfig
 
 
-def test_tui_smoke():
+def test_tui_smoke(tmp_path, monkeypatch):
     """Mount the full-screen app headless and exercise the main paths."""
+    # The app writes project state (model catalogue cache) to the cwd —
+    # run it in a sandbox, not in the checkout.
+    monkeypatch.chdir(tmp_path)
     from beeagent.ui.tui import BeeCodeApp
     from textual.widgets import Input, RichLog
 
@@ -44,13 +47,14 @@ def test_tui_title_and_bindings():
     assert "ctrl+b" in keys
 
 
-def test_the_sidebar_yields_the_screen_to_a_phone():
+def test_the_sidebar_yields_the_screen_to_a_phone(tmp_path, monkeypatch):
     """40 columns of command list on a 60-column terminal is half the app.
 
     The first version read `screen.width`, which is None until a layout pass has
     happened, so the fallback made every terminal look narrow and the sidebar
     vanished on desktop too. `app.size` is the value that is actually there.
     """
+    monkeypatch.chdir(tmp_path)
     import asyncio
 
     from beeagent.config.schema import BeeConfig
