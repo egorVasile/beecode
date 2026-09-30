@@ -217,11 +217,20 @@ def test_the_default_model_is_one_that_answered_the_last_time_we_measured():
     dead = ("qwen3.8-max", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus",
             "qwen3.5-plus", "qwen3.5-omni-plus",          # 502 on 2026-09-23
             "qwen3-coder-480b", "gemma-3-12b", "llama-4-maverick", "gpt-5-6-luna",
-            "kimi-k2-6", "kimi-k2-7-code", "grok-4-3", "grok-4-6",
+            "kimi-k2-7-code", "grok-4-3",
             "deepseek-v4-flash", "grok-code-fast-1")      # `Unknown model` 2026-09-26
+    # `kimi-k2-6` and `grok-4-6` were on this list and answer again as of
+    # 2026-09-30 (one short probe each) — the catalogue is rewritten without
+    # a release, in both directions.
     assert CraxProvider.models, "an endpoint with no chat model is not a default"
     assert not set(CraxProvider.models) & set(dead), \
         "a model that does not answer belongs in neither the default nor the picker"
     # what the picker offers is what was measured, in the order it was measured
-    assert list(CraxProvider.models) == ["glm-5.3", "glm-5.3-flash", "glm-5.2"], \
+    # (2026-09-30: all 17 live ids, one short chat probe each)
+    assert list(CraxProvider.models) == [
+        "glm-5.3", "glm-5.3-flash", "glm-5.2", "instant",
+        "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5",
+        "claude-fable-5-1", "gpt-5-6-sol", "gpt-5-5", "gpt-5-4",
+        "gpt-6-astra", "gemini-3-8-flash", "deepseek-v4-pro",
+        "kimi-k3", "kimi-k2-6", "grok-4-6"], \
         list(CraxProvider.models)

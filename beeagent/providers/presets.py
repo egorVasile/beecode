@@ -107,9 +107,13 @@ ENDPOINTS = (
         url="https://gpt.crax.lol/v1", env="CRAX_API_KEY",
         signup="https://gpt.crax.lol — Settings → API keys",
         free="40 req/min per IP and a daily token allowance per account",
-        # Re-measured 2026-09-26: the old ids answer `Unknown model`; these are
-        # what CraxProvider.models carries and what the chat endpoint serves.
-        models=("glm-5.3", "glm-5.3-flash", "glm-5.2"),
+        # Re-measured 2026-09-30 against live /v1/models + one tiny chat
+        # probe per id: all 17 answer, none says `Unknown model`.
+        models=("glm-5.3", "glm-5.3-flash", "glm-5.2", "instant",
+                "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5",
+                "claude-fable-5-1", "gpt-5-6-sol", "gpt-5-5", "gpt-5-4",
+                "gpt-6-astra", "gemini-3-8-flash", "deepseek-v4-pro",
+                "kimi-k3", "kimi-k2-6", "grok-4-6"),
     ),
 )
 

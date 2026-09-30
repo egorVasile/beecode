@@ -109,20 +109,26 @@ class CraxProvider(BaseProvider):
     # The catalogue is read from the endpoint on demand (`/pool models`, /models);
     # asking for it on every start would be a request that is not a chat, and the
     # whole point of these keys is that only chat goes out.
-    # Re-measured 2026-09-26, one short question per model: the endpoint answers
-    # `GET /v1/models` with FOUR ids now — `glm-5.3`, `glm-5.3-flash`, `glm-5.2`
-    # and `seedream-5` — and the last one is an image model. The twelve names this
-    # list carried since 2026-09-23 (`qwen3-coder-480b`, `gemma-3-12b`, both
-    # groks, both kimis, `gpt-5-6-luna`, `llama-4-maverick`, `deepseek-v4-flash`)
-    # return `Unknown model` from the chat endpoint: the catalogue is rewritten
-    # without a release, so a list kept here is a snapshot with a date on it.
+    # Re-measured 2026-09-30: one short chat probe per id, all 17 answer —
+    # the three GLMs plus `instant`, `claude-opus-5`, `claude-opus-4-8`,
+    # `claude-sonnet-5`, `claude-fable-5-1`, `gpt-5-6-sol`, `gpt-5-5`,
+    # `gpt-5-4`, `gpt-6-astra`, `gemini-3-8-flash`, `deepseek-v4-pro`,
+    # `kimi-k3`, `kimi-k2-6`, `grok-4-6`. The old twelve
+    # (`qwen3-coder-480b`, `gemma-3-12b`, both groks, both kimis,
+    # `gpt-5-6-luna`, `llama-4-maverick`, `deepseek-v4-flash`) are gone from
+    # the live catalogue: it is rewritten without a release, so a list kept
+    # here is a snapshot with a date on it.
     #
     # What the endpoint answers for changes without a release, so this is the list
     # shown *until* it is asked: `discover_models()` replaces what `models` reports
     # (see `ModelCatalog`), and routing asks the endpoint's list rather than this
     # one — otherwise a model the picker took from the live catalogue is quietly
     # swapped for the first name written here.
-    models = ModelCatalog(("glm-5.3", "glm-5.3-flash", "glm-5.2"))
+    models = ModelCatalog(("glm-5.3", "glm-5.3-flash", "glm-5.2", "instant",
+                           "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5",
+                           "claude-fable-5-1", "gpt-5-6-sol", "gpt-5-5", "gpt-5-4",
+                           "gpt-6-astra", "gemini-3-8-flash", "deepseek-v4-pro",
+                           "kimi-k3", "kimi-k2-6", "grok-4-6"))
     label = LABEL
     list_source = (LABEL, LABEL)
     # Verified against the endpoint: it answers `finish_reason: "tool_calls"` and
