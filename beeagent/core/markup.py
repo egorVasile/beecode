@@ -17,8 +17,10 @@ spans on the other side (`Answer` below) — the look of everything else does
 not move a pixel.
 
 What never parses, on purpose: anything inside fenced code blocks or inline
-`` `code` `` (a path like `C:/dir` is data), an unclosed tag, an unknown
-colour, and a `/` glued to a word (`and/or`, `a/b test`, `/bin/sh` stay text).
+`` `code` `` (a path like `C:/dir` is data), an unknown colour, and a `/`
+glued to a word (`and/or`, `a/b test`, `/bin/sh` stay text). A slash tag
+left open runs to the end of the line; an unclosed `**`, `*` or backtick
+stays literal text.
 """
 import re
 
@@ -29,6 +31,18 @@ TAG_LETTERS = "biu"
 HIGHLIGHT_LETTERS = ("с", "c")          # Cyrillic Es and Latin C — both spell it
 
 COLORS = ("red", "green", "yellow", "blue", "magenta", "cyan", "white", "black")
+# Names Rich does not know, mapped to hex that reads on a dark terminal.
+ALIASES = {
+    "orange": "#ffa500",
+    "purple": "#b366ff",
+    "violet": "#b366ff",
+    "pink": "#ff7ec7",
+    "teal": "#2dd4bf",
+    "gray": "#9ca3af",
+    "grey": "#9ca3af",
+    "brown": "#c08a5a",
+    "lime": "#a3e635",
+}
 _HEX = re.compile(r"#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$")
 
 # Marker alphabet, all private-use: Markdown carries them through as plain
@@ -45,7 +59,7 @@ def _valid_color(value: str) -> str | None:
     text = (value or "").strip().lower()
     if text in COLORS or _HEX.fullmatch(text):
         return text
-    return None
+    return ALIASES.get(text)
 
 
 def _highlight_style(color: str) -> str:
@@ -161,7 +175,11 @@ def _md_close(low: str):
 
 
 def _closing(chunk: str, start: int, closer) -> tuple[str, int] | None:
-    """The body up to the next bare `/`, or None when it never comes."""
+    """The body up to the next bare `/` — or to the end of the line.
+
+    An unclosed tag runs to the line end rather than printing raw: that is
+    what `/с.red Important` means, and a literal slash is written `\\/`.
+    """
     n = len(chunk)
     j = start
     while j < n:
@@ -177,8 +195,16 @@ def _closing(chunk: str, start: int, closer) -> tuple[str, int] | None:
             if not body.strip():
                 return None
             return closer(body), j + 1
+        if chunk[j] == "\n":
+            body = chunk[start:j]
+            if not body.strip():
+                return None
+            return closer(body), j
         j += 1
-    return None
+    body = chunk[start:]
+    if not body.strip():
+        return None
+    return closer(body), n
 
 
 def _apply_markers(text: Text) -> Text:
@@ -357,8 +383,12 @@ def _scan_inline(body: str):
         buf.append(ch)
         i += 1
     flush()
-    if stack:
+    # Slash tags left open run to the line end (that is what an unclosed
+    # `/с.red Important` means); markdown marks do not — an unclosed `**`,
+    # `*` or backtick is somebody's literal text, so the line goes out raw.
+    if any(kind != "/tag" for kind, _ in stack):
         return None, False
+    stack.clear()
     return out, True
 
 

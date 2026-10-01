@@ -29,7 +29,9 @@ def test_slashes_glued_to_words_stay_text():
 
 
 def test_unclosed_or_bad_tags_stay_text():
-    assert stylize_prose("unclosed /b oops") == "unclosed /b oops"
+    # An unclosed slash tag runs to the line end (that is the documented
+    # meaning now); unknown letters and colours stay literal.
+    assert stylize_prose("unclosed /b oops") == "unclosed **oops**"
     assert stylize_prose("/x unknown/") == "/x unknown/"
     assert stylize_prose("/c.notacolor hi/") == "/c.notacolor hi/"
     assert stylize_prose("/b /") == "/b /"
@@ -117,7 +119,10 @@ def test_render_line_styles_each_tag():
 def test_render_line_falls_back_raw():
     from beeagent.core.markup import render_line
 
-    assert render_line("unclosed /b oops") is None
+    # Slash tags auto-close at the line end; markdown marks do not.
+    assert render_line("unclosed /b oops") is not None
+    assert render_line("unclosed **oops") is None
+    assert render_line("unclosed `oops") is None
     assert render_line("plain text") is not None
     assert render_line("plain text").plain == "plain text"
 
@@ -129,6 +134,34 @@ def test_render_line_nests_and_heads():
     assert nested is not None and nested.plain == "bold both end"
     head = render_line("# title /b x/")
     assert head is not None and "bold" in " ".join(_styles(head))
+
+
+def test_alias_colors_parse():
+    from beeagent.core.markup import stylize_prose
+
+    for name in ("orange", "purple", "teal", "gray", "grey", "pink",
+                 "brown", "lime", "violet"):
+        out = stylize_prose(f"/c.{name} x/")
+        assert out.startswith("\ue002"), f"{name} did not parse: {out!r}"
+
+
+def test_unclosed_tag_runs_to_line_end():
+    from beeagent.core.markup import render_line, stylize_prose
+
+    assert "Оранжевый курсив" in stylize_prose("/с.orange Оранжевый курсив")
+    text = render_line("/с.orange Оранжевый курсив")
+    assert text is not None and text.plain == "Оранжевый курсив"
+    assert "ffa500" in " ".join(s.style or "" for s in text.spans)
+
+
+def test_nested_highlight_with_inner_style():
+    from beeagent.core.markup import render_line
+
+    text = render_line("/с.red /b Красный жирный/")
+    assert text is not None
+    assert text.plain == "Красный жирный"
+    joined = " ".join(s.style or "" for s in text.spans)
+    assert "red" in joined and "bold" in joined
 
 
 def test_table_is_registered_and_silent_in_the_loop():

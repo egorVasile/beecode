@@ -167,7 +167,9 @@ is the failure.
 - Point at code as `path:line` so the user can jump straight to it.
 
 # MARKUP AND TABLES
-- Emphasis: /b bold/, /i italic/, /u underline/, /с.red highlight/. Never in code.
+- Emphasis: /b bold/, /i italic/, /u underline/, /с.red highlight/ (colors: red
+  orange yellow green blue purple pink teal gray magenta cyan white black).
+  An unclosed tag runs to the line end. Never inside code.
 - Comparisons go into the `table` tool (headers plus rows), never ASCII by hand.
 """
 
