@@ -115,9 +115,14 @@ def _try_tag(chunk: str, i: int) -> tuple[str, int] | None:
     low = letter.lower()
     rest = i + 2
     if low in TAG_LETTERS:
-        if rest >= n or chunk[rest] not in (" ", "\t", "\n"):
-            return None
-        return _closing(chunk, rest + 1, closer=_md_close(low))
+        if rest < n and chunk[rest] in (" ", "\t", "\n"):
+            return _closing(chunk, rest + 1, closer=_md_close(low))
+        # Glued form, same rule as the line renderer: a clean closer must
+        # exist ahead, or `/bin/sh` would light up.
+        if rest < n and _WORD.match(chunk[rest]) \
+                and _find_closer(chunk, rest) is not None:
+            return _closing(chunk, rest, closer=_md_close(low))
+        return None
     if letter in HIGHLIGHT_LETTERS:
         if rest >= n or chunk[rest] != ".":
             return None
@@ -148,10 +153,16 @@ def _slash_open(body: str, i: int) -> tuple[str, int] | None:
     low = letter.lower()
     rest = i + 2
     if low in TAG_LETTERS:
-        if rest >= n or body[rest] not in (" ", "\t"):
-            return None
-        style = {"b": "bold", "i": "italic", "u": "underline"}[low]
-        return style, rest + 1
+        if rest < n and body[rest] in (" ", "\t"):
+            style = {"b": "bold", "i": "italic", "u": "underline"}[low]
+            return style, rest + 1
+        # Glued form (`/bAI!/`): only when a clean closer exists ahead —
+        # `/bin/sh` has none (its slash is followed by a letter), so paths
+        # stay literal while the glued tag still works.
+        if rest < n and _WORD.match(body[rest]) \
+                and _find_closer(body, rest) is not None:
+            style = {"b": "bold", "i": "italic", "u": "underline"}[low]
+            return style, rest
     if letter in HIGHLIGHT_LETTERS:
         if rest >= n or body[rest] != ".":
             return None
@@ -162,6 +173,26 @@ def _slash_open(body: str, i: int) -> tuple[str, int] | None:
         if color is None:
             return None
         return _highlight_style(color), rest + 1 + match.end()
+    return None
+
+
+def _find_closer(body: str, start: int) -> int | None:
+    """Index of the `/` that closes a tag opened before `start`, or None.
+
+    A slash followed by a word character belongs to the text (`/bin/sh`),
+    and backslash-escaped slashes never count.
+    """
+    n = len(body)
+    j = start
+    while j < n:
+        if body[j] == "\\" and j + 1 < n and body[j + 1] == "/":
+            j += 2
+            continue
+        if body[j] == "/":
+            nxt = body[j + 1] if j + 1 < n else ""
+            if not nxt or not _WORD.match(nxt):
+                return j
+        j += 1
     return None
 
 

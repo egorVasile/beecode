@@ -19,6 +19,33 @@ def test_two_sessions_started_in_the_same_second_do_not_collide(tmp_path):
     assert Session.load(first.session_id, str(tmp_path)).messages[0].content == "первый"
 
 
+def test_latest_returns_the_session_a_relaunch_would_resume(tmp_path):
+    """A launch resumes the latest non-empty session for the folder instead
+    of meeting the user as a stranger — that blank page is what read as
+    "the context reset itself"."""
+    first = Session()
+    first.add_user_message("вчерашний вопрос")
+    first.save(str(tmp_path))
+    second = Session()
+    second.add_user_message("сегодняшний вопрос")
+    second.save(str(tmp_path))
+
+    resumed = Session.latest(str(tmp_path))
+    assert resumed is not None
+    assert resumed.messages[-1].content == "сегодняшний вопрос"
+
+
+def test_latest_ignores_an_empty_tail_session(tmp_path):
+    full = Session()
+    full.add_user_message("настоящий разговор")
+    full.save(str(tmp_path))
+    Session().save(str(tmp_path))
+
+    resumed = Session.latest(str(tmp_path))
+    assert resumed is not None
+    assert any(m.content == "настоящий разговор" for m in resumed.messages)
+
+
 def test_a_torn_session_file_is_skipped_not_offered(tmp_path):
     good = Session()
     good.add_user_message("целая")

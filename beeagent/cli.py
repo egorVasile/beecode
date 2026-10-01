@@ -6,6 +6,7 @@ import sys
 from beeagent.core.agent import Agent
 from beeagent.core.session import Session
 from beeagent.config.loader import load_config
+from beeagent.i18n import L
 from beeagent.providers.g4f_provider import G4fProvider
 from beeagent.ui.components import (
     console, print_banner, print_welcome,
@@ -160,10 +161,26 @@ def main():
         ask_once()
 
     session = None
+    resumed_note = ""
     if args.continue_session:
         sessions = Session.list_sessions()
         if sessions:
             session = Session.load(sessions[-1])
+    else:
+        # A launch used to mean a blank history even when yesterday's session
+        # sat saved in this folder — the model met the user as a stranger and
+        # the context "reset itself". Resume the latest non-empty session for
+        # this folder instead; /new starts over on purpose.
+        try:
+            previous = Session.latest()
+        except Exception:
+            previous = None
+        if previous is not None and previous.messages:
+            session = previous
+            count = len(previous.messages)
+            resumed_note = L(
+                f"continued the saved session ({count} messages) — /new starts over",
+                f"продолжен сохранённый разговор ({count} сообщений) — /new начнёт заново")
 
     # Interactive: classic REPL by default; full-screen TUI only when asked.
     want_tui = args.command == "tui" or (args.tui and not args.classic)
@@ -181,6 +198,8 @@ def main():
         from beeagent.core import model_sync
 
         model_sync.startup_check(agent, workdir=os.getcwd(), interactive=True)
+        if resumed_note:
+            print(resumed_note)
         print_welcome()
         asyncio.run(run_repl(agent, config, session=session))
 

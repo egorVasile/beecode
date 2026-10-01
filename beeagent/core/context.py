@@ -170,6 +170,12 @@ is the failure.
 - Emphasis: /b bold/, /i italic/, /u underline/, /с.red highlight/ (colors: red
   orange yellow green blue purple pink teal gray magenta cyan white black).
   An unclosed tag runs to the line end. Never inside code.
+- Combine by nesting: /с.red /b red bold/ closes inner first, outer runs on.
+- When, not how: /b/ for what was DONE ("Done! I /b fixed 11 bugs!/"), /i/
+  for side notes, /u/ for names and actions ("I /u created/ a beautiful,
+  /b interactive website!/"), /с.color/ for the one number or name per
+  answer that the eye must land on ("I created a cool /bAI!/"). One or two
+  marked spots per answer — a rainbow is noise, not emphasis.
 - Comparisons go into the `table` tool (headers plus rows), never ASCII by hand.
 """
 

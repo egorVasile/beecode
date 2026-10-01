@@ -241,20 +241,25 @@ class Session:
 
     @classmethod
     def latest(cls, workdir: str = ".") -> "Session | None":
-        """The newest session on disk, or None when there is nothing to resume.
+        """The newest non-empty session on disk, or None when there is nothing
+        to resume.
 
         Ordered by the file's own mtime, not by the id: an id carries the clock of
         the machine that made it, and a session resumed and saved on a phone whose
         clock is behind would otherwise lose to a transcript from last week.
+        An empty tail (opened, never asked) is skipped: resuming it would meet
+        the user as a stranger while the real conversation sits one file down.
         """
         path = Path(workdir) / ".beeagent" / "sessions"
         if not path.is_dir():
             return None
         for candidate in sorted(session_files(path), key=_mtime_of, reverse=True):
             try:
-                return cls.load(candidate.stem, workdir)
+                loaded = cls.load(candidate.stem, workdir)
             except (OSError, ValueError, KeyError, json.JSONDecodeError):
                 continue
+            if loaded.messages:
+                return loaded
         return None
 
 

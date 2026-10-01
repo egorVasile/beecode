@@ -164,6 +164,25 @@ def test_nested_highlight_with_inner_style():
     assert "red" in joined and "bold" in joined
 
 
+def test_user_keyword_examples():
+    """The exact shapes from the request: done-announcements and showcases."""
+    from beeagent.core.markup import render_line
+
+    done = render_line("Done! I /b fixed 11 bugs! /")
+    assert done is not None and done.plain == "Done! I fixed 11 bugs! "
+    assert "bold" in " ".join(s.style or "" for s in done.spans)
+
+    site = render_line("I /u created / a beautiful, /b interactive website! /b ")
+    assert site is not None
+    assert site.plain == "I created  a beautiful, interactive website! "
+    joined = " ".join(s.style or "" for s in site.spans)
+    assert "underline" in joined and "bold" in joined
+
+    cool = render_line("I created a cool /bAI!/")
+    assert cool is not None and cool.plain == "I created a cool AI!"
+    assert "bold" in " ".join(s.style or "" for s in cool.spans)
+
+
 def test_table_is_registered_and_silent_in_the_loop():
     from beeagent.config.schema import BeeConfig
     from beeagent.core.agent import Agent

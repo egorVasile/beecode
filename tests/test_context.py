@@ -271,6 +271,10 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
     It moved on 2026-09-29, to 4150: `think` and `ask` took the catalog from
     seventeen tools to nineteen (measured header 4092 after both descriptions
     were kept to one line each). Same arithmetic, same rule.
+
+    It moved on 2026-09-30, to 4300: the `table` tool (nineteen to twenty)
+    plus the MARKUP AND TABLES prompt section — the combining guide, the
+    colour list and the when-to-mark examples the model actually follows.
     """
     from beeagent.config.schema import BeeConfig
     from beeagent.core.agent import Agent
@@ -284,7 +288,7 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
 
     header = count_tokens(SYSTEM_PROMPT + "\n" + CommandParser().format_tool_prompt(own),
                           "gpt-4")
-    assert header < 4150, f"BeeCode's own prompt header costs {header} tokens"
+    assert header < 4300, f"BeeCode's own prompt header costs {header} tokens"
 
     everything = count_tokens(SYSTEM_PROMPT + "\n"
                               + CommandParser().format_tool_prompt(schemas), "gpt-4")
