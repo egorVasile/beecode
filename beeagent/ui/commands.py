@@ -1920,13 +1920,41 @@ def _cmd_session(ctx, args):
 
 
 def _cmd_sessions(ctx, args):
-    ids = Session.list_sessions()
+    from beeagent.core.session import read_head
+    from pathlib import Path
+
+    workdir = _workdir_of(ctx)
+    ids = Session.list_sessions(workdir)
     if not ids:
         return CommandResult(output=Text("no saved sessions", style="dim"))
     text = Text()
     for sid in ids:
-        text.append(f"{sid}\n", style="bold #ffcc00")
+        head = read_head(Path(workdir) / ".beeagent" / "sessions" / f"{sid}.json")
+        count = head.get("message_count", "?")
+        age = _session_age(head.get("saved_at"))
+        text.append(f"{sid}", style="bold #ffcc00")
+        text.append(f"  {count} messages, {age}\n", style="dim")
     return CommandResult(output=text)
+
+
+def _session_age(saved_at) -> str:
+    """How long ago this session was written, in human words."""
+    import time
+
+    try:
+        age = time.time() - float(saved_at)
+    except (TypeError, ValueError):
+        return L("age unknown", "возраст неизвестен")
+    if age < 0:
+        return L("just now", "только что")
+    if age < 3600:
+        minutes = max(1, int(age // 60))
+        return L(f"{minutes} min ago", f"{minutes} мин назад")
+    if age < 86400:
+        hours = int(age // 3600)
+        return L(f"{hours} h ago", f"{hours} ч назад")
+    days = int(age // 86400)
+    return L(f"{days} d ago", f"{days} дн назад")
 
 
 def _cmd_save(ctx, args):

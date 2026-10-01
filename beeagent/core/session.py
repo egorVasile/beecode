@@ -160,7 +160,7 @@ class Session:
             "messages": rows,
         }
         descriptor, tmp_name = tempfile.mkstemp(dir=str(path.parent),
-                                                prefix=path.name + ".", suffix=".tmp")
+                                                 prefix=path.name + ".", suffix=".tmp")
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
                 json.dump(data, handle, indent=2, ensure_ascii=False)
@@ -170,7 +170,18 @@ class Session:
                 # page cache that never reached flash is the same loss. Measured
                 # per checkpoint on a 200-message session — see autosave's note.
                 os.fsync(handle.fileno())
-            os.replace(tmp_name, path)
+            # Two windows on one session id replace the same file: on Windows
+            # the loser's rename can land while the file is briefly held and
+            # come back WinError 5. Retry, briefly — a half-written temp is
+            # never renamed, so every attempt is either whole or nothing.
+            for attempt in range(4):
+                try:
+                    os.replace(tmp_name, path)
+                    break
+                except OSError:
+                    if attempt == 3:
+                        raise
+                    time.sleep(0.05 * (attempt + 1))
         finally:
             if os.path.exists(tmp_name):
                 try:
