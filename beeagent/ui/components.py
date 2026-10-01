@@ -380,7 +380,8 @@ def render_tool_start(tool_name: str, tool_args: dict):
     text.append(f" {args_str}", style="dim")
     console.print(text)
 
-def render_tool_end(tool_name: str, tool_args: dict, output: str, error: bool):
+def render_tool_end(tool_name: str, tool_args: dict, output: str, error: bool,
+                     render: dict = None):
     # A skin holding `tool_end` owns this whole block — including the diagram
     # picture and the error tail below, which are display, not evidence: the
     # model's own copy travels separately. "" hides the block, None keeps ours.
@@ -396,6 +397,19 @@ def render_tool_end(tool_name: str, tool_args: dict, output: str, error: bool):
         if mine:
             console.print(markup_text(mine))
         return
+    if isinstance(render, dict):
+        # A silent tool that draws: the table, and nothing else — no chalk
+        # line, no "done" line. That is the whole point of silent.
+        from beeagent.core.markup import table_from_metadata
+
+        drawn = table_from_metadata(render)
+        if drawn is not None:
+            table, dropped = drawn
+            console.print(table)
+            if dropped:
+                console.print(Text(f"  … {dropped} more rows cut",
+                                   style="dim"))
+            return
     # Paths, queries and output are model- or file-authored: they are printed as
     # Text, never interpolated into markup that a stray `[/]` could break.
     output = strip_terminal(output or "")
@@ -516,9 +530,12 @@ def render_response(text: str):
     console.print()
     # hyperlinks=False: OSC 8 makes a target the model chose clickable,
     # with the display text it also chose sitting on top of it.
-    md = Markdown(text, hyperlinks=False)
+    # Answer (not Markdown): the same parser and look, plus the model's
+    # slash tags — /b/, /i/, /u/, /с.color/ — as real spans.
+    from beeagent.core.markup import Answer
+
     panel = Panel(
-        md,
+        Answer(text),
         **skin.frame_kwargs(BORDER, 'answer'),
         title=bee_title("🐝 BeeCode"),
         title_align="center",

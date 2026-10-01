@@ -444,7 +444,9 @@ class BeeCodeApp(App):
         self.chatlog.write(Text("🐝 BeeCode", style="bold green"))
         # The answer is model bytes: escapes reach the emulator through
         # Markdown untouched (OSC 52 writes the clipboard).
-        self.chatlog.write(Markdown(text))
+        from beeagent.core.markup import Answer
+
+        self.chatlog.write(Answer(text))
 
     def _repaint_stream(self) -> None:
         """The answer area while it grows: redrawn on the clock, never per token.
@@ -978,6 +980,19 @@ class BeeCodeApp(App):
             except Exception:
                 mine = None
             if mine is None:
+                render = data.get("render")
+                if isinstance(render, dict):
+                    # A silent tool that draws: the table, and nothing else.
+                    from beeagent.core.markup import table_from_metadata
+
+                    drawn = table_from_metadata(render)
+                    if drawn is not None:
+                        table, dropped = drawn
+                        self.chatlog.write(table)
+                        if dropped:
+                            self.chatlog.write(
+                                Text(f"  … {dropped} more rows cut", style="dim"))
+                        return
                 mark = "❌" if data.get("error") else "✅"
                 color = "red" if data.get("error") else "green"
                 self.chatlog.write(Text(f"  {mark} {data.get('tool')}", style=f"bold {color}"))
@@ -1260,21 +1275,29 @@ class BeeCodeApp(App):
         """Catalogues move without a release: ask every provider in a daemon
         thread, then show what changed as a note. No prompt here — the TUI
         owns the screen, so changed lists are saved, said out loud, and
-        re-asked never."""
+        re-asked never. The agent's workdir, not the process cwd: the app is
+        mounted from anywhere, tests included."""
         import os
         import threading
+
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            # Headless mounts spray the network and the project dir from a
+            # daemon thread the test cannot join: the check itself is covered
+            # by test_model_sync.py, the hook needs a real terminal, not a pilot.
+            return
+        workdir = getattr(self.agent, "workdir", None) or os.getcwd()
 
         def work() -> None:
             try:
                 from beeagent.core import model_sync
 
-                diffs = model_sync.check_all(self.agent, workdir=os.getcwd())
+                diffs = model_sync.check_all(self.agent, workdir=workdir)
             except Exception:
                 return
             if not diffs:
                 return
             try:
-                model_sync._save_live(self.agent, os.getcwd(), diffs)
+                model_sync._save_live(self.agent, workdir, diffs)
             except Exception:
                 pass
             try:

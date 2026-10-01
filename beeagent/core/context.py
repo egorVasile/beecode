@@ -60,6 +60,8 @@ Refusing to try is the one wrong answer.
 - Do the whole task, not the first step of it. Do not narrate what you are going to
   do instead of doing it.
 - Be short in prose. The user is reading a terminal, not an essay.
+- Inline emphasis: /b bold/, /i italic/, /u underline/, /с.red highlight/. A
+  comparison goes into the `table` tool (headers plus rows), never ASCII by hand.
 """
 
 SYSTEM_PROMPT = """You are BeeCode, an autonomous AI coding agent running on the user's machine.
@@ -163,6 +165,10 @@ is the failure.
 - Be concise: four short lines beat a paragraph. No preamble, no recap, no filler, no emojis
   unless the user does. Put the answer first.
 - Point at code as `path:line` so the user can jump straight to it.
+
+# MARKUP AND TABLES
+- Emphasis: /b bold/, /i italic/, /u underline/, /с.red highlight/. Never in code.
+- Comparisons go into the `table` tool (headers plus rows), never ASCII by hand.
 """
 
 
@@ -447,15 +453,26 @@ class ContextManager:
             # is what makes this settle: the digest is built to fit the slice,
             # so the window carved out by that cost is stable across passes.
             room = self.digest_room(budget)
-            for _ in range(3):
+            for _ in range(6):
                 digest = self._digest(dropped, room, base)
                 kept, dropped_next, clipped, lost = self._window(
                     rows, max(0, budget - self._digest_cost(base, digest)))
-                if len(dropped_next) == len(dropped):
+                # Same messages, not just as many: a digest priced for one set
+                # and a window sized for it must be assembled together. The old
+                # length check plus the recompute below paired a fresh digest
+                # with a window sized for the previous one — the request went
+                # over the window by the difference.
+                if {id(m) for m in dropped_next} == {id(m) for m in dropped}:
+                    dropped = dropped_next
                     break
                 dropped = dropped_next
-            # Cover whatever the final window actually left out.
-            digest = self._digest(dropped, room, base)
+            else:
+                # No fixed point (digest and window chase each other by a
+                # message): reassemble nothing — digest, kept and dropped above
+                # are the last priced triple, and the budget matches what is
+                # actually sent. A recompute here would price a digest no
+                # window was ever sized for.
+                pass
 
         # Count everything the model did not get whole. A clip is a loss like a
         # drop is: the read of a 2000-line file that went out as 2023 of its

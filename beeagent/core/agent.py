@@ -39,6 +39,7 @@ from beeagent.tools.git import GitTool
 from beeagent.tools.todo import TodoTool
 from beeagent.tools.think import ThinkTool
 from beeagent.tools.ask import AskTool
+from beeagent.tools.table import TableTool
 from beeagent.core.queue import PendingQueue
 from beeagent.core.session import Session
 from beeagent.core.context import ContextManager
@@ -177,7 +178,7 @@ class Agent:
                          GrepTool, GlobTool, ListDirectoryTool, WebSearchTool,
                          WebFetchTool, GitTool, TodoTool, DiagramTool,
                          DiagnosticsTool, PatchTool, MoveTool, RemoveTool,
-                         ThinkTool, AskTool]:
+                         ThinkTool, AskTool, TableTool]:
             self.tools.register(tool_cls())
 
         self.economy = EconomyManager(

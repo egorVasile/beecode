@@ -132,7 +132,8 @@ async def execute_commands(agent, session, parsed, callback) -> None:
         # The tool may behave differently for a granted run (see
         # BaseTool.granted); the gate above already refused otherwise.
         tool.granted = permissions.mode == "auto" or cmd.tool in permissions.granted
-        if callback:
+        silent = bool(getattr(tool, "silent", False))
+        if callback and not silent:
             callback("tool_start", {"tool": cmd.tool, "args": args})
 
         ask_tool = tool if isinstance(tool, AskTool) else None
@@ -184,9 +185,10 @@ async def execute_commands(agent, session, parsed, callback) -> None:
         session.add_tool_result(result_text)
 
         if callback:
-            callback("tool_end", {
-                "tool": cmd.tool,
-                "args": args,
-                "output": output,
-                "error": result.error,
-            })
+            # Silent tools draw instead of announcing: the render payload
+            # travels on the same event, so no new event name, no skin drift.
+            event = dict(tool=cmd.tool, args=args, output=output,
+                         error=result.error)
+            if silent and not result.error:
+                event["render"] = result.metadata
+            callback("tool_end", event)

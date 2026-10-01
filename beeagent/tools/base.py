@@ -147,6 +147,10 @@ class BaseTool:
     # "only reads"; this one means "even a tool that is safe to look with writes",
     # which is what /permissions readonly has to refuse.
     writes_files: bool = False
+    # Silent tools do formatting, not work: the loop runs them and feeds the
+    # result back, but the UI announces nothing — no chalk line, no "done"
+    # line. The `table` tool is the first one.
+    silent: bool = False
 
     def execute(self, **kwargs) -> ToolResult:
         raise NotImplementedError

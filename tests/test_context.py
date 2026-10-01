@@ -168,6 +168,22 @@ def test_request_never_costs_more_than_the_window_allows():
         assert used <= cm.max_tokens, f"{model}: {used} tokens sent into a {cm.window} window"
 
 
+def test_digest_and_window_settle_on_the_same_dropped_set():
+    """The digest/window loop used to compare dropped-set *lengths* and then
+    re-price the digest after the loop — pairing a fresh digest with a window
+    sized for the previous one. The request went over the window by the
+    difference (measured +5..+9 on a 40-turn Russian history into gpt-4o at
+    12000). Sets are compared now, and no recompute follows the loop."""
+    from beeagent.utils.tokens import count_tokens
+
+    history = _long_history(40)
+    cm = ContextManager(max_tokens=12000, model="gpt-4o")
+    built = cm.build_messages(history, [])
+    used = sum(count_tokens(m["content"], "gpt-4o") for m in built)
+    assert used <= cm.max_tokens, f"{used} tokens sent into a 12000 window"
+    assert "пункт 0" in built[0]["content"], "the middle stays summarised"
+
+
 def test_window_follows_the_model_and_an_unknown_one_stays_small():
     from beeagent.core.context import window_for
 
