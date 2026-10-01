@@ -1045,7 +1045,9 @@ class ResponseStream:
                 self._buf = self._buf[close + len(self.FENCE):]
                 self._in_fence = False
                 if not _looks_like_call(block):
-                    self._print(block)
+                    # A fence the model meant as code: slashes in it are
+                    # data, never emphasis.
+                    self._print(block, styled=False)
                 continue
             open_at = self._buf.find(self.FENCE)
             if open_at == -1:
@@ -1072,7 +1074,7 @@ class ResponseStream:
     # Compact mode holds complete lines briefly and prints the burst at once.
     COALESCE_SECONDS = 0.15
 
-    def _print(self, text):
+    def _print(self, text, styled: bool = True):
         text = strip_terminal(text)
         """Write only whole lines — never leave the cursor mid-line.
 
@@ -1081,6 +1083,9 @@ class ResponseStream:
         know about, and the next repaint of the prompt overwrites the beginning
         of that line. That is the "answer lost its first letters" bug, and the
         one-write-per-token habit behind it is where the stutter came from.
+
+        `styled` draws the model's `/b/ /i/ /u/ /с.color/` tags; fence blocks
+        pass False — a `/b/` inside code is data, not emphasis.
         """
         if not text:
             return
@@ -1092,11 +1097,22 @@ class ResponseStream:
             if not found:
                 if len(line) >= self.LINE_FLUSH_CHARS:
                     self._pending = line[self.LINE_FLUSH_CHARS:] + rest
-                    console.print(Text(line[:self.LINE_FLUSH_CHARS]))
+                    self._print_line(line[:self.LINE_FLUSH_CHARS], styled)
                     continue
                 return
             self._pending = rest
-            console.print(Text(line))
+            self._print_line(line, styled)
+
+    @staticmethod
+    def _print_line(line: str, styled: bool):
+        if styled:
+            from beeagent.core.markup import render_line
+
+            drawn = render_line(line)
+            if drawn is not None:
+                console.print(drawn)
+                return
+        console.print(Text(line))
 
     def _hold_burst(self) -> bool:
         """True when this write should wait for the burst window to pass.

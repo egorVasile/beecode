@@ -602,7 +602,10 @@ def rail_stream():
             self._bullets = getattr(self, "_bullets", 0) + 1
             return int(self._bullets * (CYCLE - 1) / 24)
 
-        def _print(self, text):
+        def _print(self, text, styled=True):
+            # `styled` is the host's door (slash tags); this pack paints its
+            # own rail and tracks fences itself, so the flag is accepted and
+            # left alone — the signature must stay compatible either way.
             if not text:
                 return
             self._pending += components.strip_terminal(text)

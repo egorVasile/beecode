@@ -98,6 +98,39 @@ def test_table_from_metadata_roundtrip():
     assert table_from_metadata({"render": "table", "headers": []}) is None
 
 
+def _styles(text):
+    return [(span.style or "") for span in text.spans]
+
+
+def test_render_line_styles_each_tag():
+    from beeagent.core.markup import render_line
+
+    text = render_line("a /b bold/ b /i it/ c /u un/ d /c.red h/ e")
+    assert text is not None
+    plain = text.plain
+    assert plain == "a bold b it c un d h e"
+    joined = " ".join(_styles(text))
+    assert "bold" in joined and "italic" in joined
+    assert "underline" in joined and "on red" in joined
+
+
+def test_render_line_falls_back_raw():
+    from beeagent.core.markup import render_line
+
+    assert render_line("unclosed /b oops") is None
+    assert render_line("plain text") is not None
+    assert render_line("plain text").plain == "plain text"
+
+
+def test_render_line_nests_and_heads():
+    from beeagent.core.markup import render_line
+
+    nested = render_line("/b bold /i both/ end/")
+    assert nested is not None and nested.plain == "bold both end"
+    head = render_line("# title /b x/")
+    assert head is not None and "bold" in " ".join(_styles(head))
+
+
 def test_table_is_registered_and_silent_in_the_loop():
     from beeagent.config.schema import BeeConfig
     from beeagent.core.agent import Agent

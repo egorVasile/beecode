@@ -134,6 +134,37 @@ def _try_tag(chunk: str, i: int) -> tuple[str, int] | None:
     return None
 
 
+def _slash_open(body: str, i: int) -> tuple[str, int] | None:
+    """A slash-tag opener at `i` → (style, index past it), or None.
+
+    `/b `, `/i `, `/u ` take bold/italic/underline; `/с.red ` takes a
+    highlight in that colour (Latin `c` spells it too). Anything else —
+    `and/or`, `/bin/sh`, an unknown colour — is not a tag.
+    """
+    n = len(body)
+    if i + 1 >= n:
+        return None
+    letter = body[i + 1]
+    low = letter.lower()
+    rest = i + 2
+    if low in TAG_LETTERS:
+        if rest >= n or body[rest] not in (" ", "\t"):
+            return None
+        style = {"b": "bold", "i": "italic", "u": "underline"}[low]
+        return style, rest + 1
+    if letter in HIGHLIGHT_LETTERS:
+        if rest >= n or body[rest] != ".":
+            return None
+        match = re.match(r"([A-Za-z#][A-Za-z0-9#]*)[ \t]", body[rest + 1:])
+        if not match:
+            return None
+        color = _valid_color(match.group(1))
+        if color is None:
+            return None
+        return _highlight_style(color), rest + 1 + match.end()
+    return None
+
+
 def _md_close(low: str):
     if low == "b":
         return lambda body: f"**{body}**"
@@ -228,6 +259,121 @@ def table_from_metadata(metadata: dict):
     table = build_table(headers, rows)
     dropped = metadata.get("dropped") or 0
     return table, dropped
+
+
+def render_line(line: str):
+    """One prose line → styled Text, or None when unsafe to style.
+
+    The classic REPL prints line by line as tokens arrive: there is no second
+    pass, so a line carrying an unclosed tag (or a code fence the caller did
+    not filter) goes out raw rather than half-styled. Returns None then.
+    """
+    heading = re.match(r"(#{1,6})\s", line)
+    body = line
+    bold_head = False
+    if heading:
+        body = line[heading.end():]
+        bold_head = True
+    spans, ok = _scan_inline(body)
+    if not ok:
+        return None
+    out = Text()
+    for text, style in spans:
+        if not text:
+            continue
+        if bold_head:
+            style = _merge_styles("bold", style)
+        out.append(text, style=style or None)
+    return out
+
+
+def _merge_styles(first: str, second: str) -> str:
+    if not first:
+        return second
+    if not second:
+        return first
+    return f"{first} {second}"
+
+
+def _scan_inline(body: str):
+    """Inline elements of one line → [(text, style)] or (None, False)."""
+    out: list[tuple[str, str]] = []
+    buf: list[str] = []
+    stack: list[tuple[str, str]] = []       # (closer, style)
+    i, n = 0, len(body)
+
+    def merged(styles):
+        merged_style = ""
+        for part in styles:
+            merged_style = _merge_styles(merged_style, part)
+        return merged_style
+
+    def flush():
+        if buf:
+            out.append(("".join(buf), merged([s for _, s in stack])))
+            buf.clear()
+
+    while i < n:
+        ch = body[i]
+        if ch == "\\" and i + 1 < n and body[i + 1] in ("`", "*", "/", "\\"):
+            buf.append(body[i + 1])
+            i += 2
+            continue
+        if ch == "`":
+            if stack and stack[-1][0] == "`":
+                flush()
+                stack.pop()
+            else:
+                flush()
+                stack.append(("`", "dim"))
+            i += 1
+            continue
+        if body.startswith("**", i):
+            if stack and stack[-1][0] == "**":
+                flush()
+                stack.pop()
+            else:
+                flush()
+                stack.append(("**", "bold"))
+            i += 2
+            continue
+        if ch == "*" and not (i and body[i - 1] == "*") \
+                and not (i + 1 < n and body[i + 1] == "*"):
+            if stack and stack[-1][0] == "*":
+                flush()
+                stack.pop()
+            else:
+                flush()
+                stack.append(("*", "italic"))
+            i += 1
+            continue
+        if ch == "/":
+            # An opener needs a boundary in front (`a/b` stays text); a
+            # closer needs one behind (`bold/ `) — the letter before it is
+            # the tag's own content.
+            if i == 0 or not _WORD.match(body[i - 1]):
+                opened = _slash_open(body, i)
+                if opened is not None:
+                    style, i = opened
+                    flush()
+                    stack.append(("/tag", style))
+                    continue
+            if stack and stack[-1][0] == "/tag":
+                nxt = body[i + 1] if i + 1 < n else ""
+                if not nxt or not _WORD.match(nxt):
+                    flush()
+                    stack.pop()
+                    i += 1
+                    continue
+            buf.append(ch)
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    flush()
+    if stack:
+        return None, False
+    return out, True
 
 
 class Answer:
