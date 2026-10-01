@@ -49,22 +49,8 @@ def _valid_color(value: str) -> str | None:
 
 
 def _highlight_style(color: str) -> str:
-    """Background `color`, with a foreground that reads on it."""
-    dark_on_bright = {"yellow", "white", "cyan", "green"}
-    if color in dark_on_bright:
-        return f"black on {color}"
-    if color.startswith("#"):
-        try:
-            body = color[1:]
-            if len(body) == 3:
-                body = "".join(ch * 2 for ch in body)
-            r, g, b = (int(body[i:i + 2], 16) for i in (0, 2, 4))
-            luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-            if luminance > 0.6:
-                return f"black on {color}"
-        except ValueError:
-            pass
-    return f"on {color}"
+    """The letters themselves, in `color` — bold, so they stand out."""
+    return f"bold {color}"
 
 
 def stylize_prose(text: str) -> str:

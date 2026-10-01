@@ -111,7 +111,7 @@ def test_render_line_styles_each_tag():
     assert plain == "a bold b it c un d h e"
     joined = " ".join(_styles(text))
     assert "bold" in joined and "italic" in joined
-    assert "underline" in joined and "on red" in joined
+    assert "underline" in joined and "bold red" in joined
 
 
 def test_render_line_falls_back_raw():
