@@ -201,9 +201,27 @@ def test_crax_useai_ids_leave_the_8k_default():
     from beeagent.core.context import advertised_window, window_for
 
     for model in ("gpt-6-astra", "gpt-5-6-sol", "gpt-5-5", "gpt-5-4",
-                  "kimi-k3", "deepseek-v4-pro", "instant"):
+                  "kimi-k3", "kimi-k2-6", "deepseek-v4-pro", "instant",
+                  "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5",
+                  "claude-fable-5-1", "gemini-3-8-flash", "grok-4-6"):
         assert advertised_window(model) == 128000, model
         assert window_for(model) == 32768, model
+
+
+def test_crax_claims_match_live_upstream():
+    """Every id crax serves, at the number it states — no family-substring
+    over-claim (claude→200k, gemini→1M) and no 8k default. GLMs at a million."""
+    from beeagent.core.context import advertised_window
+
+    million = ("glm-5.3", "glm-5.3-flash", "glm-5.2")
+    for model in million:
+        assert advertised_window(model) >= 1000000, model
+    rest = ("instant", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5",
+            "claude-fable-5-1", "gpt-5-6-sol", "gpt-5-5", "gpt-5-4",
+            "gpt-6-astra", "gemini-3-8-flash", "deepseek-v4-pro",
+            "kimi-k3", "kimi-k2-6", "grok-4-6")
+    for model in rest:
+        assert advertised_window(model) == 128000, model
 
 
 def test_max_context_tokens_is_a_ceiling_not_a_pin():

@@ -300,17 +300,26 @@ _MODEL_FAMILIES = (
     ("glm-5.2", 1_000_000),
     ("glm-5.3-flash", 1_048_576),
     ("glm-5.3", 1_000_000),            # 1M in, 128k of it as the reply
-    # What crax's useai rows state in live /v1/models (2026-09-30), one id per
-    # row because the family substrings below would mislabel them: "gpt-5*"
-    # matches nothing in the table and fell to the 8k default, so a ten-turn
-    # tool-heavy history dropped sixteen messages and every next turn met the
-    # user as a stranger. Sending still clamps to MAX_WINDOW until measured.
+    # What crax states in live /v1/models (re-checked 2026-10-01, all 17 ids):
+    # GLMs at a million, every useai row at 128000. One id per row because the
+    # family substrings below would mislabel them: "gpt-5*" matches nothing and
+    # fell to the 8k default (sixteen dropped messages on a ten-turn history),
+    # while "claude"→200k, "gemini"→1M, "kimi-k2-6"→256k and "grok-4-6"→500k
+    # over-claim the proxies our seats actually meet. Sending still clamps to
+    # MAX_WINDOW until measured; a probe that finds otherwise wins regardless.
     ("gpt-5-6-sol", 128000),
     ("gpt-5-5", 128000),
     ("gpt-5-4", 128000),
     ("gpt-6-astra", 128000),
     ("kimi-k3", 128000),
+    ("kimi-k2-6", 128000),
     ("deepseek-v4-pro", 128000),
+    ("claude-opus-5", 128000),
+    ("claude-opus-4-8", 128000),
+    ("claude-sonnet-5", 128000),
+    ("claude-fable-5-1", 128000),
+    ("gemini-3-8-flash", 128000),
+    ("grok-4-6", 128000),
     ("instant", 128000),
     ("grok-4-3", 1_000_000),
     ("grok-4-6", 500_000),
