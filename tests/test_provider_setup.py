@@ -315,13 +315,13 @@ def test_bare_array_model_list_parses(tmp_path, monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def __enter__(self):
+        async def __aenter__(self):
             return self
 
-        def __exit__(self, *a):
+        async def __aexit__(self, *a):
             return False
 
-        def get(self, url, headers=None):
+        async def get(self, url, headers=None):
             seen["url"] = url
 
             class Reply:
