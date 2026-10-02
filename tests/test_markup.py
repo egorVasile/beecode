@@ -192,6 +192,64 @@ def test_table_is_registered_and_silent_in_the_loop():
     assert agent.tools.get("table").silent is True
 
 
+def test_table_survives_a_stream_reset_without_running_twice(tmp_path, monkeypatch):
+    """Table made, next turn's stream dies halfway, retry: the table must not
+    run again — its result is already history, and history is what the retry
+    re-sends."""
+    import asyncio
+
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core.agent import Agent
+    from beeagent.core.session import Session
+
+    monkeypatch.chdir(tmp_path)
+    runs = []
+
+    class TableThenFlaky:
+        name = "fake"
+        models = ["fake-model"]
+        supports_tools = False
+
+        def __init__(self):
+            self.calls = 0
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            if self.calls == 1:
+                yield ("content", '{"tool": "table", "args": {"headers": ["a"], '
+                                  '"rows": [["1"]]}}')
+            elif self.calls == 2:
+                yield ("content", "half an ans")
+                raise TimeoutError("the endpoint went silent")
+            else:
+                yield ("content", "done")
+
+        async def chat(self, messages, model=""):
+            return "done"
+
+    agent = Agent(config=BeeConfig(permissions={"mode": "auto"},
+                                   stream_idle_timeout=60),
+                  workdir=str(tmp_path))
+    endpoint = TableThenFlaky()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    real_execute = agent.tools.get("table").execute
+
+    def counting(**kwargs):
+        runs.append(kwargs)
+        return real_execute(**kwargs)
+
+    agent.tools.get("table").execute = counting
+    events = []
+    answer = asyncio.run(agent.run(
+        "show it", session=Session(),
+        callback=lambda e, d: events.append((e, dict(d)))))
+
+    assert answer == "done"
+    assert len(runs) == 1, f"table ran {len(runs)} times"
+    assert "stream_reset" in [e for e, _ in events]
+
+
 def test_table_runs_without_announcement_but_reports_render(tmp_path, monkeypatch):
     """Silent means: no tool_start chalk line; tool_end carries the drawing."""
     import asyncio

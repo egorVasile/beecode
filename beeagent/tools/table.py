@@ -15,6 +15,7 @@ from .base import BaseTool, ToolResult
 
 MAX_COLS = 12
 MAX_ROWS = 20
+CELL_CHARS = 40
 
 
 class TableTool(BaseTool):
@@ -52,9 +53,29 @@ class TableTool(BaseTool):
             cells = (cells + [""] * width)[:width]
             body.append(cells)
         dropped = max(0, len(rows or []) - MAX_ROWS)
+        # The picture as text, like `diagram` does: the model reads back what
+        # it drew, so a later turn never remakes a table it cannot see. Cells
+        # are capped — a novel in a cell is not a table.
+        widths = [1] * width
+        for ci, head in enumerate(heads):
+            widths[ci] = max(widths[ci], min(len(head), CELL_CHARS))
+        for ri, row in enumerate(body):
+            for ci, cell in enumerate(row):
+                widths[ci] = max(widths[ci], min(len(cell), CELL_CHARS))
+        bar = "+" + "+".join("-" * (w + 2) for w in widths) + "+"
+        picture = [bar]
+        picture.append("| " + " | ".join(h.ljust(widths[ci])[:widths[ci]]
+                                         for ci, h in enumerate(heads)) + " |")
+        picture.append(bar)
+        for row in body:
+            picture.append("| " + " | ".join(
+                c[:CELL_CHARS].ljust(widths[ci]) for ci, c in enumerate(row)) + " |")
+        picture.append(bar)
+        output = f"table {width}x{len(body)} shown:\n" + "\n".join(picture)
+        if dropped:
+            output += f"\n({dropped} more rows cut)"
         return ToolResult(
-            output=f"table {width}x{len(body)} shown"
-                   + (f" ({dropped} more rows cut)" if dropped else ""),
+            output=output,
             error=False,
             metadata={"render": "table", "headers": heads, "rows": body,
                       "dropped": dropped},

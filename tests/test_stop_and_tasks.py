@@ -524,6 +524,16 @@ def test_the_model_is_told_to_write_the_plan_before_it_starts():
         assert before_first_call != -1, "the plan must come before the first tool call"
 
 
+def test_the_model_is_told_the_edit_discipline():
+    """Small boundaries, verbatim source, read-back: the OpenCode rules."""
+    from beeagent.core.context import SYSTEM_PROMPT, SYSTEM_PROMPT_NATIVE
+
+    for prompt in (SYSTEM_PROMPT, SYSTEM_PROMPT_NATIVE):
+        low = prompt.lower()
+        assert "boundary" in low or "boundaries" in low
+        assert "read" in low and ("back" in low or "region" in low)
+
+
 # ===========================================================================
 # 3. the UI layer: the real Textual app, driven with mouse and keyboard
 # ===========================================================================
