@@ -295,7 +295,8 @@ _MODEL_FAMILIES = (
     ("gemma-3-12b", 131072),
     ("llama-4-maverick", 1_000_000),
     ("gpt-5-6-luna", 1_050_000),
-    ("kimi-k2-6", 262144),
+    # ("kimi-k2-6" lived here at 256k for the vendor route; the live crax
+    # proxy states 128k and has its own row below, which wins by position.)
     ("kimi-k2-7-code", 262144),
     ("glm-5.2", 1_000_000),
     ("glm-5.3-flash", 1_048_576),
@@ -322,7 +323,8 @@ _MODEL_FAMILIES = (
     ("grok-4-6", 128000),
     ("instant", 128000),
     ("grok-4-3", 1_000_000),
-    ("grok-4-6", 500_000),
+    # ("grok-4-6" lived here at 500k; the live crax proxy states 128k and has
+    # its own row above, which wins by position.)
     ("deepseek-v4-flash", 1_048_576),
     ("gpt-4.1", 128000), ("gpt-4o", 128000), ("gpt-4-turbo", 128000),
     ("gpt-4", 8192), ("gpt-3.5", 16385),
