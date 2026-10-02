@@ -162,7 +162,7 @@ class Agent:
         self.route_question = None
         for endpoint in ENDPOINTS:
             key = key_for(endpoint, self.config.api_keys)
-            if key:
+            if key or endpoint.keyless:
                 self.attach_preset(endpoint.name, key)
 
         # A pool the operator runs. Registered as soon as its address is known —

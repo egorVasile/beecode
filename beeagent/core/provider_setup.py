@@ -512,9 +512,10 @@ def _apply_preset(config, agent, name, fields: Fields, keys: str, models,
         config.api_keys.pop(name, None)
     if models:
         write_models_cache(name, list(models))
-    if agent is not None and keys:
+    if agent is not None and (keys or endpoint.keyless):
         # Through the agent's factory, so an endpoint with its own provider class
         # (crax splits a pool; the generic ones carry one key) keeps that class.
+        # Keyless endpoints (Pollinations anonymous tier) attach with no key.
         agent.attach_preset(name, keys)
         agent.ready_presets = list(dict.fromkeys(list(agent.ready_presets) + [name]))
     try:
@@ -656,7 +657,7 @@ def register_live_config(agent, config) -> None:
             key = key_for(endpoint, getattr(config, "api_keys", None) or {})
         except Exception:
             continue
-        if key:
+        if key or endpoint.keyless:
             try:
                 agent.attach_preset(endpoint.name, key)
             except Exception:

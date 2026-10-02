@@ -288,3 +288,56 @@ def test_apply_persists_the_context_rule_and_rereads_it():
     assert back.custom_providers[0].max_context_tokens == 0
     unlimited, ceiling = ps.context_for(back, "big")
     assert unlimited is True and ceiling is None
+
+
+def test_keyless_preset_attaches_with_no_key(tmp_path, monkeypatch):
+    """Pollinations answers anonymously: the preset must register and serve
+    without any key in config or env."""
+    from beeagent.config.schema import BeeConfig
+    from beeagent.core.agent import Agent
+    from beeagent.providers import presets as presets_mod
+
+    monkeypatch.delenv("POLLINATIONS_API_KEY", raising=False)
+    agent = Agent(config=BeeConfig(), workdir=str(tmp_path))
+    assert "pollinations" in agent.providers.list_names()
+    assert presets_mod.BY_NAME["pollinations"].keyless is True
+
+
+def test_bare_array_model_list_parses(tmp_path, monkeypatch):
+    """Some gateways answer `[{name}]`, not `{"data": [...]}`."""
+    import httpx
+
+    from beeagent.providers.openai_compat import OpenAICompatProvider
+
+    seen = {}
+
+    class Wire:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url, headers=None):
+            seen["url"] = url
+
+            class Reply:
+                status_code = 200
+                text = '[{"name": "openai-fast"}]'
+
+            return Reply()
+
+    monkeypatch.setattr(httpx, "AsyncClient", Wire)
+    provider = OpenAICompatProvider(base_url="https://x.test/v1", api_key="",
+                                    name="x", model="m")
+
+    async def go():
+        return await provider.list_models()
+
+    import asyncio
+
+    assert asyncio.run(go()) == ["openai-fast"]
+    assert seen["url"].endswith("/models")

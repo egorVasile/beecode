@@ -22,6 +22,7 @@ class Endpoint:
     signup: str          # where to get your own key
     free: str            # what the free tier gives
     models: tuple[str, ...] = ()   # defaults; /models asks the endpoint live
+    keyless: bool = False          # answers with no key at all (anonymous tier)
 
 
 ENDPOINTS = (
@@ -98,6 +99,17 @@ ENDPOINTS = (
         signup="https://deepinfra.com",
         free="trial credits on signup; the serverless catalog is pay-per-token",
         models=("deepseek-ai/DeepSeek-R1", "meta-llama/Llama-3.3-70B-Instruct"),
+    ),
+    Endpoint(
+        # Verified live: anonymous tier answers with no key at all, tools:true.
+        # Bring POLLINATIONS_API_KEY for higher limits; without it the shipped
+        # model still answers.
+        name="pollinations", label="Pollinations",
+        url="https://text.pollinations.ai/openai", env="POLLINATIONS_API_KEY",
+        signup="no signup needed for the anonymous tier",
+        free="anonymous, no key; key raises the limits",
+        models=("openai-fast",),
+        keyless=True,
     ),
     Endpoint(
         # Two different 429s: a per-IP rate limit and a daily per-account
