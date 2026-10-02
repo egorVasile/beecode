@@ -300,6 +300,18 @@ _MODEL_FAMILIES = (
     ("glm-5.2", 1_000_000),
     ("glm-5.3-flash", 1_048_576),
     ("glm-5.3", 1_000_000),            # 1M in, 128k of it as the reply
+    # What crax's useai rows state in live /v1/models (2026-09-30), one id per
+    # row because the family substrings below would mislabel them: "gpt-5*"
+    # matches nothing in the table and fell to the 8k default, so a ten-turn
+    # tool-heavy history dropped sixteen messages and every next turn met the
+    # user as a stranger. Sending still clamps to MAX_WINDOW until measured.
+    ("gpt-5-6-sol", 128000),
+    ("gpt-5-5", 128000),
+    ("gpt-5-4", 128000),
+    ("gpt-6-astra", 128000),
+    ("kimi-k3", 128000),
+    ("deepseek-v4-pro", 128000),
+    ("instant", 128000),
     ("grok-4-3", 1_000_000),
     ("grok-4-6", 500_000),
     ("deepseek-v4-flash", 1_048_576),

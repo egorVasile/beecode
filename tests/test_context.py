@@ -194,6 +194,18 @@ def test_window_follows_the_model_and_an_unknown_one_stays_small():
     assert ContextManager(model="gpt-4").max_tokens < 8192, "room for the reply is reserved"
 
 
+def test_crax_useai_ids_leave_the_8k_default():
+    """gpt-6-astra and siblings fell to DEFAULT_WINDOW: sixteen dropped
+    messages on a ten-turn tool-heavy history, every next turn a stranger.
+    Upstream states 128k; sending still clamps to MAX_WINDOW until measured."""
+    from beeagent.core.context import advertised_window, window_for
+
+    for model in ("gpt-6-astra", "gpt-5-6-sol", "gpt-5-5", "gpt-5-4",
+                  "kimi-k3", "deepseek-v4-pro", "instant"):
+        assert advertised_window(model) == 128000, model
+        assert window_for(model) == 32768, model
+
+
 def test_max_context_tokens_is_a_ceiling_not_a_pin():
     cm = ContextManager(max_tokens=12000, model="glm-4.7-flash")
     assert cm.window == 8192, "a small model must not be fed a 12000-token request"
