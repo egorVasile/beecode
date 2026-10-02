@@ -353,9 +353,12 @@ def test_the_pool_models_carry_the_windows_their_owner_states():
     stated = {
         "qwen3-coder-480b": 262144, "gemma-3-12b": 131072,
         "llama-4-maverick": 1_000_000, "gpt-5-6-luna": 1_050_000,
-        "kimi-k2-6": 262144, "kimi-k2-7-code": 262144,
+        # kimi-k2-6 and grok-4-6: the vendors state 256k/500k, but the ids our
+        # seats meet are crax's 128k proxies — the explicit rows above win, and
+        # a probe that finds otherwise wins over both.
+        "kimi-k2-6": 128000, "kimi-k2-7-code": 262144,
         "glm-5.2": 1_000_000, "glm-5.3": 1_000_000, "glm-5.3-flash": 1_048_576,
-        "grok-4-3": 1_000_000, "grok-4-6": 500_000, "deepseek-v4-flash": 1_048_576,
+        "grok-4-3": 1_000_000, "grok-4-6": 128000, "deepseek-v4-flash": 1_048_576,
     }
     for model, tokens in stated.items():
         assert advertised_window(model) == tokens, model
