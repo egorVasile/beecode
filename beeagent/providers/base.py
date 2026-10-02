@@ -318,7 +318,12 @@ def parse_json_body(text: str, source: str = "") -> dict:
             f"{_who(source)} прислал не JSON"
             f"{f': {reason}' if reason else ''} — страница ошибки под видом ответа",
         )) from e
-    return body if isinstance(body, dict) else {}
+    if isinstance(body, dict):
+        return body
+    if isinstance(body, list):
+        # Some gateways answer a bare array, not {"data": [...]}.
+        return {"data": body}
+    return {}
 
 
 def transport_error(error: Exception, source: str = "", idle: float = 0.0) -> RuntimeError:

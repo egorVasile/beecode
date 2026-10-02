@@ -75,12 +75,8 @@ class OpenAICompatProvider(BaseProvider):
             self.report_model_list_failure(LIST_REFUSED, body_reason(text))
             raise api_error(response.status_code, text, self.name)
         data = parse_json_body(response.text or "", self.name)
-        # Some gateways (Pollinations) answer a bare array, not {"data": [...]}.
-        rows = data.get("data") if isinstance(data, dict) else None
-        if rows is None and isinstance(data, list):
-            rows = data
         found = self.remember_live_models(
-            [item.get("id") or item.get("name") for item in rows or []
+            [item.get("id") or item.get("name") for item in data.get("data") or []
              if isinstance(item, dict)])
         if not found:
             from beeagent.i18n import L
