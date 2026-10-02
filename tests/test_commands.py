@@ -16,6 +16,17 @@ SOURCES = {
 }
 
 
+def test_slash_typo_runs_the_command_it_meant():
+    """`/contunue` burned a model turn in the log: one typo away from a real
+    command is the command. Bare words never reach dispatch, so prose is safe."""
+    from beeagent.ui.commands import ReplContext
+
+    ctx = ReplContext(agent=None, config=BeeConfig(), session=Session())
+    assert dispatch(ctx, "/contunue").output is not None
+    unknown = dispatch(ctx, "/quantum_flux_capacitor")
+    assert "Unknown command" in str(unknown.output)
+
+
 def test_command_registry_has_core_commands():
     names = {c.name for c in COMMANDS}
     for expected in ("help", "model", "models", "provider", "mode", "quit", "clear", "reset"):

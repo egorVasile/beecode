@@ -443,6 +443,45 @@ def test_the_model_is_told_the_shape_it_should_write(tmp_path, monkeypatch):
     assert "[format note]" in fed_back and "```json" in fed_back
 
 
+def test_think_loop_is_warned_then_stopped(tmp_path, monkeypatch):
+    """Two think-only turns earn a must-act warning; four end the run.
+
+    Thirty plans and zero tool calls is the failure this stops: the loop
+    bills thousands of tokens for motion without movement.
+    """
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)
+
+    class ThinkForever:
+        name = "think-forever"
+
+        def __init__(self):
+            self.calls = 0
+            self.seen = []
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            self.seen.append([m.get("content", "") for m in messages])
+            yield ("content", '{"tool": "think", "args": {"plan": "step 1, step 2"}}')
+
+        async def chat(self, messages, model=""):
+            return '{"tool": "think", "args": {"plan": "step 1, step 2"}}'
+
+    agent = Agent(config=BeeConfig(permissions={"mode": "auto"}), workdir=str(tmp_path))
+    endpoint = ThinkForever()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    session = Session()
+
+    answer = asyncio.run(agent.run("сделай сайт", session=session))
+
+    assert "Stopping" in answer, "four plans with no action must end the run"
+    assert endpoint.calls == 4, f"warned at 2, stopped at 4, got {endpoint.calls}"
+    warned = [m for m in endpoint.seen[2] if "Planning is over" in str(m)]
+    assert len(warned) == 1, "the must-act warning rides exactly one request"
+
+
 def test_a_promising_answer_is_nudged_once_and_the_push_stays_out_of_history(tmp_path, monkeypatch):
     """"Now I will read the file" is a half-finished turn, not an answer."""
     import asyncio

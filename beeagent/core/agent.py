@@ -67,6 +67,18 @@ ACT_NOW = ("[SYSTEM: you described a next step but sent no tool call, so nothing
            "Either call a tool now (use `think` to plan, `ask` to ask the user, or "
            "any other tool) or answer without promising to act.]")
 
+# Planning is a step, not the work: two think-only turns in a row means the
+# model is re-planning instead of acting (seen live: thirty plans, zero tool
+# calls, thousands of tokens). Warn once, then stop — max_turns would only
+# bill the same loop fifty times.
+THINK_LOOP = ("[SYSTEM: two plans in a row and no action. Planning is over: "
+              "your next message MUST contain a real working tool call "
+              "(list_directory, read, write, edit, bash, diagnostics, ...) — "
+              "not another think, not prose about the plan.]")
+THINK_LOOP_STOP = ("Stopping: the model planned four times in a row without a "
+                   "single working tool call, so this run is going nowhere. "
+                   "Ask again with a smaller first step.")
+
 # A model that answers "I have no file access" is not finished either — the
 # tools are in this conversation, named, with schemas. Seen live 2026-09-30:
 # a free-routed model told the user to attach an archive of the folder instead
@@ -342,6 +354,8 @@ class Agent:
             trim_reported = False
             nudged = False
             nudge_pending = False
+            think_streak = 0
+            think_warned = False
             broken_streak = 0
 
             # A zero (or a negative, from a hand-edited beeagent.json) used to end
@@ -518,6 +532,21 @@ class Agent:
                 # The how lives in core/executor.py; the loop only owes the
                 # assistant row above and the broken-note below.
                 await executor.execute_commands(self, session, parsed, callback)
+
+                if parsed.commands and all(cmd.tool == "think"
+                                           for cmd in parsed.commands):
+                    think_streak += 1
+                    if think_streak >= 4:
+                        if callback:
+                            callback("error", {"message": THINK_LOOP_STOP})
+                        return THINK_LOOP_STOP
+                    if think_streak >= 2 and not think_warned:
+                        think_warned = True
+                        nudge_pending = THINK_LOOP
+                        if callback:
+                            callback("nudged", {})
+                else:
+                    think_streak = 0
 
                 if broken_note:
                     # Some calls ran and one did not: the model still has to hear

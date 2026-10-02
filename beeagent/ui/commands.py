@@ -2854,7 +2854,17 @@ def dispatch(ctx: ReplContext, line: str) -> CommandResult:
     args = parts[1:]
     handler = HANDLERS.get(name)
     if handler is None:
-        return _err(f"Unknown command: /{name}. Type /help for the list.")
+        # "/contunue" burned a model turn in the log: one typo away from a
+        # real command is the command, not an error. Bare words never come
+        # here (the REPL sends those to the model), so this cannot eat prose.
+        import difflib
+
+        near = difflib.get_close_matches(name, list(HANDLERS), n=1, cutoff=0.8)
+        if near:
+            handler = HANDLERS[near[0]]
+            name = near[0]
+        else:
+            return _err(f"Unknown command: /{name}. Type /help for the list.")
     try:
         return handler(ctx, args)
     except Exception as e:
