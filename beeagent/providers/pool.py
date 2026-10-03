@@ -220,6 +220,8 @@ def approve_seat(url: str, admin_secret: str, token: str,
     The secret travels this once and is never stored — the caller prompts for
     it every time. Returns the pool's answer (`{"approved": true}`).
     """
+    from beeagent.i18n import L
+
     endpoint = (url or "").strip().rstrip("/") + "/v1/admin/approve"
     body = json.dumps({"token": token}).encode()
     try:
@@ -233,6 +235,22 @@ def approve_seat(url: str, admin_secret: str, token: str,
     data = _safe_json(response) or {}
     if response.status_code != 200 or not data.get("approved"):
         raise PoolError(_reason(response.status_code, data))
+    # Trust, then verify: read the seat back and confirm it is really open.
+    # A 200 that approved nothing used to end here with congratulations.
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            seat = _seat_of(client, (url or "").strip().rstrip("/"), token,
+                            min(float(timeout), SEAT_WAIT))
+    except Exception as e:
+        raise PoolError(L(f"approved, but the seat cannot be read back: {e} — "
+                          f"the token the pool approved may not be this install's",
+                          f"подтверждено, но место не читается: {e} — "
+                          f"возможно, подтверждено не это место")) from e
+    if not (seat or {}).get("approved", True):
+        raise PoolError(L("the pool confirmed the approve, but this seat still "
+                          "reads unapproved — enroll again and approve the new token",
+                          "пул подтвердил, но место всё ещё непрочитано как "
+                          "подтверждённое — возьми место заново и подтверди его"))
     return data
 
 

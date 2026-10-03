@@ -179,6 +179,13 @@ def test_approve_seat_sends_token_with_admin_header(monkeypatch):
         def json(self):
             return _json.loads(self.text)
 
+    class SeatReply:
+        status_code = 200
+        text = _json.dumps({"approved": True, "requests": 0})
+
+        def json(self):
+            return _json.loads(self.text)
+
     class Sync:
         def __init__(self, *a, **k):
             pass
@@ -189,9 +196,18 @@ def test_approve_seat_sends_token_with_admin_header(monkeypatch):
         def __exit__(self, *a):
             return False
 
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
         def post(self, url, content=None, headers=None):
             seen.update(url=url, content=content, headers=headers)
             return Reply()
+
+        def get(self, url, headers=None, timeout=None):
+            return SeatReply()
 
     monkeypatch.setattr(pool_mod.httpx, "Client", Sync)
     out = pool_mod.approve_seat("https://pool.test", "admin-secret", "seat-token")
