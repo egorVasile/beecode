@@ -16,6 +16,8 @@ is shown in full and runs only after the user pressed "yes".
 from __future__ import annotations
 
 import json
+import os
+import threading
 import time
 from typing import AsyncIterator, Callable, Optional
 
@@ -38,6 +40,43 @@ EMPTY_STREAM_COOLDOWN = 20.0
 # A catalogue read while a person looks at the picker: short, because the shipped
 # list is there to answer instead of it.
 MODELS_WAIT = 15.0
+
+
+def _min_interval() -> float:
+    """Seconds between request starts: the documented 40/min/IP is one every
+    1.5 s, and back-to-back turns used to spend themselves straight into the
+    IP 429. `BEECODE_CRAX_MIN_INTERVAL` tunes it; tests never wait."""
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return 0.0
+    try:
+        return max(0.0, float(os.environ.get("BEECODE_CRAX_MIN_INTERVAL") or 1.5))
+    except (TypeError, ValueError):
+        return 1.5
+
+
+# Process-wide: the IP limit is shared across keys and instances, so per-object
+# pacing would let three providers triple the rate the limit counts as one.
+_pace_lock = threading.Lock()
+_next_allowed_at = 0.0
+
+
+def _reserve_slot() -> float:
+    """Seconds to wait before starting now; the slot is already taken."""
+    global _next_allowed_at
+    interval = _min_interval()
+    with _pace_lock:
+        now = time.monotonic()
+        start = max(now, _next_allowed_at)
+        _next_allowed_at = start + interval
+        return max(0.0, start - now)
+
+
+async def _pace() -> None:
+    import asyncio
+
+    wait = _reserve_slot()
+    if wait > 0:
+        await asyncio.sleep(wait)
 
 # The same list the pool server keeps. An endpoint that also sells image, video
 # and audio generation will answer for those models, and a coding agent has no
@@ -358,6 +397,7 @@ class CraxProvider(BaseProvider):
 
     async def chat(self, messages: list[dict], model: str = "", stream: bool = False) -> str:
         self._require_key()
+        await _pace()
         attempts = 0
         while attempts < max(1, len(self.keys)):
             usable = self._usable()
@@ -405,6 +445,7 @@ class CraxProvider(BaseProvider):
         first key.
         """
         self._require_key()
+        await _pace()
         tried: list[int] = []
         empties = 0
         asks = 0

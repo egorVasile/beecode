@@ -203,6 +203,24 @@ def test_the_catalogue_shows_what_this_interface_can_answer(make_endpoint):
     assert provider.discover_models() == ["qwen3.8-max", "gpt-5-6-luna"]
 
 
+def test_pacing_serializes_bursts_process_wide(monkeypatch):
+    """40/min/IP is one start every 1.5 s: immediate asks leave ordered,
+    spaced stamps — across instances, since the limit counts the IP."""
+    import time
+
+    from beeagent.providers import crax as crax_mod
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("BEECODE_CRAX_MIN_INTERVAL", raising=False)
+    crax_mod._next_allowed_at = 0.0
+    try:
+        assert crax_mod._reserve_slot() == 0.0
+        second = crax_mod._reserve_slot()
+        assert 1.0 <= second <= 2.0, second
+    finally:
+        crax_mod._next_allowed_at = 0.0
+
+
 def test_the_default_model_is_one_that_answered_the_last_time_we_measured():
     """A default that does not answer is the first thing a new person meets, and it
     reads as a broken install rather than a broken model.
