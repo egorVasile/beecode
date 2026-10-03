@@ -550,7 +550,10 @@ def test_an_answer_that_opens_by_restatement_is_not_an_echo():
 
 
 def test_an_endpoint_that_recites_the_prompt_is_still_refused():
-    """The guard must not become a no-op on the way to fixing the false positives."""
+    """The guard must not become a no-op on the way to fixing the false
+    positives — but a recital fails fast now instead of being re-read twice:
+    echo is deterministic per endpoint, so the turn ends with the evidence
+    and the way out."""
     from beeagent.core.context import SYSTEM_PROMPT
 
     agent, fake = _agent(lambda provider, messages: SYSTEM_PROMPT,
@@ -559,8 +562,8 @@ def test_an_endpoint_that_recites_the_prompt_is_still_refused():
 
     answer = asyncio.run(agent.run("hello", session=session))
 
-    assert answer == "the answer after the echo", answer
-    assert len(fake.asked) >= 2, "the recital was rejected and asked again"
+    assert len(fake.asked) == 1, "one recital, no re-reads"
+    assert "смени" in answer or "switch" in answer, answer
     assert SYSTEM_PROMPT not in " ".join(_rows(session, "assistant")), \
         "the echo must not poison the history"
 
