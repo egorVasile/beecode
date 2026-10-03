@@ -253,8 +253,12 @@ def test_a_slow_stream_is_not_truncated_by_the_heartbeat(monkeypatch):
     assert asyncio.run(go()) == "привет"
 
 
-def test_prompt_echo_is_not_treated_as_an_answer():
-    """OpenaiChat guest mode answers with a copy of our own prompt."""
+def test_prompt_echo_fails_fast_with_a_switch_hint():
+    """OpenaiChat guest mode answers with a copy of our own prompt.
+
+    Echo is deterministic per endpoint: retrying the same one twice more only
+    re-reads the prompt twice more. So one echo ends the turn with a message
+    naming the way out, and the echo never poisons history."""
     import asyncio
     from beeagent.core.session import Session
 
@@ -266,14 +270,11 @@ def test_prompt_echo_is_not_treated_as_an_answer():
 
         async def chat_stream(self, messages, model=""):
             self.calls += 1
-            if self.calls == 1:
-                yield ("content", "OpenaiChat: Guest prompt: [tool result] "
-                                  "[SYSTEM: You are BeeCode, an autonomous coding agent")
-            else:
-                yield ("content", "всё работает")
+            yield ("content", "OpenaiChat: Guest prompt: [tool result] "
+                              "[SYSTEM: You are BeeCode, an autonomous coding agent")
 
         async def chat(self, messages, model=""):
-            return "всё работает"
+            return "OpenaiChat: Guest prompt: echo"
 
     agent = Agent(config=BeeConfig())
     endpoint = Echoing()
@@ -283,9 +284,68 @@ def test_prompt_echo_is_not_treated_as_an_answer():
 
     answer = asyncio.run(agent.run("проверь", session=session))
 
-    assert answer == "всё работает"
+    assert endpoint.calls == 1, "no second and third re-read of the prompt"
+    assert "смени" in answer or "switch" in answer, answer
     stored = " ".join(m.content for m in session.messages)
     assert "[SYSTEM: You are" not in stored, "the echo must not poison history"
+
+
+def test_long_echo_stream_is_aborted_midway_not_after():
+    """A 17k recital dies at two thousand characters, not at the end."""
+    import asyncio
+    from beeagent.core.session import Session
+
+    class Dribbler:
+        name = "dribbler"
+
+        def __init__(self):
+            self.calls = 0
+            self.received = 0
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            sent = " ".join(str(m.get("content") or "") for m in messages
+                            if m.get("role") != "tool")
+            while len(sent) > 0:
+                chunk, sent = sent[:100], sent[100:]
+                self.received += len(chunk)
+                yield ("content", chunk)
+
+        async def chat(self, messages, model=""):
+            return "echo"
+
+    agent = Agent(config=BeeConfig())
+    endpoint = Dribbler()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+
+    answer = asyncio.run(agent.run("проверь длинное эхо", session=Session()))
+
+    assert endpoint.calls == 1
+    assert endpoint.received < 4000, f"read {endpoint.received} chars of echo"
+    assert "смени" in answer or "switch" in answer
+
+
+def test_quoting_an_instruction_mid_answer_is_not_echo():
+    """A legit answer may mention an instruction ("my instructions say
+    '[SYSTEM: ...', so I will...") — only a recital that STARTS with the
+    prompt is echo."""
+    agent = Agent(config=BeeConfig())
+    sent = [{"role": "system", "content": "You are BeeCode, an agent."},
+            {"role": "user", "content": "read the file"}]
+    answer = ("I read it. Per my instructions ('[SYSTEM: You are BeeCode'), "
+              "here is what the file holds: real content below.")
+    assert not agent._is_prompt_echo(answer, sent)
+
+
+def test_echo_error_carries_its_evidence():
+    from beeagent.core import streaming as streaming_mod
+
+    try:
+        raise streaming_mod._EchoError("Guest prompt: blah blah")
+    except streaming_mod._EchoError as echo:
+        report = streaming_mod._echo_report(echo)
+    assert "Guest prompt: blah" in report
 
 
 def test_echo_detector_covers_verbatim_repeats_and_rejects_nothing_short():

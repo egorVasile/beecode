@@ -25,6 +25,34 @@ ECHO_MARKERS = ("[SYSTEM: You are", "Guest prompt:", "Do NOT say you lack file a
 # of the reply the copied part has to be for the reply to *be* the copy.
 ECHO_MIN_CHARS = 60
 ECHO_SHARE = 0.7
+# A reply that is still a verbatim copy of the request after this many
+# characters is never going to become an answer: kill the stream here instead
+# of reading the whole prompt back and retrying the same endpoint twice more.
+ECHO_ABORT_CHARS = 2000
+
+ECHO_FATAL = ("эндпоинт вернул эхо нашего промпта — он не отвечает, а "
+              "пересказывает запрос; смени модель или провайдера "
+              "(/models, /providers)")
+
+
+def _echo_report(echo: "_EchoError") -> str:
+    """The verdict plus the evidence: what was flagged, in the open."""
+    base = ECHO_FATAL
+    if echo.excerpt:
+        base += f" Flagged text starts: “{echo.excerpt}”"
+    return base
+
+
+class _EchoError(Exception):
+    """The endpoint is reciting the request, not answering it.
+
+    Carries the opening of the flagged text: an echo verdict with no evidence
+    is indistinguishable from a detector bug, so the evidence travels with it.
+    """
+
+    def __init__(self, text: str = ""):
+        super().__init__(text)
+        self.excerpt = str(text or "")[:220]
 
 
 def _flat(text) -> str:
@@ -73,8 +101,23 @@ def is_prompt_echo(content: str, messages: list[dict]) -> bool:
     text = _flat(content)
     if not text:
         return False
-    if any(marker in content for marker in ECHO_MARKERS):
+    # Markers count up front, and two different ones settle it: a recital
+    # STARTS with the prompt and keeps copying it ("Guest prompt: ... [SYSTEM:
+    # ..."), while a legit answer may quote one instruction mid-sentence ("my
+    # instructions say '[SYSTEM: ...', so I will...") and carry on with its own
+    # words. Flagging the quote killed honest answers.
+    head = content[:300]
+    hits = [marker for marker in ECHO_MARKERS if marker in head]
+    if len(hits) >= 2:
         return True
+    if len(hits) == 1:
+        at = head.find(hits[0])
+        follows = _flat(head[at + len(hits[0]):at + len(hits[0]) + 120])
+        if len(follows) >= 40 and any(
+                follows in _flat(str(m.get("content") or ""))
+                for m in messages if m.get("role") != "tool"
+                and len(_flat(str(m.get("content") or ""))) >= ECHO_MIN_CHARS):
+            return True
     if len(text) < ECHO_MIN_CHARS:
         return False
     for message in messages:
@@ -148,6 +191,7 @@ async def stream_response(provider, messages, callback, model: str = "",
             stream = None
             try:
                 answer, reasoning = [], []
+                answer_len = 0
                 stream = provider.chat_stream(messages, model=model)
                 iterator = stream.__aiter__()
                 while True:
@@ -167,18 +211,32 @@ async def stream_response(provider, messages, callback, model: str = "",
                             callback("reasoning_delta", {"text": text})
                     else:
                         answer.append(text)
+                        answer_len += len(text)
                         if callback:
                             callback("stream_delta", {"text": text})
                         emitted = True
+                        if answer_len >= ECHO_ABORT_CHARS \
+                                and is_prompt_echo("".join(answer), messages):
+                            # Still a copy after two thousand characters: this
+                            # stream will never turn into an answer. Abort it
+                            # now instead of reading the whole prompt back.
+                            raise _EchoError("".join(answer))
                 content = "".join(answer)
                 if not content.strip():
                     last_error = "empty response"
                 elif is_prompt_echo(content, messages):
-                    last_error = "эндпоинт вернул эхо нашего промпта"
+                    raise _EchoError(content)
                 else:
                     return content
             except asyncio.CancelledError:
                 raise
+            except _EchoError as echo:
+                # Deterministic per endpoint and prompt: retrying the same
+                # endpoint twice more only re-reads the prompt twice more.
+                # Fail fast so the user switches instead of waiting.
+                if emitted and callback:
+                    callback("stream_reset", {})
+                raise _no_answer(_echo_report(echo)) from echo
             except Exception as e:
                 last_error = _reason(e, last_error)   # fall through to retry
             finally:
@@ -201,7 +259,7 @@ async def stream_response(provider, messages, callback, model: str = "",
             if not (text or "").strip():
                 last_error = "empty response"
             elif is_prompt_echo(text, messages):
-                last_error = "эндпоинт вернул эхо нашего промпта"
+                raise _EchoError(text)
             else:
                 # Non-stream fallback: the UI never saw this text, so
                 # emit it as one delta or the answer is silently lost.
@@ -210,6 +268,8 @@ async def stream_response(provider, messages, callback, model: str = "",
                 return text
         except asyncio.CancelledError:
             raise
+        except _EchoError as echo:
+            raise _no_answer(_echo_report(echo)) from echo
         except asyncio.TimeoutError:
             last_error = f"non-stream chat timed out after {idle * 2}s"
         except Exception as e:
