@@ -91,6 +91,29 @@ def test_a_tag_body_that_is_json_becomes_the_arguments():
     assert calls(tag) == [("read", {"path": "a.py"})]
 
 
+def test_name_arguments_dialect_calls_the_tool():
+    """Weak models answer <name>write</name><arguments>{…}</arguments> instead
+    of a JSON block. Seen live; printing it as prose kills the turn."""
+    tag = ('<name>write</name>\n<arguments>{"path": "a.py", '
+           '"content": "hi"}</arguments>')
+    assert calls(tag) == [("write", {"path": "a.py", "content": "hi"})]
+    params = '<name>edit</name><parameters>{"path": "a.py"}</parameters>'
+    assert calls(params) == [("edit", {"path": "a.py"})]
+
+
+def test_cut_off_dialect_call_is_dropped_with_guidance_not_prose():
+    """A 13 KB write truncated before </arguments>: the fragment must come
+    back as a dropped note telling the model to split it up — never as the
+    turn's answer."""
+    from beeagent.core.parser import CommandParser
+
+    cut = '<name>write</name>\n<arguments>{"path": "a.py", "content": "half a file'
+    parsed = CommandParser().parse("Here it is:\n" + cut)
+    assert not parsed.has_commands
+    assert any("cut off" in note and "edit" in note for note in parsed.dropped), \
+        parsed.dropped
+
+
 def test_the_model_is_asked_again_after_a_cut_off_call(tmp_path, monkeypatch):
     """Ending the turn on "I will create the file" is what reads as being ignored."""
     monkeypatch.chdir(tmp_path)

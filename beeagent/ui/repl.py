@@ -212,6 +212,15 @@ def handle_callback(event: str, data: dict):
     elif event == "tool_end":
         render_tool_end(data["tool"], data["args"], data["output"], data["error"],
                         render=data.get("render"))
+        if data.get("tool") == "think" and not data.get("error"):
+            # The plan, above the prompt, kept current: steps, status and how
+            # many working calls happened since. Re-printed on every think so
+            # the strip never goes stale.
+            from beeagent.tools.think import ThinkTool
+
+            for row in ThinkTool.hud():
+                console.print(Text(f"  📋 {row}" if row.startswith("plan") else
+                                   f"     {row}", style="dim"))
 
     elif event == "nudged":
         _note("🐝", "the model promised a step but sent no tool call — asked it to act",

@@ -980,6 +980,11 @@ class BeeCodeApp(App):
             except Exception:
                 mine = None
             if mine is None:
+                if data.get("tool") == "think" and not data.get("error"):
+                    from beeagent.tools.think import ThinkTool
+
+                    for row in ThinkTool.hud():
+                        self._note("📋", row, row, style="dim")
                 render = data.get("render")
                 if isinstance(render, dict):
                     # A silent tool that draws: the table, and nothing else.

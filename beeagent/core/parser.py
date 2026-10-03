@@ -38,6 +38,13 @@ _TAG_NAME = "tool" + "_" + "call"
 _TAG_OPEN = "<" + _TAG_NAME
 _TAG_CLOSE = "</" + _TAG_NAME + ">"
 _TAG_PATTERN = re.compile(_TAG_OPEN + r"\s*(\w+)[\s\n]*(.*?)" + _TAG_CLOSE, re.DOTALL)
+# The other XML dialect in the wild: <name>write</name><arguments>{…}</arguments>
+# (and <parameters> for the same). Seen live from a weak model that never
+# emitted a single ```json block; without this its calls print as prose and
+# the turn dies having done nothing.
+_NAME_ARGS_PATTERN = re.compile(
+    r"<name>\s*(\w+)\s*</name>\s*<(?:arguments|parameters|params)>(.*?)"
+    r"</(?:arguments|parameters|params)>", re.DOTALL)
 
 # A backslash that cannot start a JSON escape — typical for a Windows path the
 # model wrote as "C:\Users\proj" instead of "C:\\Users\\proj".
@@ -520,6 +527,39 @@ class CommandParser:
                 args = self._parse_simple_args(body)
             commands.append(ParsedCommand(tool=tool_name, args=args))
             remaining = remaining.replace(match.group(0), "", 1)
+
+        # 2b. The <name>/<arguments> dialect, for models that never emit JSON
+        #     blocks. Same shape out, same repair notes back.
+        for match in _NAME_ARGS_PATTERN.finditer(remaining):
+            tool_name = match.group(1)
+            body = match.group(2).strip()
+            args: dict = {}
+            if body[:1] in "{[":
+                data, notes = _read_call_object(body)
+                if data is not None:
+                    inner = _calls_from(data)
+                    if inner:
+                        tool_name = inner[0].tool or tool_name
+                        args = inner[0].args
+                    elif isinstance(data, dict):
+                        args = _args_of(data)
+                    remember(notes)
+            if not args:
+                args = self._parse_simple_args(body)
+            commands.append(ParsedCommand(tool=tool_name, args=args))
+            remaining = remaining.replace(match.group(0), "", 1)
+
+        # 2c. A dialect call cut off mid-arguments: the closing tag never
+        #     arrived (a 13 KB write hits the output cap), so 2b matched
+        #     nothing and section 3 below looks for `"tool":` the dialect does
+        #     not spell. Name it as dropped — with the split-it-up guidance —
+        #     instead of selling the fragment as prose.
+        if not commands and re.search(r"</?name\s*>|</?arguments\s*>|</?parameters\s*>",
+                                      remaining):
+            dropped.append(
+                "a <name>/<arguments> call arrived cut off before its closing "
+                "tag — write large content in parts (write the start, append "
+                "the rest with edit) instead of one giant call")
 
         # 3. What is left that names a tool: brackets never closed, a stray
         #    comma, a value written across raw newlines. Complete what is

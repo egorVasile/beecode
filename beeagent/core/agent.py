@@ -97,6 +97,23 @@ YOU_HAVE_TOOLS = ("[SYSTEM: you DO have file access — read, grep, glob and "
                   "and the working directory is real. Either call one now or "
                   "answer without claiming you cannot.]")
 
+# A greeting instead of an answer: the user asked something real and the
+# model replied "Ready, what can I do for you" — or learned a new shape of
+# the same dodge ("BeeCode here — what's the task?"). Nudged once, and only
+# when the question was substantive — a bare "ку" deserves its "Ку! Чем
+# помочь?". Matched anywhere in a short answer: greetings hide mid-sentence.
+_GREETING = re.compile(
+    r"^(hi|hello|hey|ready|greetings|yo|ку|привет|здравствуй|добрый день|"
+    r"hello!|hi!)[.!…\s]*(what|how can i|чем помочь|чем могу|что нужно|"
+    r"что (я могу|могу я)|ready to help|here to help|assist you)?.*$"
+    r"|what('s| is) the task\b.{0,60}$"
+    r"|how can i help( you)?\b"
+    r"|чем помочь\b.{0,40}$",
+    re.I,
+)
+ANSWER_IT = ("[SYSTEM: that was a greeting, but the user asked a question. "
+             "Answer it or call a tool — do not greet back.]")
+
 # Sent back when a call was recognised but could not be read. It goes into the
 # transcript, not just the request: an attempt really was made and refused.
 _RESEND_CALL = ("[BeeCode] Your tool call arrived broken, so it was not run: {note}. "
@@ -442,11 +459,19 @@ class Agent:
                         # user watches a silent turn.
                         if callback and response:
                             callback("stream_delta", {"text": response})
-                        parsed = ParsedResponse(
-                            text=response,
-                            commands=[ParsedCommand(str(c.get("tool", "")),
-                                                    c.get("args") or {}) for c in calls],
-                            has_commands=bool(calls))
+                        if calls:
+                            parsed = ParsedResponse(
+                                text=response,
+                                commands=[ParsedCommand(str(c.get("tool", "")),
+                                                        c.get("args") or {}) for c in calls],
+                                has_commands=True)
+                        else:
+                            # The gateway did not decode a call, but the text
+                            # may still carry one: weak models answer the native
+                            # tools array with ```json or <name>/<arguments>.
+                            # Read the text exactly like the streamed path does
+                            # instead of selling it as the turn's answer.
+                            parsed = self.parser.parse(response)
                     else:
                         response = await self._stream_response(provider, messages, callback, model)
                         parsed = self.parser.parse(response)
@@ -511,6 +536,22 @@ class Agent:
                         if callback:
                             callback("nudged", {})
                         continue
+                    if not nudged and len(response or "") < 150 \
+                            and _GREETING.search((response or "").strip()):
+                        # A greeting answering a real question. The question is
+                        # what the user actually asked this turn, not the whole
+                        # transcript: a short follow-up earns its greeting.
+                        question = ""
+                        for message in reversed(session.messages):
+                            if message.role == "user":
+                                question = str(message.content or "")
+                                break
+                        if len(question) > 25:
+                            nudged = True
+                            nudge_pending = ANSWER_IT
+                            if callback:
+                                callback("nudged", {})
+                            continue
                     self.economy.store_cache(prompt_str, model, response)
                     if callback:
                         # The text travels with the event: a plugin listening for

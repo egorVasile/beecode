@@ -184,6 +184,11 @@ async def execute_commands(agent, session, parsed, callback) -> None:
             )
         session.add_tool_result(result_text)
 
+        if not result.error and cmd.tool != "think":
+            # Movement the plan HUD can show: working calls since the plan.
+            from beeagent.tools.think import ThinkTool
+
+            ThinkTool.note_work()
         if callback:
             # Silent tools draw instead of announcing: the render payload
             # travels on the same event, so no new event name, no skin drift.

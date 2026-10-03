@@ -482,6 +482,94 @@ def test_think_loop_is_warned_then_stopped(tmp_path, monkeypatch):
     assert len(warned) == 1, "the must-act warning rides exactly one request"
 
 
+def test_a_greeting_answering_a_real_question_is_nudged_once(tmp_path, monkeypatch):
+    """"Ready, what can I do for you" to a direct task is a misfire, and "ку"
+    earning "Ку! Чем помочь?" is correct — the question decides."""
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)
+
+    class GreetFirst:
+        name = "greet-first"
+
+        def __init__(self):
+            self.calls = 0
+            self.seen = []
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            self.seen.append([m.get("content", "") for m in messages])
+            if self.calls == 1:
+                yield ("content", "Ready. What file, command, or task should I work on?")
+            else:
+                yield ("content", "PINEAPPLE")
+
+        async def chat(self, messages, model=""):
+            return "PINEAPPLE"
+
+    agent = Agent(config=BeeConfig(permissions={"mode": "auto"}), workdir=str(tmp_path))
+    endpoint = GreetFirst()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    session = Session()
+
+    answer = asyncio.run(agent.run(
+        "Reply with exactly the word PINEAPPLE and nothing else.", session=session))
+    assert answer == "PINEAPPLE"
+    assert endpoint.calls == 2
+    assert any("that was a greeting" in str(m) for m in endpoint.seen[1])
+
+
+def test_a_greeting_answering_small_talk_stands(tmp_path, monkeypatch):
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)
+
+    class Greeter:
+        name = "greeter"
+
+        async def chat_stream(self, messages, model=""):
+            yield ("content", "Ку! Чем помочь?")
+
+        async def chat(self, messages, model=""):
+            return "Ку! Чем помочь?"
+
+    agent = Agent(config=BeeConfig(permissions={"mode": "auto"}), workdir=str(tmp_path))
+    endpoint = Greeter()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+
+    answer = asyncio.run(agent.run("ку", session=Session()))
+    assert "Чем помочь" in answer
+
+
+def test_native_path_falls_back_to_parsing_text_calls(tmp_path, monkeypatch):
+    """A native answer whose gateway decoded no calls but whose text carries
+    one (```json, <name>/<arguments>) must run it — not end the turn."""
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)
+
+    class NativeTextOnly:
+        name = "native-text"
+        models = ["m"]
+        supports_tools = True
+
+        async def complete(self, messages, model="", tools=None):
+            return {"text": '<name>write</name>\n<arguments>{"path": "a.txt", '
+                            '"content": "hi"}</arguments>',
+                    "tool_calls": []}
+
+    agent = Agent(config=BeeConfig(permissions={"mode": "auto"}), workdir=str(tmp_path))
+    endpoint = NativeTextOnly()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    session = Session()
+
+    answer = asyncio.run(agent.run("write it", session=session))
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "hi"
+
+
 def test_a_promising_answer_is_nudged_once_and_the_push_stays_out_of_history(tmp_path, monkeypatch):
     """"Now I will read the file" is a half-finished turn, not an answer."""
     import asyncio

@@ -21,7 +21,8 @@ class WriteTool(BaseTool):
         "Create a new file or rewrite one completely (missing parent directories are created). "
         "Use edit for changes to existing code, and do not create files the task does not need — "
         "no notes, summaries or logs unless someone asked for them. Only inside the working "
-        "directory: a path outside it is refused, never silently redirected."
+        "directory: a path outside it is refused, never silently redirected. "
+        "Large content goes in parts (write the start, append with edit)."
     )
     parameters = {
         "type": "object",

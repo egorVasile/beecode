@@ -622,9 +622,29 @@ def test_think_result_orders_step_one_now(tmp_path, monkeypatch):
     disease. The result must demand step 1 with a working tool call."""
     monkeypatch.chdir(tmp_path)
     from beeagent.tools.think import ThinkTool
-    result = ThinkTool().execute("step 1: list files")
+    result = ThinkTool().execute("step 1: list files\nstep 2: write it")
     assert "step 1" in result.output.lower()
     assert "think again" in result.output.lower()
+    assert "step 2: write it" not in result.output, \
+        "the plan must not echo back — the echo is what got re-planned"
+    assert result.metadata["plan_steps"] == 2
+
+
+def test_think_hud_shows_steps_status_and_work(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from beeagent.tools.think import ThinkTool
+    ThinkTool().execute("step one\nstep two", status="in_progress")
+    rows = ThinkTool.hud()
+    assert rows[0].startswith("plan [in_progress]")
+    assert "2 steps" in rows[0] and "0 tool calls" in rows[0]
+    assert rows[1].strip().startswith("1.")
+    ThinkTool.note_work()
+    ThinkTool.note_work()
+    assert "2 tool calls" in ThinkTool.hud()[0]
+    ThinkTool().execute("step one", status="done")
+    hud = ThinkTool.hud()
+    assert "0 tool calls" in hud[0], "a new plan restarts the count"
+    assert hud[-1].strip().startswith("done")
 
 
 def test_think_persists_to_disk(tmp_path, monkeypatch):
