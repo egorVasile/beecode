@@ -58,11 +58,16 @@ class ThinkTool(BaseTool):
         steps = list(cls._plan.get("steps") or [])
         if not steps:
             return []
+        import re
+
         status = str(cls._plan.get("status") or "reasoning")
         head = f"plan [{status}]: {len(steps)} steps, {cls._work_calls} tool calls in"
         rows = [head]
         for number, step in enumerate(steps[:8], 1):
-            rows.append(f"  {number}. {step[:100]}")
+            # The model numbers its own steps ("1. ...", "1) ...", "- ..."):
+            # strip that or the strip reads "1. 1.".
+            clean = re.sub(r"^(?:\d+[.)]\s*|[-*•]\s+)", "", step.strip())
+            rows.append(f"  {number}. {clean[:100]}")
         if len(steps) > 8:
             rows.append(f"  … +{len(steps) - 8} more")
         if status == "done":

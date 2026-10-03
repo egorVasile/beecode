@@ -633,6 +633,12 @@ def test_think_result_orders_step_one_now(tmp_path, monkeypatch):
 def test_think_hud_shows_steps_status_and_work(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from beeagent.tools.think import ThinkTool
+    ThinkTool().execute("1. first thing\n2) second thing\n- third thing",
+                        status="in_progress")
+    rows = ThinkTool.hud()
+    assert rows[1].strip() == "1. first thing", rows
+    assert rows[2].strip() == "2. second thing", rows
+    assert rows[3].strip() == "3. third thing", rows
     ThinkTool().execute("step one\nstep two", status="in_progress")
     rows = ThinkTool.hud()
     assert rows[0].startswith("plan [in_progress]")

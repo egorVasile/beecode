@@ -348,6 +348,19 @@ def test_echo_error_carries_its_evidence():
     assert "Guest prompt: blah" in report
 
 
+def test_a_tool_call_is_action_never_echo():
+    """A textbook call matching the doc example byte for byte killed a live
+    turn with "switch model". Calls run; only prose can be echo."""
+    agent = Agent(config=BeeConfig())
+    sent = [{"role": "system",
+             "content": 'To call: ```json\n{"tool": "tool_name", "args": {}}```\n'
+                        'Example: {"tool": "list_directory", "args": {"path": "."}}'}]
+    call = '```json\n{"tool": "list_directory", "args": {"path": "."}}\n```'
+    assert not agent._is_prompt_echo(call, sent)
+    assert not agent._is_prompt_echo(
+        "<name>read</name><arguments>{\"path\": \"a\"}</arguments>", sent)
+
+
 def test_echo_detector_covers_verbatim_repeats_and_rejects_nothing_short():
     agent = Agent(config=BeeConfig())
     request = ("сделай задачу и проверь тестами результат работы агента, "

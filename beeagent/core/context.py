@@ -173,7 +173,8 @@ is the failure.
 # MARKUP AND TABLES
 - Emphasis: /b bold/, /i italic/, /u underline/, /с.red highlight/ (colors: red
   orange yellow green blue purple pink teal gray magenta cyan white black).
-  An unclosed tag runs to the line end. Never inside code.
+  An unclosed tag runs to the line end. Never inside code — and never around
+  paths, commands or URLs: those stay plain so they can be copied.
 - Combine by nesting: /с.red /b red bold/ closes inner first, outer runs on.
 - When, not how: /b/ for what was DONE ("Done! I /b fixed 11 bugs!/"), /i/
   for side notes, /u/ for names and actions ("I /u created/ a beautiful,

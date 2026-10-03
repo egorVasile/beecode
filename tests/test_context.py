@@ -305,6 +305,10 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
     It moved on 2026-09-30, to 4300: the `table` tool (nineteen to twenty)
     plus the MARKUP AND TABLES prompt section — the combining guide, the
     colour list and the when-to-mark examples the model actually follows.
+
+    It moved on 2026-10-01, to 4350: one line teaching that paths, commands
+    and URLs stay plain (the model wrapped them in highlight tags), measured
+    4319 after it.
     """
     from beeagent.config.schema import BeeConfig
     from beeagent.core.agent import Agent
@@ -318,7 +322,7 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
 
     header = count_tokens(SYSTEM_PROMPT + "\n" + CommandParser().format_tool_prompt(own),
                           "gpt-4")
-    assert header < 4300, f"BeeCode's own prompt header costs {header} tokens"
+    assert header < 4350, f"BeeCode's own prompt header costs {header} tokens"
 
     everything = count_tokens(SYSTEM_PROMPT + "\n"
                               + CommandParser().format_tool_prompt(schemas), "gpt-4")

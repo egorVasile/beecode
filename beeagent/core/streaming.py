@@ -11,6 +11,7 @@ backoff before giving up.
 lives in the module functions below.
 """
 import asyncio
+import re
 
 from beeagent.i18n import L
 
@@ -100,6 +101,14 @@ def is_prompt_echo(content: str, messages: list[dict]) -> bool:
     """
     text = _flat(content)
     if not text:
+        return False
+    # A tool call is action, never echo — even when it matches the doc example
+    # byte for byte (a textbook `list_directory` call did exactly that, and the
+    # turn died telling the user to switch models). Seen live, fixed here.
+    # Leading position only: a recital quoting a ```json example mid-copy is
+    # still a recital.
+    if re.match(r"\s*(```json|<tool_call|<name>|\{\s*\"(?:tool|tool_calls)\"\s*:)",
+                content, re.S):
         return False
     # Markers count up front, and two different ones settle it: a recital
     # STARTS with the prompt and keeps copying it ("Guest prompt: ... [SYSTEM:
