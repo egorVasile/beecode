@@ -198,9 +198,13 @@ class Agent:
         # with no seat yet the provider answers "run /pool enroll" instead of
         # "unknown provider", and neither the address nor the seat is a key.
         from beeagent.providers.pool import PoolProvider
-        self.providers.register(PoolProvider(
+        pool = PoolProvider(
             url=self.config.pool_url, token=self.config.pool_token,
-            idle_timeout=max(10, int(self.config.stream_idle_timeout or 90))))
+            idle_timeout=max(10, int(self.config.stream_idle_timeout or 90)))
+        # Auto re-enroll rewrites the live token; persist it so the next
+        # launch does not enroll all over again.
+        pool.on_token = self._save_pool_token
+        self.providers.register(pool)
 
         self.tools = ToolRegistry()
         for tool_cls in [ReadTool, WriteTool, EditTool, BashTool,
@@ -307,6 +311,16 @@ class Agent:
 
     # --- provider resolution: the logic lives in core/provider_setup.py.
     # These are the stable doors the loop, the UI and the tests knock on.
+    def _save_pool_token(self, token: str) -> None:
+        """Persist a refreshed seat token; failures stay live-only."""
+        try:
+            self.config.pool_token = token
+            from beeagent.config.loader import save_config
+
+            save_config(self.config, self.workdir)
+        except Exception:
+            pass
+
     def sync_context(self) -> None:
         from beeagent.core import provider_setup
 

@@ -250,6 +250,105 @@ def test_approve_seat_refusal_names_the_cause(monkeypatch):
         assert "wrong admin token" in str(e)
 
 
+def test_enroll_sends_the_secret_when_given(monkeypatch):
+    import json as _json
+
+    seen = {}
+
+    class Reply:
+        status_code = 200
+        text = _json.dumps({"token": "t", "approved": True})
+
+        def json(self):
+            return _json.loads(self.text)
+
+    class Sync:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, content=None, headers=None):
+            seen.update(content=content)
+            return Reply()
+
+    monkeypatch.setattr(pool_mod.httpx, "Client", Sync)
+    pool_mod.enroll("https://pool.test", secret="let-me-in")
+    assert _json.loads(seen["content"])["enroll_secret"] == "let-me-in"
+
+
+def test_dead_seat_reenrolls_once_then_answers(monkeypatch):
+    """Unknown token (wiped disk era): fresh enroll, one retry, token saved."""
+    import asyncio
+    import json as _json
+
+    from beeagent.providers import pool as pool_mod
+
+    calls = {"chat": 0}
+    saved = []
+
+    class Reply:
+        def __init__(self, status_code, text):
+            self.status_code = status_code
+            self.text = text
+
+        def json(self):
+            return _json.loads(self.text)
+
+    class Sync:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, content=None, headers=None):
+            if url.endswith("/v1/enroll"):
+                return Reply(200, _json.dumps({"token": "fresh", "approved": True}))
+            return Reply(200, _json.dumps(
+                {"choices": [{"message": {"content": "hi"}}]}))
+
+        def get(self, url, headers=None, timeout=None):
+            return Reply(200, _json.dumps({"models": []}))
+
+    class AsyncClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, content=None, headers=None):
+            calls["chat"] += 1
+            if calls["chat"] == 1:
+                return Reply(401, _json.dumps({"error": "unknown token — enroll again"}))
+            return Reply(200, _json.dumps(
+                {"choices": [{"message": {"content": "hi"}}]}))
+
+    monkeypatch.setattr(pool_mod.httpx, "Client", Sync)
+    monkeypatch.setattr(pool_mod.httpx, "AsyncClient", AsyncClient)
+    provider = pool_mod.PoolProvider(url="https://pool.test", token="dead")
+    provider.on_token = saved.append
+
+    async def go():
+        return await provider.chat([{"role": "user", "content": "hi"}], model="m")
+
+    assert asyncio.run(go()) == "hi"
+    assert provider.token == "fresh"
+    assert saved == ["fresh"]
+    assert calls["chat"] == 2
+
+
 # --- a wire that answers, and remembers what we sent -----------------------
 #
 # The frames below are written the way the wire writes them: an SSE event is a

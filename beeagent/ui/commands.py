@@ -2707,7 +2707,8 @@ def _cmd_pool(ctx, args):
         if not config.pool_url:
             return _err(L("no address yet: /pool url https://…", "сначала адрес: /pool url https://…"))
         try:
-            body = pool_mod.enroll(config.pool_url)
+            body = pool_mod.enroll(config.pool_url,
+                                   secret=(rest[0].strip() if rest else ""))
         except Exception as e:
             return _err(L(f"the pool did not answer: {e}", f"пул не ответил: {e}"))
         token = str(body.get("token") or "")

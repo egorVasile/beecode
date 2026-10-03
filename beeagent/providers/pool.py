@@ -69,6 +69,11 @@ _MESSAGE_FOR = {
 }
 
 
+def _unknown_seat(error: BaseException) -> bool:
+    """The pool does not know this token: wiped disk, revoked seat, stale file."""
+    return "unknown token" in str(error or "")
+
+
 def _reason(status: int, body: object) -> str:
     detail = ""
     if isinstance(body, dict):
@@ -186,15 +191,24 @@ def signed_headers(seed: bytes, public_hex: str, body: bytes) -> dict:
             "X-Seat-Signature": signature.hex()}
 
 
-def enroll(url: str, timeout: float = ENROLL_TIMEOUT) -> dict:
+def enroll(url: str, timeout: float = ENROLL_TIMEOUT,
+           secret: str = "") -> dict:
     """Ask the pool for a seat, naming this install as the one that owns it.
 
     Only the public half goes out, and only this once; the pool keeps it and
-    refuses every later request that cannot sign with the key beside it.
+    refuses every later request that cannot sign with the key beside it. Pools
+    that enroll by invitation also want the enroll secret — argument first,
+    `BEECODE_POOL_ENROLL_SECRET` second, prompt never (commands ask).
     """
+    import os
+
     seed, public, device = install_key()
+    secret = (secret or os.environ.get("BEECODE_POOL_ENROLL_SECRET") or "").strip()
     endpoint = (url or "").strip().rstrip("/") + "/v1/enroll"
-    body = json.dumps({"device": device, "public_key": public}).encode()
+    payload = {"device": device, "public_key": public}
+    if secret:
+        payload["enroll_secret"] = secret
+    body = json.dumps(payload).encode()
     try:
         with httpx.Client(timeout=timeout) as client:
             response = client.post(endpoint, content=body,
@@ -356,6 +370,27 @@ class PoolProvider(BaseProvider):
                               "нет токена места — /pool enroll"))
         return self.token
 
+    # Called with a fresh token after auto re-enroll: the agent wires it to
+    # persist the config, so the next launch does not re-enroll again. Unset
+    # (plain provider use, tests) means live-only.
+    on_token = None
+
+    def _re_enroll(self, dead: str) -> str | None:
+        """A new seat for a dead token, or None when that cannot help."""
+        try:
+            fresh = enroll(self.url).get("token") or ""
+        except Exception:
+            return None
+        if not fresh or fresh == dead:
+            return None
+        self.token = fresh
+        if callable(self.on_token):
+            try:
+                self.on_token(fresh)
+            except Exception:
+                pass
+        return fresh
+
     # --- the wire -----------------------------------------------------------
 
     def _failure(self, error: Exception, started: int = 0) -> PoolError:
@@ -385,6 +420,17 @@ class PoolProvider(BaseProvider):
                 if attempt == 2:
                     raise PoolError(_asleep(self.url, e)) from e
                 await asyncio.sleep(COLD_START_WAIT)
+            except PoolError as e:
+                # The seat died server-side (wiped disk era): enroll fresh and
+                # retry once with the new token instead of failing the turn.
+                # A token that comes back identical was revoked, not lost —
+                # retrying it would loop, so the original error stands.
+                if attempt == 1 and _unknown_seat(e):
+                    fresh = self._re_enroll(token)
+                    if fresh is not None:
+                        token = fresh
+                        continue
+                raise
             except httpx.HTTPError as e:
                 raise self._failure(e) from e
         return ""                       # unreachable: every path returns or raises
@@ -438,6 +484,13 @@ class PoolProvider(BaseProvider):
                 await asyncio.sleep(COLD_START_WAIT)
             except ProviderStreamError:
                 raise                    # the reader already said what happened
+            except PoolError as e:
+                if started or attempt == 2 or not _unknown_seat(e):
+                    raise
+                fresh = self._re_enroll(token)
+                if fresh is None:
+                    raise
+                token = fresh
             except httpx.HTTPError as e:
                 raise self._failure(e, started) from e
 
