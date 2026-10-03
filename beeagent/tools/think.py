@@ -64,8 +64,16 @@ class ThinkTool(BaseTool):
                             encoding="utf-8")
         except OSError:
             pass
+        # The plan is recorded. What the result says next decides whether
+        # the model acts or re-plans: a bare "saved" reads as permission to
+        # plan again (seen live: plan, plan, plan, zero tool calls). So the
+        # result orders step 1 now — a second think before anything ran is
+        # how the think-loop breaker upstairs gets tripped.
         return ToolResult(
-            output=f"[PLAN] status={status}\n{plan}",
+            output=f"[PLAN] status={status}\n{plan}\n"
+                   f"[NEXT] execute step 1 with a working tool call "
+                   f"(list_directory, read, write, edit, bash, ...) in your "
+                   f"next message. Do not call think again until step 1 has run.",
             error=False,
             metadata={"plan_steps": len(self._plan["steps"])},
         )
