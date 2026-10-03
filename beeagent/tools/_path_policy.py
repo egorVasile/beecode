@@ -34,9 +34,29 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import threading
 from pathlib import Path
 
 from beeagent.i18n import L
+
+# What the last guard() call refused, and where it pointed. Thread-local:
+# tools run in worker threads, and two parallel refusals must not swap folders.
+# The executor reads it to ask the human about "outside" refusals instead of
+# just failing the turn; `take_refusal()` consumes it so a stale note never
+# answers for a later call.
+_local = threading.local()
+
+
+def note_refusal(kind: str, path: str = "") -> None:
+    _local.kind = kind
+    _local.path = path
+
+
+def take_refusal() -> tuple[str, str]:
+    kind = getattr(_local, "kind", "")
+    path = getattr(_local, "path", "")
+    _local.kind, _local.path = "", ""
+    return kind, path
 
 # What a user sets when they want the tools to reach a second folder: the path
 # separator list of their own platform, exactly like PYTHONPATH.
@@ -50,6 +70,20 @@ _RESERVED = {
 }
 _DRIVE = re.compile(r"^[A-Za-z]:$")
 _granted: list[str] = []
+# Answered "always" once: every outside folder runs without asking for the
+# rest of the session. A human decision persisted in memory, never on disk —
+# BEECODE_TRUSTED_DIRS is the permanent version of the same answer.
+_always: bool = False
+
+
+def set_always() -> None:
+    """Stop asking about outside folders until the process ends."""
+    global _always
+    _always = True
+
+
+def always() -> bool:
+    return _always
 
 
 def grant_root(path) -> None:
@@ -64,9 +98,29 @@ def forget_granted_roots() -> None:
     _granted.clear()
 
 
+def _long(path: str) -> str:
+    """Expand 8.3 short names (`836D~1` → real name) on Windows.
+
+    Without this, `tempfile.gettempdir()` (short) and a user-typed path (long)
+    name the same folder and fail the prefix check — an outside check that
+    fires inside, or an inside check that fires outside.
+    """
+    if os.name != "nt":
+        return path
+    try:
+        import ctypes
+
+        buf = ctypes.create_unicode_buffer(len(path) * 2 + 2)
+        if ctypes.windll.kernel32.GetLongPathNameW(path, buf, len(buf)):
+            return buf.value
+    except (OSError, ValueError, AttributeError):
+        pass
+    return path
+
+
 def _norm(path: str) -> str:
     """Case- and separator-folded, with the trailing separator trimmed."""
-    text = os.path.normcase(str(path))
+    text = os.path.normcase(_long(str(path)))
     return text.rstrip("\\/") or text
 
 
@@ -166,20 +220,25 @@ def guard(raw, action: str = "read") -> tuple[Path | None, str]:
     """
     text = "" if raw is None else str(raw)
     if not text.strip():
+        note_refusal("empty")
         return None, L(
             f"`{action}` refused: `path` is empty, so there is no target to check",
             f"`{action}` отказал: `path` пуст, проверять нечего")
     problem = _name_problem(text)
     if problem:
+        note_refusal("name")
         return None, problem + L(". Refused.", " — отказано.")
     try:
         resolved = Path(os.path.realpath(os.path.abspath(os.path.expanduser(text))))
     except (OSError, ValueError) as e:
+        note_refusal("resolve")
         return None, L(f"`{action}` refused: `{raw}` could not be resolved ({e}).",
                        f"`{action}` отказал: не удалось разобрать путь `{raw}` ({e}).")
     key = _norm(str(resolved))
-    if any(_inside(key, root) for root in _roots()):
+    if _always or any(_inside(key, root) for root in _roots()):
+        note_refusal("")
         return resolved, ""
+    note_refusal("outside", str(resolved))
     return None, _outside(text.strip(), resolved, action)
 
 

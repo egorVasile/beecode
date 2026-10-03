@@ -17,6 +17,67 @@ from beeagent.tools.ask import AskTool
 from beeagent.tools.base import ToolResult
 
 
+def _read_grant_answer(tool_name: str, folder: str) -> str:
+    """Blocking prompt; runs in a worker thread, never on the event loop."""
+    import sys
+
+    from beeagent.i18n import L
+
+    print(L(f"\n[PATH] `{tool_name}` wants `{folder}`, outside the working "
+            f"directory. Allow it?",
+            f"\n[PATH] `{tool_name}` хочет `{folder}`, это вне рабочей "
+            f"папки. Разрешить?"))
+    print(L("  1 — decline   2 — once (this folder)   3 — always (no more asking)",
+            "  1 — отклонить   2 — разово (эта папка)   3 — всегда (больше не спрашивать)"))
+    sys.stdout.flush()
+    try:
+        return input("> ").strip().lower()
+    except (EOFError, KeyboardInterrupt, OSError):
+        return ""
+
+
+async def _maybe_grant_outside(callback, tool_name: str) -> bool:
+    """Ask the human about a path outside the working directory.
+
+    Returns True when the tool may run again now. Three answers: decline
+    (the refusal stands), once (this folder, this session), always (this and
+    every later outside folder, this session). A non-terminal never asks.
+    """
+    from beeagent.i18n import L
+    from beeagent.tools import _path_policy as policy
+
+    kind, folder = policy.take_refusal()
+    if kind != "outside" or not folder:
+        return False
+    try:
+        import sys
+
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return False
+    except (OSError, ValueError):
+        return False
+    if callable(callback):
+        callback("ask", {"question": L(
+            f"the model reached outside the working directory: {folder}",
+            f"модель вышла за рабочую папку: {folder}")})
+    answer = await asyncio.to_thread(_read_grant_answer, tool_name, folder)
+    if answer in ("3", "always", "всегда"):
+        policy.grant_root(folder)
+        policy.set_always()
+        print(L("granted always: outside folders run without asking from now on "
+                "(this session; BEECODE_TRUSTED_DIRS makes it permanent).",
+                "разрешено всегда: папки снаружи работают без спроса "
+                "(эта сессия; BEECODE_TRUSTED_DIRS — навсегда)."))
+        return True
+    if answer in ("2", "once", "разово", "раз", "y", "yes", "да"):
+        policy.grant_root(folder)
+        print(L(f"granted once: {folder}",
+                f"разрешено разово: {folder}"))
+        return True
+    print(L("declined.", "отклонено."))
+    return False
+
+
 def _ask_user(callback, question: str) -> str:
     """Pause the tool loop and ask the user a question.
 
@@ -169,6 +230,29 @@ async def execute_commands(agent, session, parsed, callback) -> None:
                        f"could not read: {type(e).__name__}: {e}",
                 error=True)
             output = result.output
+
+        if result.error:
+            # A refusal for leaving the working directory is a question for
+            # the human, not a dead end: decline / once / always.
+            granted = await _maybe_grant_outside(callback, cmd.tool)
+            if granted:
+                try:
+                    agent.running_tool = tool
+                    raw = await asyncio.to_thread(tool.execute, **args)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    raw = ToolResult(output=f"ERROR: {e}", error=True)
+                finally:
+                    agent.running_tool = None
+                try:
+                    result = _as_tool_result(raw)
+                    output = result.output if result.output.strip() \
+                        else "(empty output)"
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pass
 
         result_text = (
             f"[tool result] tool={cmd.tool} error={result.error}\n{output}"
