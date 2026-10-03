@@ -93,7 +93,7 @@ COMMANDS: list[Command] = [
     Command("thinking", "Show the last model reasoning (scrollable)", category="info"),
     Command("window", "Show or measure the model context window", usage="/window [measure] [model]", category="info"),
     Command("update", "Check for a newer BeeCode and install it", category="info"),
-    Command("pool", "Address, seat and budget of a key pool", usage="/pool [url <адрес> | enroll | status]", category="info"),
+    Command("pool", "Address, seat and budget of a key pool", usage="/pool [url <адрес> | enroll | status | approve]", category="info"),
     # model / provider / mode — `/model` and `/provider` are hidden aliases of
     # their plurals: they share the handler, they are not advertised in /help.
     Command("model", "Switch the active model", arg="model", usage="/model <name>",
@@ -2761,8 +2761,32 @@ def _cmd_pool(ctx, args):
                 text.append(str(e)[:120], style="bold yellow")
         return CommandResult(output=text)
 
-    return _err(L("usage: /pool [url <address> | enroll | status]",
-                  "использование: /pool [url <адрес> | enroll | status]"))
+    if sub == "approve":
+        if not config.pool_url:
+            return _err(L("no address yet: /pool url https://…", "сначала адрес: /pool url https://…"))
+        target = (rest[0].strip() if rest else "") or config.pool_token or ""
+        if not target:
+            return _err(L("no seat token: /pool enroll first, or /pool approve <token>",
+                          "нет токена места: сначала /pool enroll или /pool approve <токен>"))
+        try:
+            secret = input(L("pool admin secret (BEECODE_POOL_ADMIN, never stored): ",
+                             "админ-секрет пула (BEECODE_POOL_ADMIN, не сохраняется): ")).strip()
+        except (EOFError, KeyboardInterrupt):
+            return _err(L("cancelled.", "отменено."))
+        if not secret:
+            return _err(L("cancelled.", "отменено."))
+        try:
+            pool_mod.approve_seat(config.pool_url, secret, target)
+        except Exception as e:
+            return _err(L(f"not approved: {e}", f"не подтверждено: {e}"))
+        _pool_provider_refresh(ctx)
+        return CommandResult(output=Text(
+            L(f"seat …{target[-4:]} approved — it answers now.",
+              f"место …{target[-4:]} подтверждено — работает."),
+            style="bold #7cb342"))
+
+    return _err(L("usage: /pool [url <address> | enroll | status | approve [token]]",
+                  "использование: /pool [url <адрес> | enroll | status | approve [токен]]"))
 
 
 def _cmd_update(ctx, args):

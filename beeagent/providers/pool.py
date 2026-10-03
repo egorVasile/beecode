@@ -54,8 +54,10 @@ def _pool_word() -> str:
 _MESSAGE_FOR = {
     401: ("this BeeCode has no seat in the pool — run /pool enroll",
           "у этого BeeCode нет места в пуле — выполни /pool enroll"),
-    403: ("the pool owner has not approved this seat yet",
-          "владелец пула ещё не подтвердил это место"),
+    403: ("the pool owner has not approved this seat yet — "
+          "as the owner: /pool approve (asks for BEECODE_POOL_ADMIN)",
+          "владелец пула ещё не подтвердил это место — "
+          "как владелец: /pool approve (спросит BEECODE_POOL_ADMIN)"),
     413: ("the prompt is bigger than the pool accepts",
           "запрос больше, чем пул принимает"),
     429: ("the pool is rate-limited right now, or today's budget is spent",
@@ -207,6 +209,29 @@ def enroll(url: str, timeout: float = ENROLL_TIMEOUT) -> dict:
     # A 200 with an unexpected shape used to become a bare KeyError at the
     # caller ("token"). Fail here, with the pool's own words when there are any.
     if not data.get("token"):
+        raise PoolError(_reason(response.status_code, data))
+    return data
+
+
+def approve_seat(url: str, admin_secret: str, token: str,
+                 timeout: float = ENROLL_TIMEOUT) -> dict:
+    """Approve a seat as the pool operator.
+
+    The secret travels this once and is never stored — the caller prompts for
+    it every time. Returns the pool's answer (`{"approved": true}`).
+    """
+    endpoint = (url or "").strip().rstrip("/") + "/v1/admin/approve"
+    body = json.dumps({"token": token}).encode()
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(
+                endpoint, content=body,
+                headers={"Content-Type": "application/json",
+                         "X-Admin": admin_secret})
+    except httpx.HTTPError as e:
+        raise PoolError(_asleep((url or "").strip(), e)) from e
+    data = _safe_json(response) or {}
+    if response.status_code != 200 or not data.get("approved"):
         raise PoolError(_reason(response.status_code, data))
     return data
 

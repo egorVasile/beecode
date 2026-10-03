@@ -166,6 +166,68 @@ def test_enrolment_is_given_long_enough_to_wake_the_pool():
     assert pool_mod.ENROLL_TIMEOUT > pool_mod.COLD_START_WAIT
 
 
+def test_approve_seat_sends_token_with_admin_header(monkeypatch):
+    """`/pool approve`: the seat token plus X-Admin, secret never stored."""
+    import json as _json
+
+    seen = {}
+
+    class Reply:
+        status_code = 200
+        text = _json.dumps({"approved": True})
+
+    class Sync:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, content=None, headers=None):
+            seen.update(url=url, content=content, headers=headers)
+            return Reply()
+
+    monkeypatch.setattr(pool_mod.httpx, "Client", Sync)
+    out = pool_mod.approve_seat("https://pool.test", "admin-secret", "seat-token")
+    assert out == {"approved": True}
+    assert seen["url"].endswith("/v1/admin/approve")
+    assert seen["headers"]["X-Admin"] == "admin-secret"
+    assert _json.loads(seen["content"]) == {"token": "seat-token"}
+
+
+def test_approve_seat_refusal_names_the_cause(monkeypatch):
+    import json as _json
+
+    from beeagent.providers.pool import PoolError
+
+    class Reply:
+        status_code = 403
+        text = _json.dumps({"error": "wrong admin token"})
+
+    class Sync:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, content=None, headers=None):
+            return Reply()
+
+    monkeypatch.setattr(pool_mod.httpx, "Client", Sync)
+    try:
+        pool_mod.approve_seat("https://pool.test", "bad-secret", "seat-token")
+        raise AssertionError("a refused approve must raise")
+    except PoolError as e:
+        assert "wrong admin token" in str(e)
+
+
 # --- a wire that answers, and remembers what we sent -----------------------
 #
 # The frames below are written the way the wire writes them: an SSE event is a
