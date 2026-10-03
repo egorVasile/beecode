@@ -15,6 +15,7 @@ is shown in full and runs only after the user pressed "yes".
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import threading
@@ -77,6 +78,17 @@ async def _pace() -> None:
     wait = _reserve_slot()
     if wait > 0:
         await asyncio.sleep(wait)
+
+
+def _first_content(body) -> str:
+    """The answer inside a non-stream JSON body, or "" when it holds none."""
+    choices = body.get("choices") or [] if isinstance(body, dict) else []
+    if not choices or not isinstance(choices[0], dict):
+        return ""
+    message = choices[0].get("message") or {}
+    if not isinstance(message, dict):
+        return ""
+    return str(message.get("content") or "")
 
 # The same list the pool server keeps. An endpoint that also sells image, video
 # and audio generation will answer for those models, and a coding agent has no
@@ -396,6 +408,10 @@ class CraxProvider(BaseProvider):
                 "messages": messages, "stream": stream, "include_reasoning": True}
 
     async def chat(self, messages: list[dict], model: str = "", stream: bool = False) -> str:
+        # A plain non-stream POST is cheapest when the endpoint honors it; this
+        # one answers SSE even when asked not to, so an empty 200 falls back to
+        # reading the same key as a stream instead of billing the next account
+        # for the same silence. Rotation across keys is unchanged.
         self._require_key()
         await _pace()
         attempts = 0
@@ -413,20 +429,55 @@ class CraxProvider(BaseProvider):
             except httpx.HTTPError as e:
                 raise CraxError("network", f"crax-gpt is not reachable: {e}")
             if response.status_code == 200:
-                body = _json_or_empty(response.text)
-                choices = body.get("choices") or []
-                # Non-objects from upstream used to raise AttributeError out of
-                # chat() instead of answering "". Non-objects carry no answer.
-                if not choices or not isinstance(choices[0], dict):
-                    return ""
-                message = choices[0].get("message") or {}
-                if not isinstance(message, dict):
-                    return ""
-                return str(message.get("content") or "")
+                text = _first_content(_json_or_empty(response.text))
+                if text:
+                    return text
+                streamed = await self._stream_one(messages, model, key)
+                if streamed:
+                    return streamed
+                continue
             error = classify(response.status_code, _json_or_empty(response.text),
                              _retry_after(response), response.text)
             await self._handle_limit(index, error)
         raise CraxError("other", "crax-gpt refused every configured key")
+
+    async def _stream_one(self, messages: list[dict], model: str, key: str) -> str:
+        """Read one key as a stream and join it; "" when it says nothing."""
+        from .base import read_answer_stream
+
+        parts: list[str] = []
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout()) as client:
+                async with client.stream(
+                        "POST", self.base_url + "/chat/completions",
+                        json=self._payload(messages, model, True),
+                        headers=self._headers(key)) as response:
+                    if response.status_code != 200:
+                        return ""
+                    async for chunk in response.aiter_text():
+                        for line in chunk.splitlines():
+                            line = line.strip()
+                            if not line.startswith("data:"):
+                                continue
+                            payload = line[5:].strip()
+                            if payload == "[DONE]":
+                                continue
+                            try:
+                                data = json.loads(payload)
+                            except ValueError:
+                                continue
+                            for choice in data.get("choices", []):
+                                if not isinstance(choice, dict):
+                                    continue
+                                delta = choice.get("delta") or {}
+                                text = delta.get("content") if isinstance(delta, dict) else None
+                                if text:
+                                    parts.append(str(text))
+        except (httpx.HTTPError, asyncio.CancelledError):
+            raise
+        except Exception:
+            return ""
+        return "".join(parts)
 
     def _next_key(self, tried: list[int]) -> Optional[tuple[int, str]]:
         """The first key that is neither cooling down nor already asked this turn."""
