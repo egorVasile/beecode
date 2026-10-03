@@ -440,6 +440,7 @@ class Agent:
                 # an answer — serving it from cache would print JSON and run
                 # nothing.
 
+                held_text = ""
                 try:
                     if native:
                         answer = await provider.complete(messages, model, tool_schemas)
@@ -456,15 +457,17 @@ class Agent:
                         # render from the stream: they flush what they buffered when
                         # "done" comes, and they buffer nothing here. So the text is
                         # handed over the same way a streamed answer arrives, or the
-                        # user watches a silent turn.
-                        if callback and response:
-                            callback("stream_delta", {"text": response})
+                        # user watches a silent turn — but only when no calls ride
+                        # along: text shown before its own tools run reads as
+                        # "done" followed by more work. Held text goes out after
+                        # the tools below finish.
                         if calls:
                             parsed = ParsedResponse(
                                 text=response,
                                 commands=[ParsedCommand(str(c.get("tool", "")),
                                                         c.get("args") or {}) for c in calls],
                                 has_commands=True)
+                            held_text = response
                         else:
                             # The gateway did not decode a call, but the text
                             # may still carry one: weak models answer the native
@@ -472,6 +475,10 @@ class Agent:
                             # Read the text exactly like the streamed path does
                             # instead of selling it as the turn's answer.
                             parsed = self.parser.parse(response)
+                            if parsed.has_commands:
+                                held_text = response
+                        if callback and response and not held_text:
+                            callback("stream_delta", {"text": response})
                     else:
                         response = await self._stream_response(provider, messages, callback, model)
                         parsed = self.parser.parse(response)
@@ -573,6 +580,12 @@ class Agent:
                 # The how lives in core/executor.py; the loop only owes the
                 # assistant row above and the broken-note below.
                 await executor.execute_commands(self, session, parsed, callback)
+
+                if held_text and callback:
+                    # The summary the model wrote ahead of its calls: now that
+                    # they ran, it reads in order.
+                    callback("stream_delta", {"text": held_text})
+                    held_text = ""
 
                 if parsed.commands and all(cmd.tool == "think"
                                            for cmd in parsed.commands):

@@ -686,6 +686,17 @@ async def run_repl(agent, config, session=None):
             if _AUTOSAVER is not None and _AUTOSAVER.pending():
                 _autosave_flush()
             console.print()
+            # The pinned plan: a line-oriented terminal cannot hold a strip,
+            # so the strip is reprinted above every prompt instead. Same
+            # content as the TUI's pinned panel, never scrolled past unseen.
+            try:
+                from beeagent.tools.think import ThinkTool
+
+                for row in ThinkTool.hud():
+                    console.print(Text(f"  📋 {row}" if row.startswith("plan") else
+                                       f"     {row}", style="dim"))
+            except Exception:
+                pass
             try:
                 # patch_stdout routes agent output above the active prompt
                 # instead of clobbering it. raw=True keeps rich's ANSI colors

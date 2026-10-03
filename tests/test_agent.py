@@ -643,6 +643,45 @@ def test_native_path_falls_back_to_parsing_text_calls(tmp_path, monkeypatch):
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "hi"
 
 
+def test_native_summary_waits_for_its_tools(tmp_path, monkeypatch):
+    """Text riding along with calls used to print first: "done", then more
+    work. The summary goes out after the tools finish."""
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.txt").write_text("hi", encoding="utf-8")
+
+    class ChattyTools:
+        name = "chatty"
+        models = ["m"]
+        supports_tools = True
+
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, messages, model="", tools=None):
+            self.calls += 1
+            if self.calls == 1:
+                return {"text": "Done!",
+                        "tool_calls": [{"tool": "read",
+                                        "args": {"path": "a.txt"}}]}
+            return {"text": "Done!", "tool_calls": []}
+
+    agent = Agent(config=BeeConfig(permissions={"mode": "auto"}), workdir=str(tmp_path))
+    endpoint = ChattyTools()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    order = []
+    answer = asyncio.run(agent.run(
+        "read it", session=Session(),
+        callback=lambda e, d: order.append(e) if e in ("tool_end", "stream_delta")
+        else None))
+
+    assert answer == "Done!"
+    assert order.index("tool_end") < len(order) - 1
+    assert order[-1] == "stream_delta", f"text must go last: {order}"
+
+
 def test_a_promising_answer_is_nudged_once_and_the_push_stays_out_of_history(tmp_path, monkeypatch):
     """"Now I will read the file" is a half-finished turn, not an answer."""
     import asyncio

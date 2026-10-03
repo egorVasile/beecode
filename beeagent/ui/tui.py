@@ -193,6 +193,8 @@ class BeeCodeApp(App):
     #chat { width: 1fr; }
     #log { height: 1fr; border: tall $secondary; background: $surface; }
     #stream { height: auto; max-height: 14; padding: 0 1; color: $text; }
+    #plan { height: auto; max-height: 10; padding: 0 1; color: $text-muted;
+            border-top: tall $primary; display: none; }
 
     #inputbar { height: 3; dock: bottom; padding: 0 1; align: left middle; }
     #prompt { width: 1fr; }
@@ -292,6 +294,9 @@ class BeeCodeApp(App):
             with Vertical(id="chat"):
                 yield RichLog(id="log", markup=True, wrap=True, highlight=True, min_width=20)
                 yield Static("", id="stream")
+                # The pinned plan strip: above the input, out of the scrolling
+                # log, repainted in place on every think and tool event.
+                yield Static("", id="plan")
         with Horizontal(id="inputbar"):
             yield Input(placeholder="Ask BeeCode…  ( / for commands )", id="prompt")
             yield Button("Run", id="run", variant="primary")
@@ -803,6 +808,13 @@ class BeeCodeApp(App):
         # event writes over that space, and the frame clock must stop animating a
         # thought, a tool note or the answer as if it were still the joke.
         self._waiting_line = event == "status"
+        # The pinned plan strip moves on turns, not tokens: tool boundaries
+        # and answers only, never per-chunk.
+        if event in ("tool_end", "done", "error", "stopped"):
+            try:
+                self._paint_plan()
+            except Exception:
+                pass
         try:
             from beeagent.core import skins
 
@@ -1320,6 +1332,33 @@ class BeeCodeApp(App):
         for line in text.splitlines():
             self._note("📋", line, line)
         self._note("💾", L("the new lists are saved.", "новые списки сохранены."))
+
+    def _paint_plan(self) -> None:
+        """The pinned plan strip above the input: repainted, never scrolled."""
+        try:
+            strip = self.home.query_one("#plan", Static)
+        except Exception:
+            return
+        try:
+            from beeagent.tools.think import ThinkTool
+
+            rows = ThinkTool.hud()
+        except Exception:
+            rows = []
+        if not rows:
+            strip.display = False
+            strip.update("")
+            return
+        from rich.text import Text as Row
+
+        text = Row()
+        for number, row in enumerate(rows):
+            if number:
+                text.append("\n")
+            style = "bold #ffcc00" if row.startswith("plan") else "dim"
+            text.append(("📋 " if number == 0 else "  ") + row, style=style)
+        strip.display = True
+        strip.update(text)
 
     def _welcome(self) -> None:
         from beeagent.core import skins

@@ -653,6 +653,32 @@ def test_think_hud_shows_steps_status_and_work(tmp_path, monkeypatch):
     assert hud[-1].strip().startswith("done")
 
 
+def test_pinned_plan_widget_follows_think_state(tmp_path, monkeypatch):
+    """The strip above the input: hidden with no plan, painted with one."""
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)
+    from beeagent.config.schema import BeeConfig
+    from beeagent.ui.tui import BeeCodeApp
+    from beeagent.core.session import Session
+
+    async def go():
+        app = BeeCodeApp(config=BeeConfig(), session=Session())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            strip = app.home.query_one("#plan")
+            assert strip.display is False
+            from beeagent.tools.think import ThinkTool
+
+            ThinkTool().execute("draft it\nbuild it", status="in_progress")
+            app._paint_plan()
+            await pilot.pause()
+            assert strip.display is True
+            assert "draft it" in str(strip.render())
+
+    asyncio.run(go())
+
+
 def test_think_persists_to_disk(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from beeagent.tools.think import ThinkTool
