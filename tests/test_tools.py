@@ -612,6 +612,9 @@ def test_think_stores_plan(tmp_path, monkeypatch):
     result = tool.execute("plan: read, edit, test")
     assert not result.error
     assert "plan" in result.output.lower()
+    plan = ThinkTool.current()
+    assert "read" in plan["summary"]
+    assert plan["status"] == "reasoning"
 
 
 def test_think_result_orders_step_one_now(tmp_path, monkeypatch):
@@ -622,9 +625,6 @@ def test_think_result_orders_step_one_now(tmp_path, monkeypatch):
     result = ThinkTool().execute("step 1: list files")
     assert "step 1" in result.output.lower()
     assert "think again" in result.output.lower()
-    plan = ThinkTool.current()
-    assert "read" in plan["summary"]
-    assert plan["status"] == "reasoning"
 
 
 def test_think_persists_to_disk(tmp_path, monkeypatch):
