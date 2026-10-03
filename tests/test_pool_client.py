@@ -176,6 +176,9 @@ def test_approve_seat_sends_token_with_admin_header(monkeypatch):
         status_code = 200
         text = _json.dumps({"approved": True})
 
+        def json(self):
+            return _json.loads(self.text)
+
     class Sync:
         def __init__(self, *a, **k):
             pass
@@ -206,6 +209,9 @@ def test_approve_seat_refusal_names_the_cause(monkeypatch):
     class Reply:
         status_code = 403
         text = _json.dumps({"error": "wrong admin token"})
+
+        def json(self):
+            return _json.loads(self.text)
 
     class Sync:
         def __init__(self, *a, **k):
