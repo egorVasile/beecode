@@ -852,8 +852,10 @@ def test_pool_status_sends_the_seat_token_and_reports_the_seat(monkeypatch):
     health = pool_mod.pool_status("http://pool.invalid", "seat-token")
 
     seat = wire.last("/v1/seat")
-    assert seat["kw"]["headers"]["Authorization"] == "Bearer seat-token", \
+    assert seat["kw"]["headers"]["X-Bee-Id"] == "seat-token", \
         "the status spoke about the server while sounding like it spoke about the seat"
+    assert "X-Seat-Signature" in seat["kw"]["headers"], \
+        "the budget row is private: the seat proves the install key"
     assert seat["kw"]["timeout"] <= pool_mod.SEAT_WAIT, \
         "`/pool status` runs on the prompt's thread: it must not wait out a cold start twice"
     assert health["seat"]["requests_limit"] == 200

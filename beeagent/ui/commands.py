@@ -93,7 +93,7 @@ COMMANDS: list[Command] = [
     Command("thinking", "Show the last model reasoning (scrollable)", category="info"),
     Command("window", "Show or measure the model context window", usage="/window [measure] [model]", category="info"),
     Command("update", "Check for a newer BeeCode and install it", category="info"),
-    Command("pool", "Address, seat and budget of a key pool", usage="/pool [url <адрес> | enroll | status | approve]", category="info"),
+    Command("pool", "Address, seat and budget of a key pool", usage="/pool [url <адрес> | enroll | status]", category="info"),
     # model / provider / mode — `/model` and `/provider` are hidden aliases of
     # their plurals: they share the handler, they are not advertised in /help.
     Command("model", "Switch the active model", arg="model", usage="/model <name>",
@@ -1682,9 +1682,6 @@ def _seat_live(ctx) -> tuple[list[tuple[str, str]], str]:
         when = _clock.localtime(_clock.time() + float(reset))
         rows.append(("resets in", f"{_duration(reset)} "
                      f"(at {_clock.strftime('%H:%M', when)})"))
-    if seat.get("approved") is False:
-        rows.append(("approval", L("the pool owner has not approved this seat yet",
-                                   "владелец пула ещё не подтвердил это место")))
     if not rows:
         return [], L("the pool answered for this seat and named no budget in it",
                      "пул ответил за это место, но нормы в ответе не назвал")
@@ -2711,35 +2708,30 @@ def _cmd_pool(ctx, args):
                                    secret=(rest[0].strip() if rest else ""))
         except Exception as e:
             return _err(L(f"the pool did not answer: {e}", f"пул не ответил: {e}"))
-        token = str(body.get("token") or "")
+        token = str(body.get("id") or body.get("token") or "")
         if not token:
-            return _err(L("the pool gave no seat token", "пул не дал токен места"))
+            return _err(L("the pool gave no seat id", "пул не дал id места"))
         config.pool_token = token
         saved = _persist_config(ctx)
         _pool_provider_refresh(ctx)
         text = Text()
         text.append(L("🐝 seat taken. ", "🐝 место получено. ", ), style="bold #ffcc00")
         if saved:
-            text.append(L(f"token …{token[-4:]} saved in beeagent.json — "
+            text.append(L(f"id {token} saved in beeagent.json — "
                           f"{body.get('requests_per_day', '?')} requests and "
                           f"{body.get('tokens_per_day', '?')} tokens a day.",
-                          f"токен …{token[-4:]} сохранён в beeagent.json — "
+                          f"id {token} сохранён в beeagent.json — "
                           f"{body.get('requests_per_day', '?')} запросов и "
                           f"{body.get('tokens_per_day', '?')} токенов в сутки."), style="dim")
         else:
-            text.append(L(f"token …{token[-4:]} works for this session, but "
+            text.append(L(f"id {token} works for this session, but "
                           f"beeagent.json could not be written — enroll again "
                           f"after restart.",
-                          f"токен …{token[-4:]} работает на эту сессию, но "
+                          f"id {token} работает на эту сессию, но "
                           f"beeagent.json не записался — после перезапуска "
                           f"запиши место заново."), style="bold yellow")
-        if not body.get("approved", True):
-            text.append("\n" + L("the pool owner has to approve this seat before it answers.",
-                                 "владелец пула должен подтвердить это место, иначе оно не работает."),
-                        style="bold yellow")
-        else:
-            text.append("\n" + L("switch to it with: /providers pool",
-                                 "переключись на него: /providers pool"), style="dim")
+        text.append("\n" + L("switch to it with: /providers pool",
+                             "переключись на него: /providers pool"), style="dim")
         return CommandResult(output=text)
 
     if sub in ("", "status"):
@@ -2763,31 +2755,15 @@ def _cmd_pool(ctx, args):
         return CommandResult(output=text)
 
     if sub == "approve":
-        if not config.pool_url:
-            return _err(L("no address yet: /pool url https://…", "сначала адрес: /pool url https://…"))
-        target = (rest[0].strip() if rest else "") or config.pool_token or ""
-        if not target:
-            return _err(L("no seat token: /pool enroll first, or /pool approve <token>",
-                          "нет токена места: сначала /pool enroll или /pool approve <токен>"))
-        try:
-            secret = input(L("pool admin secret (BEECODE_POOL_ADMIN, never stored): ",
-                             "админ-секрет пула (BEECODE_POOL_ADMIN, не сохраняется): ")).strip()
-        except (EOFError, KeyboardInterrupt):
-            return _err(L("cancelled.", "отменено."))
-        if not secret:
-            return _err(L("cancelled.", "отменено."))
-        try:
-            pool_mod.approve_seat(config.pool_url, secret, target)
-        except Exception as e:
-            return _err(L(f"not approved: {e}", f"не подтверждено: {e}"))
-        _pool_provider_refresh(ctx)
+        # Retired with per-seat approval: every seat is open, there is nothing
+        # to approve. Kept as a door (not a ritual) for fingers that remember it.
         return CommandResult(output=Text(
-            L(f"seat …{target[-4:]} approved — it answers now.",
-              f"место …{target[-4:]} подтверждено — работает."),
-            style="bold #7cb342"))
+            L("nothing to approve — seats are open, just use the pool.",
+              "подтверждать нечего — места открыты, просто пользуйся пулом."),
+            style="dim"))
 
-    return _err(L("usage: /pool [url <address> | enroll | status | approve [token]]",
-                  "использование: /pool [url <адрес> | enroll | status | approve [токен]]"))
+    return _err(L("usage: /pool [url <address> | enroll | status]",
+                  "использование: /pool [url <адрес> | enroll | status]"))
 
 
 def _cmd_update(ctx, args):

@@ -54,10 +54,8 @@ def _pool_word() -> str:
 _MESSAGE_FOR = {
     401: ("this BeeCode has no seat in the pool — run /pool enroll",
           "у этого BeeCode нет места в пуле — выполни /pool enroll"),
-    403: ("the pool owner has not approved this seat yet — "
-          "as the owner: /pool approve (asks for BEECODE_POOL_ADMIN)",
-          "владелец пула ещё не подтвердил это место — "
-          "как владелец: /pool approve (спросит BEECODE_POOL_ADMIN)"),
+    403: ("the pool refused this seat — re-enroll it with /pool enroll",
+          "пул отклонил это место — возьми заново: /pool enroll"),
     413: ("the prompt is bigger than the pool accepts",
           "запрос больше, чем пул принимает"),
     429: ("the pool is rate-limited right now, or today's budget is spent",
@@ -101,10 +99,31 @@ def _asleep(url: str, error) -> str:
              f"({error.__class__.__name__})")
 
 
-def _headers(token: str) -> dict:
+def _headers(ident: str) -> dict:
+    """The install's public id, never a bearer secret.
+
+    Bearer seat tokens are retired: `#beecode…` names who is asking, and the
+    Ed25519 signature on every mutating request proves the private key. A
+    stolen id without the key file in `~/.beecode` is a dead id.
+    """
     from beeagent import __version__
 
-    return {"Authorization": f"Bearer {token}", "User-Agent": f"beecode/{__version__}"}
+    return {"X-Bee-Id": ident, "User-Agent": f"beecode/{__version__}"}
+
+
+def install_id(public_hex: str = "") -> str:
+    """This install's public name, stable across wipes and re-enrolls.
+
+    Derived from the install public key alone, so no round trip is needed to
+    know it — and no secret travels with it, ever.
+    """
+    import hashlib
+
+    key = public_hex
+    if not key:
+        _seed, key, _device = install_key()
+    digest = hashlib.sha256(str(key or "").encode()).hexdigest()
+    return "#beecode%010d" % (int(digest, 16) % 10**10)
 
 
 def install_key():
@@ -222,8 +241,12 @@ def enroll(url: str, timeout: float = ENROLL_TIMEOUT,
     data = _safe_json(response) or {}
     # A 200 with an unexpected shape used to become a bare KeyError at the
     # caller ("token"). Fail here, with the pool's own words when there are any.
-    if not data.get("token"):
+    # The seat is the install id now (`id`); a legacy `token` is accepted so an
+    # old pool answers a new client while hosts update, one release at a time.
+    ident = str(data.get("id") or data.get("token") or "")
+    if not ident:
         raise PoolError(_reason(response.status_code, data))
+    data["id"] = ident
     return data
 
 
@@ -289,15 +312,23 @@ def pool_status(url: str, token: str, timeout: float = ENROLL_TIMEOUT) -> dict:
 
 
 def _seat_of(client, endpoint: str, token: str, wait: float = SEAT_WAIT) -> dict:
-    """What the pool says about *this* seat, or why it cannot say."""
+    """What the pool says about *this* seat, or why it cannot say.
+
+    The budget row is private to its install, so unlike the models list this
+    route signs: id in the header, signature over an empty body.
+    """
     from beeagent.i18n import L
 
     if not token:
         return {"ok": False,
-                "error": L("no seat token yet — /pool enroll",
-                           "нет токена места — /pool enroll")}
+                "error": L("no seat yet — /pool enroll",
+                           "места пока нет — /pool enroll")}
+    seed, _public, _device = install_key()
     try:
-        response = client.get(endpoint + "/v1/seat", headers=_headers(token), timeout=wait)
+        response = client.get(
+            endpoint + "/v1/seat",
+            headers=_headers(token) | signed_headers(seed, _public, b""),
+            timeout=wait)
     except httpx.HTTPError as e:
         return {"ok": False, "error": str(transport_error(e, _pool_word()))}
     body = _safe_json(response) or {}
