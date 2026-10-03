@@ -448,13 +448,39 @@ class PoolProvider(BaseProvider):
         headers["Content-Type"] = "application/json"
         return raw, headers
 
+    # A pool 429 is "wait a little", not failure: the box sheds bursts it
+    # cannot serve right now, and Retry-After says how long. Bounded, so a
+    # truly spent budget still surfaces instead of hanging the turn.
+    POOL_429_RETRIES = 3
+    POOL_429_WAIT_CAP = 20.0
+
+    @staticmethod
+    def _retry_after(response) -> float:
+        try:
+            header = float(response.headers.get("Retry-After") or 0)
+        except (TypeError, ValueError):
+            header = 0.0
+        body = _safe_json(response) or {}
+        try:
+            payload = float(body.get("retry_after") or 0)
+        except (TypeError, ValueError):
+            payload = 0.0
+        return min(max(header, payload, 1.0), PoolProvider.POOL_429_WAIT_CAP)
+
     async def _chat(self, messages: list[dict], model: str, token: str) -> str:
         raw, headers = self._signed(self._body(messages, model, False))
-        async with httpx.AsyncClient(timeout=self._timeout()) as client:
-            response = await client.post(self.url + "/v1/chat/completions", content=raw,
-                                         headers=headers)
-        if response.status_code != 200:
+        response = None
+        for attempt in range(1 + PoolProvider.POOL_429_RETRIES):
+            async with httpx.AsyncClient(timeout=self._timeout()) as client:
+                response = await client.post(self.url + "/v1/chat/completions", content=raw,
+                                             headers=headers)
+            if response.status_code == 200:
+                break
+            if response.status_code == 429 and attempt < PoolProvider.POOL_429_RETRIES:
+                await asyncio.sleep(self._retry_after(response))
+                continue
             raise PoolError(_reason(response.status_code, _safe_json(response)))
+        assert response is not None  # the last attempt raises, never falls through
         body = _safe_json(response) or {}
         choices = body.get("choices") or []
         # Upstream may hand back non-objects; .get on them used to raise
@@ -502,19 +528,29 @@ class PoolProvider(BaseProvider):
         `data:` line at a time, is what used to hand back
         "I will now write the file and the third" — the split frame dropped, no
         error raised, the seat charged once for a half answer.
+
+        A 429 before the first frame retries here (bounded, honoring
+        Retry-After): overload is a wait, not a failure, and nothing billed yet.
         """
         raw, headers = self._signed(self._body(messages, model, True))
         who = self.source_name()
-        async with httpx.AsyncClient(timeout=self._timeout()) as client:
-            async with client.stream("POST", self.url + "/v1/chat/completions",
-                                     content=raw, headers=headers) as response:
-                if response.status_code != 200:
-                    await response.aread()
-                    raise PoolError(_reason(response.status_code, _safe_json(response)))
-                async for piece in read_answer_stream(response.aiter_lines(),
-                                                      lambda event: _pieces(event, who),
-                                                      source=who, exc=PoolStreamError):
-                    yield piece
+        for attempt in range(1 + PoolProvider.POOL_429_RETRIES):
+            async with httpx.AsyncClient(timeout=self._timeout()) as client:
+                async with client.stream("POST", self.url + "/v1/chat/completions",
+                                         content=raw, headers=headers) as response:
+                    if response.status_code == 429 \
+                            and attempt < PoolProvider.POOL_429_RETRIES:
+                        await response.aread()
+                        await asyncio.sleep(self._retry_after(response))
+                        continue
+                    if response.status_code != 200:
+                        await response.aread()
+                        raise PoolError(_reason(response.status_code, _safe_json(response)))
+                    async for piece in read_answer_stream(response.aiter_lines(),
+                                                          lambda event: _pieces(event, who),
+                                                          source=who, exc=PoolStreamError):
+                        yield piece
+                    return
 
     # --- what the pool answers for -----------------------------------------
 

@@ -349,6 +349,63 @@ def test_dead_seat_reenrolls_once_then_answers(monkeypatch):
     assert calls["chat"] == 2
 
 
+def test_pool_429_waits_and_retries_within_bounds(monkeypatch):
+    """Overload is a wait, not a failure: honor Retry-After, then answer."""
+    import asyncio
+    import json as _json
+
+    from beeagent.providers import pool as pool_mod
+
+    calls = {"n": 0}
+
+    class Reply:
+        def __init__(self, status_code, text, headers=None):
+            self.status_code = status_code
+            self.text = text
+            self.headers = headers or {}
+
+        def json(self):
+            return _json.loads(self.text)
+
+    class Sync:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    class AsyncClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, content=None, headers=None):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                return Reply(429, _json.dumps({"error": "busy"}),
+                             {"Retry-After": "0"})
+            return Reply(200, _json.dumps(
+                {"choices": [{"message": {"content": "hi"}}]}))
+
+    monkeypatch.setattr(pool_mod.httpx, "Client", Sync)
+    monkeypatch.setattr(pool_mod.httpx, "AsyncClient", AsyncClient)
+    provider = pool_mod.PoolProvider(url="https://pool.test", token="seat")
+
+    async def go():
+        return await provider.chat([{"role": "user", "content": "hi"}], model="m")
+
+    assert asyncio.run(go()) == "hi"
+    assert calls["n"] == 3
+
+
 # --- a wire that answers, and remembers what we sent -----------------------
 #
 # The frames below are written the way the wire writes them: an SSE event is a
