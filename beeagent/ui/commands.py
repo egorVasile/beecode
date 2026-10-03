@@ -89,6 +89,8 @@ COMMANDS: list[Command] = [
     Command("config", "Show current configuration", category="info"),
     Command("tools", "List registered tools", category="info"),
     Command("stats", "Show economy/request stats", category="info"),
+    Command("usage", "Same as /stats (the Codex and Claude Code name)",
+            category="info"),
     Command("token", "Show current context token usage", category="info"),
     Command("thinking", "Show the last model reasoning (scrollable)", category="info"),
     Command("window", "Show or measure the model context window", usage="/window [measure] [model]", category="info"),
@@ -128,6 +130,8 @@ COMMANDS: list[Command] = [
     Command("save", "Save the current session now", category="session"),
     Command("export", "Export session to a Markdown file", arg="path", usage="/export [path]", category="session"),
     Command("continue", "Load a saved session", arg="session", usage="/continue <id>", category="session"),
+    Command("resume", "Same as /continue (the Codex and Claude Code name)",
+            arg="session", usage="/resume <id>", category="session"),
     Command("load", "Alias for /continue", arg="session", usage="/load <id>", category="session"),
     Command("reset", "Start a new session (clear history)", category="session"),
     Command("new", "Alias for /reset", category="session"),
@@ -2829,6 +2833,7 @@ HANDLERS: dict[str, Callable] = {
     "log": _cmd_log,
     "token": _cmd_token,
     "stats": _cmd_stats,
+    "usage": _cmd_stats,
     "history": _cmd_history,
     "session": _cmd_session,
     "sessions": _cmd_sessions,
@@ -2836,6 +2841,7 @@ HANDLERS: dict[str, Callable] = {
     "export": _cmd_export,
     "continue": _cmd_continue,
     "load": _cmd_continue,
+    "resume": _cmd_continue,
     "reset": _cmd_reset,
     "stop": _cmd_stop,
     "tasks": _cmd_tasks,
@@ -2881,7 +2887,13 @@ def dispatch(ctx: ReplContext, line: str) -> CommandResult:
 # built from. It used to appear only once a PluginLoader happened to be built,
 # which made the command list depend on import order.
 from beeagent.core import compact as _compact  # noqa: E402  (bottom: it imports us lazily)
+from beeagent.core import contextview as _contextview  # noqa: E402  (bottom: it imports us lazily)
+from beeagent.core import dirs as _dirs  # noqa: E402  (bottom: it imports us lazily)
+from beeagent.core import doctor as _doctor  # noqa: E402  (bottom: it imports us lazily)
+from beeagent.core import fork as _fork  # noqa: E402  (bottom: it imports us lazily)
+from beeagent.core import goals as _goals  # noqa: E402  (bottom: it imports us lazily)
 from beeagent.core import journal as _journal  # noqa: E402  (bottom: it imports us lazily)
+from beeagent.core import memory as _memory  # noqa: E402  (bottom: it imports us lazily)
 from beeagent.core import skins as _skins  # noqa: E402  (bottom: it imports us lazily)
 from beeagent.core import trust as _trust  # noqa: E402  (bottom: trust imports us lazily)
 
@@ -2889,3 +2901,9 @@ _trust.register_command()
 _journal.register_command()
 _compact.register_command()
 _skins.register_command()
+_memory.register_command()
+_contextview.register_command()
+_fork.register_command()
+_goals.register_command()
+_doctor.register_command()
+_dirs.register_command()

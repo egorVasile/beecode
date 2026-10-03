@@ -489,6 +489,7 @@ mouse-clickable picker.
 | Command | What it does | Usage |
 | --- | --- | --- |
 | `/allow` | Grant one unsafe tool for this session | `/allow <tool>` |
+| `/dirs` | List or grant folders outside the working directory | `/dirs [add <path> | clear]` |
 | `/extensions` | What the installed plugins added | `/extensions` |
 | `/key` | Store your own API key for a provider | `/key <provider> <token>` |
 | `/lang` | Switch the interface language | `/lang <en|ru>` |
@@ -525,6 +526,7 @@ mouse-clickable picker.
 | --- | --- | --- |
 | `/about` | About BeeCode | `/about` |
 | `/config` | Show current configuration | `/config` |
+| `/context` | What is filling the context window right now | `/context` |
 | `/help` | Show all available commands | `/help` |
 | `/pool` | Address, seat and budget of a key pool | `/pool [url <адрес> | enroll | status]` |
 | `/stats` | Show economy/request stats | `/stats` |
@@ -532,7 +534,14 @@ mouse-clickable picker.
 | `/token` | Show current context token usage | `/token` |
 | `/tools` | List registered tools | `/tools` |
 | `/update` | Check for a newer BeeCode and install it | `/update` |
+| `/usage` | Same as /stats (the Codex and Claude Code name) | `/usage` |
 | `/window` | Show or measure the model context window | `/window [measure] [model]` |
+
+### Plugins
+
+| Command | What it does | Usage |
+| --- | --- | --- |
+| `/doctor` | Check the install, the model and the loaded extensions | `/doctor` |
 
 ### Sessions
 
@@ -541,10 +550,15 @@ mouse-clickable picker.
 | `/compact` | Fold the oldest turns into a digest now (no model call, no quota) | `/compact [N] | /compact yes [N]` |
 | `/continue` | Load a saved session | `/continue <id>` |
 | `/export` | Export session to a Markdown file | `/export [path]` |
+| `/fork` | Clone this conversation into a new thread (the original stays) | `/fork` |
+| `/goal` | Set a persistent objective for this project | `/goal [text | pause | resume | done | clear]` |
 | `/history` | Open the full history (scrollable) | `/history [list]` |
+| `/init` | Scaffold AGENTS.md project memory (never overwrites) | `/init` |
 | `/load` | Alias for /continue | `/load <id>` |
+| `/memory` | Show project and global memory files | `/memory [name]` |
 | `/new` | Alias for /reset | `/new` |
 | `/reset` | Start a new session (clear history) | `/reset` |
+| `/resume` | Same as /continue (the Codex and Claude Code name) | `/resume <id>` |
 | `/save` | Save the current session now | `/save` |
 | `/session` | Show current session info | `/session` |
 | `/sessions` | List saved sessions | `/sessions` |
