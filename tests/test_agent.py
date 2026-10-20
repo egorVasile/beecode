@@ -726,6 +726,95 @@ def test_a_promising_answer_is_nudged_once_and_the_push_stays_out_of_history(tmp
     assert sum("Сейчас прочитаю" in str(m.content) for m in session.messages) == 1
 
 
+def test_a_verb_first_promise_is_caught_and_the_run_continues(tmp_path, monkeypatch):
+    """"Делаю ахуенное портфолио — сразу собираю сайт и открою его." ends nothing.
+
+    Measured live 2026-10-20: the reply opens with the verb and no time word
+    stands before its first promise, so the old matcher let it through, no
+    reminder fired and the user received narration as a final answer.
+    """
+    import asyncio
+
+    from beeagent.core.agent import _PROMISE_TO_ACT
+
+    assert _PROMISE_TO_ACT.search(
+        "Делаю ахуенное портфолио — сразу собираю сайт и открою его."), \
+        "the verb-first promise must be caught"
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "index.html").write_text("<h1>сайт</h1>", encoding="utf-8")
+
+    class VerbFirst:
+        name = "verb-first"
+
+        def __init__(self):
+            self.calls = 0
+            self.seen = []
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            self.seen.append([m.get("content", "") for m in messages])
+            if self.calls == 1:
+                yield ("content", "Делаю ахуенное портфолио — сразу собираю сайт и открою его.")
+            elif self.calls == 2:
+                yield ("content", '{"tool": "read", "args": {"path": "index.html"}}')
+            else:
+                yield ("content", "Сайт собран: <h1>сайт</h1> в index.html")
+
+        async def chat(self, messages, model=""):
+            return "Сайт собран"
+
+    agent = Agent(config=BeeConfig(permissions={"mode": "auto"}), workdir=str(tmp_path))
+    endpoint = VerbFirst()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    session = Session()
+
+    answer = asyncio.run(agent.run("сделай мне сайт ахуенный", session=session))
+
+    assert "Сайт собран" in answer, "the run continued past the narration"
+    assert endpoint.calls == 3, "promise → tool → answer"
+    nudged = [m for m in endpoint.seen[1] if "no tool call" in str(m)]
+    assert len(nudged) == 1, "the reminder reached the model exactly once"
+
+
+def test_a_second_promise_after_the_nudge_is_not_sold_as_done(tmp_path, monkeypatch):
+    """A repeated promise is not an answer: the run ends on the honest stop."""
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)
+    promise = "Делаю сайт — сразу собираю и открою его."
+
+    class PromiseTwice:
+        name = "promise-twice"
+
+        def __init__(self):
+            self.calls = 0
+            self.seen = []
+
+        async def chat_stream(self, messages, model=""):
+            self.calls += 1
+            self.seen.append([m.get("content", "") for m in messages])
+            yield ("content", promise)
+
+        async def chat(self, messages, model=""):
+            self.calls += 1
+            return promise
+
+    agent = Agent(config=BeeConfig(permissions={"mode": "auto"}), workdir=str(tmp_path))
+    endpoint = PromiseTwice()
+    agent.providers.register(endpoint)
+    agent.providers.select = lambda name: endpoint
+    session = Session()
+
+    answer = asyncio.run(agent.run("сделай сайт", session=session))
+
+    assert answer != promise, "the narration must not stand as the final answer"
+    assert ("Stopping" in answer) or ("Останавливаюсь" in answer), \
+        "the run ends with the honest give-up, not a fake done"
+    assert endpoint.calls == 2, f"one reminder, then the stop, got {endpoint.calls}"
+
+
 def test_an_access_refusal_is_nudged_once_with_the_tools_named(tmp_path, monkeypatch):
     """"I have no file access" with the tools in context is a refusal, not an
     answer — seen live when a free-routed model told the user to attach an

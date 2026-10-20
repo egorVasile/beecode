@@ -54,14 +54,23 @@ HEARTBEAT_SECONDS = 15
 
 # A model that writes "now I will read the file" and stops is mid-task, not
 # finished — measured live on 2026-09-21, where such a reply ended the run and
-# the file was never opened. One nudge sends it the reminder; a second would be
-# a loop waiting to happen, so the answer stands after one.
+# the file was never opened. The Russian branch also matches the verb-first
+# opener without a time word ("Делаю ахуенное портфолио — сразу собираю сайт")
+# — measured live 2026-10-20, this shape passed the old matcher, was never
+# nudged and was sold to the user as a final answer. False positives cost one
+# reminder turn: an answer made of the word "ready" would survive it.
 _PROMISE_TO_ACT = re.compile(
-    r"(сейчас|сначала|затем|потом|давайте|позвольте)\D{0,40}"
-    r"(прочита|прочту|посмотрю|проверю|открою|найду|создам|запишу|запущу|изучу|посчитаю|выполню)"
+    r"(сейчас|сразу|скоро|уже|сначала|затем|потом|давайте|позвольте)\D{0,40}"
+    r"(прочита|прочту|посмотрю|проверю|открою|найду|создам|запишу|запущу|изучу|"
+    r"посчитаю|выполню|соберу|сделаю|начну|напишу|поправлю|установлю|скачаю|"
+    r"подключу|настрою|сгенерирую)"
+    r"|^\s*(делаю|собираю|создаю|начинаю|запускаю|открываю|пишу|ставлю|"
+    r"устанавливаю|скачиваю|верстаю|рисую|чиню|исправляю|генерирую|"
+    r"делаем|собираем)\b"
     r"|\b(i|we|let me|let's|i'll|now)\b\s*\w{0,10}\s*"
-    r"(read|check|look|open|find|create|write|run|inspect|search|list|count)\b",
-    re.I,
+    r"(read|check|look|open|find|create|write|run|inspect|search|list|count|"
+    r"build|make|deploy|install|fix|generate|assemble|ship)\b",
+    re.I | re.M,
 )
 ACT_NOW = ("[SYSTEM: you described a next step but sent no tool call, so nothing ran. "
            "Either call a tool now (use `think` to plan, `ask` to ask the user, or "
@@ -136,6 +145,17 @@ def _gave_up_on_calls() -> str:
         "Останавливаюсь: модель дважды подряд присылала вызов, который не доехал "
         "целиком, и ничего не выполнилось — ответа нет. Спроси ещё раз или смени "
         "модель (/models).")
+
+
+def _gave_up_on_promises() -> str:
+    """What to say when a model keeps promising work it never starts."""
+    return L(
+        "Stopping: the model twice ended its reply on a promise of work without a "
+        "single tool call, so nothing was actually done. Ask again, rephrase the "
+        "task, or switch model (/models).",
+        "Останавливаюсь: модель дважды заканчивала ответ обещанием поработать без "
+        "единого вызова инструмента — ничего не сделано. Спроси ещё раз, "
+        "переформулируй задачу или смени модель (/models).")
 
 
 # What a cancelled turn knows about a tool it stopped waiting for. The worker
@@ -543,8 +563,16 @@ class Agent:
                             return gave_up
                         continue
                     session.add_assistant_message(response)
-                    if not nudged and _PROMISE_TO_ACT.search(response or ""):
+                    if _PROMISE_TO_ACT.search(response or ""):
                         # "Now I will read the file" is a half-finished turn.
+                        if nudged:
+                            # Nudged once and it promised again: delivering this
+                            # as the final word sells the very illusion the nudge
+                            # exists to stop, so end the run honestly instead.
+                            gave_up = _gave_up_on_promises()
+                            if callback:
+                                callback("error", {"message": gave_up})
+                            return gave_up
                         nudged = True
                         nudge_pending = ACT_NOW
                         if callback:
