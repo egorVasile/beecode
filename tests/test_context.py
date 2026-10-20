@@ -312,7 +312,10 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
 
     It moved on 2026-10-20, to 4400: the rule against ending a turn on a
     promise — a live failure sold "Делаю портфолио — сейчас соберу" as a final
-    answer with zero tool calls, measured 4342 after it.
+    answer with zero tool calls, measured 4342 after it. Same day: the identity
+    line (never introduce yourself under the upstream model's name, a tool
+    claim without a call proves nothing) paid for its tokens by cutting slop
+    elsewhere, measured 4351 after it.
     """
     from beeagent.config.schema import BeeConfig
     from beeagent.core.agent import Agent
