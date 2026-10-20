@@ -382,6 +382,11 @@ class PoolProvider(BaseProvider):
     models = ModelCatalog(["glm-5.3", "glm-5.3-flash", "glm-5.2"])
     list_source = ("the pool", "пул")
 
+    # The pool forwards OpenAI's own shape, so the schemas travel in the
+    # request the way crax sends them — without this the agent builds the
+    # shed prompt for the pool's models and the schemas ride as prose.
+    supports_tools = True
+
     def __init__(self, url: str = "", token: str = "", idle_timeout: float | None = None):
         self.url = (url or "").strip().rstrip("/")
         self.token = (token or "").strip()
@@ -503,6 +508,46 @@ class PoolProvider(BaseProvider):
     POOL_429_RETRIES = 3
     POOL_429_WAIT_CAP = 20.0
 
+    # A sleeping box answers through the platform's front door: 502 with an
+    # HTML page about waking instead of the pool's JSON. Nothing was served,
+    # so asking again is not a doubled answer — but the poll is bounded.
+    GATE_RETRIES = 4
+    GATE_WAIT = 12.0
+
+    # The platform's front end re-sends a POST once when the origin resets
+    # under it, and the pool's guard reads that duplicate as a replay. A
+    # re-signed request carries fresh bytes (a different nonce), so the
+    # guard lets it through; one retry is the whole budget — a replay that
+    # comes back needs a person, not a storm.
+    REPLAY_RETRIES = 1
+
+    @staticmethod
+    def _gate(response) -> bool:
+        """The front-door page a sleeping box serves instead of the pool.
+
+        The pool only ever answers in JSON, so any HTML is the platform
+        speaking, not the pool. Only checked before the first frame is shown:
+        after that, repeating the request would print the answer twice and
+        pay for it twice.
+        """
+        headers = getattr(response, "headers", None) or {}
+        try:
+            kind = headers.get("content-type", "")
+        except Exception:
+            kind = ""
+        if "json" in str(kind):
+            return False
+        head = str(getattr(response, "text", "") or "")[:64].lower()
+        return head.startswith("<!doctype html") or head.startswith("<html")
+
+    @staticmethod
+    def _replay(response) -> bool:
+        """The guard against doubled bytes: the same request already used."""
+        if getattr(response, "status_code", 0) != 401:
+            return False
+        detail = _reason(401, _safe_json(response))
+        return "a replay" in detail.lower()
+
     @staticmethod
     def _retry_after(response) -> float:
         try:
@@ -517,19 +562,38 @@ class PoolProvider(BaseProvider):
         return min(max(header, payload, 1.0), PoolProvider.POOL_429_WAIT_CAP)
 
     async def _chat(self, messages: list[dict], model: str, token: str) -> str:
-        raw, headers = self._signed(self._body(messages, model, False))
+        body = self._body(messages, model, False)
         response = None
-        for attempt in range(1 + PoolProvider.POOL_429_RETRIES):
+        gate_left = PoolProvider.GATE_RETRIES
+        rate_left = PoolProvider.POOL_429_RETRIES
+        replay_left = PoolProvider.REPLAY_RETRIES
+        while True:
+            # A fresh signature per attempt: the platform's front end re-sends
+            # a POST under an origin reset, and bytes the guard already saw
+            # would be answered as a replay. Each signing minted a new nonce.
+            raw, headers = self._signed(body)
             async with httpx.AsyncClient(timeout=self._timeout()) as client:
                 response = await client.post(self.url + "/v1/chat/completions", content=raw,
                                              headers=headers)
             if response.status_code == 200:
                 break
-            if response.status_code == 429 and attempt < PoolProvider.POOL_429_RETRIES:
+            if response.status_code == 429 and rate_left:
+                rate_left -= 1
                 await asyncio.sleep(self._retry_after(response))
                 continue
+            if PoolProvider._gate(response):
+                if gate_left:
+                    gate_left -= 1
+                    await asyncio.sleep(PoolProvider.GATE_WAIT)
+                    continue
+                # The front door kept serving the wake page: its name is
+                # also the answer a user acts on.
+                raise PoolError(_asleep(self.url, httpx.ReadTimeout("gate page")))
+            if PoolProvider._replay(response) and replay_left:
+                replay_left -= 1
+                await asyncio.sleep(2.0)
+                continue
             raise PoolError(_reason(response.status_code, _safe_json(response)))
-        assert response is not None  # the last attempt raises, never falls through
         body = _safe_json(response) or {}
         choices = body.get("choices") or []
         # Upstream may hand back non-objects; .get on them used to raise
@@ -540,6 +604,82 @@ class PoolProvider(BaseProvider):
         if not isinstance(message, dict):
             return ""
         return str(message.get("content") or "")
+
+    async def complete(self, messages: list[dict], model: str = "",
+                       tools: list[dict] = None) -> dict:
+        """One request, the whole answer: text and/or the calls the model made.
+
+        The pool ships OpenAI's own shape, so the tool schemas travel in the
+        body the way crax sends them: history and schemas go through the same
+        converters, the ask carries `stream: False`, and `message.tool_calls`
+        comes back parsed into BeeCode's `{"tool": …, "args": {…}}` rows.
+        A model that ignored the `tools` field is not lost either: the agent
+        runs the shed parser over the text that came back, so a ```json block
+        still lands as a call.
+
+        Non-streaming on purpose, for the same reason crax is: a call streamed
+        in fragments has to be reassembled before it means anything, and the
+        turn is not shown to the user until then anyway.
+        """
+        from beeagent.providers.crax import CraxProvider
+
+        body = self._body(CraxProvider.to_openai_history(messages), model, False)
+        if tools:
+            body["tools"] = CraxProvider.to_openai_tools(tools)
+            body["tool_choice"] = "auto"
+        gate_left = PoolProvider.GATE_RETRIES
+        rate_left = PoolProvider.POOL_429_RETRIES
+        replay_left = PoolProvider.REPLAY_RETRIES
+        while True:
+            raw, headers = self._signed(body)  # a fresh nonce per attempt
+            async with httpx.AsyncClient(timeout=self._timeout()) as client:
+                response = await client.post(self.url + "/v1/chat/completions",
+                                             content=raw, headers=headers)
+            if response.status_code == 200:
+                break
+            if response.status_code == 429 and rate_left:
+                rate_left -= 1
+                await asyncio.sleep(self._retry_after(response))
+                continue
+            if PoolProvider._gate(response):
+                if gate_left:
+                    gate_left -= 1
+                    await asyncio.sleep(PoolProvider.GATE_WAIT)
+                    continue
+                raise PoolError(_asleep(self.url, httpx.ReadTimeout("gate page")))
+            if PoolProvider._replay(response) and replay_left:
+                replay_left -= 1
+                await asyncio.sleep(2.0)
+                continue
+            raise PoolError(_reason(response.status_code, _safe_json(response)))
+        answer = _safe_json(response) or {}
+        empty: dict = {"text": "", "tool_calls": []}
+        choices = answer.get("choices") or []
+        if not choices or not isinstance(choices[0], dict):
+            return empty
+        message = choices[0].get("message") or {}
+        if not isinstance(message, dict):
+            return empty
+        calls: list[dict] = []
+        for call in message.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function") or {}
+            if not isinstance(function, dict):
+                continue
+            name = str(function.get("name") or "")
+            raw_args = function.get("arguments")
+            args: object = {}
+            if isinstance(raw_args, str) and raw_args.strip():
+                try:
+                    args = json.loads(raw_args)
+                except ValueError:
+                    args = {}
+            elif isinstance(raw_args, dict):
+                args = raw_args
+            if name and isinstance(args, dict):
+                calls.append({"tool": name, "args": args})
+        return {"text": str(message.get("content") or ""), "tool_calls": calls}
 
     async def chat_stream(self, messages: list[dict], model: str = "") -> AsyncIterator:
         token = self._require()
@@ -572,32 +712,50 @@ class PoolProvider(BaseProvider):
     async def _stream(self, messages: list[dict], model: str, token: str) -> AsyncIterator:
         """One ask, one answer: the shared reader turns the frames into text.
 
-        The pool answers in OpenAI-shaped SSE, so `_pieces` is all this provider
-        contributes to the reading. The lines are not: reading them here, one
-        `data:` line at a time, is what used to hand back
-        "I will now write the file and the third" — the split frame dropped, no
-        error raised, the seat charged once for a half answer.
-
         A 429 before the first frame retries here (bounded, honoring
         Retry-After): overload is a wait, not a failure, and nothing billed yet.
+
+        The platform's front door answers a sleeping box with an HTML wake page
+        (502) and re-sends the POST once when the origin resets under it — the
+        pool's own guard then calls the duplicate a replay. Before the first
+        frame is on screen nothing was served, so the loop re-signs with a
+        fresh nonce per attempt and waits out the gate; after the first frame,
+        the same way as crax, nothing is repeated.
         """
-        raw, headers = self._signed(self._body(messages, model, True))
+        body = self._body(messages, model, True)
         who = self.source_name()
-        for attempt in range(1 + PoolProvider.POOL_429_RETRIES):
+        calls: list[dict] = []          # tool fragments this stream gathers
+        gate_left = PoolProvider.GATE_RETRIES
+        rate_left = PoolProvider.POOL_429_RETRIES
+        replay_left = PoolProvider.REPLAY_RETRIES
+        while True:
+            raw, headers = self._signed(body)  # a fresh nonce per attempt
             async with httpx.AsyncClient(timeout=self._timeout()) as client:
                 async with client.stream("POST", self.url + "/v1/chat/completions",
                                          content=raw, headers=headers) as response:
-                    if response.status_code == 429 \
-                            and attempt < PoolProvider.POOL_429_RETRIES:
-                        await response.aread()
-                        await asyncio.sleep(self._retry_after(response))
-                        continue
                     if response.status_code != 200:
                         await response.aread()
-                        raise PoolError(_reason(response.status_code, _safe_json(response)))
-                    async for piece in read_answer_stream(response.aiter_lines(),
-                                                          lambda event: _pieces(event, who),
-                                                          source=who, exc=PoolStreamError):
+                        if response.status_code == 429 and rate_left:
+                            rate_left -= 1
+                            await asyncio.sleep(self._retry_after(response))
+                            continue
+                        if PoolProvider._gate(response):
+                            if gate_left:
+                                gate_left -= 1
+                                await asyncio.sleep(PoolProvider.GATE_WAIT)
+                                continue
+                            raise PoolError(_asleep(self.url,
+                                                    httpx.ReadTimeout("gate page")))
+                        if PoolProvider._replay(response) and replay_left:
+                            replay_left -= 1
+                            await asyncio.sleep(2.0)
+                            continue
+                        raise PoolError(_reason(response.status_code,
+                                                _safe_json(response)))
+                    async for piece in read_answer_stream(
+                            response.aiter_lines(),
+                            lambda event: _pieces(event, who, calls),
+                            source=who, exc=PoolStreamError):
                         yield piece
                     return
 
@@ -694,13 +852,49 @@ class PoolProvider(BaseProvider):
         return found
 
 
-def _pieces(event: dict, source: str = "") -> list[tuple[str, str]]:
+def _gather(first: dict, delta: dict, carry: list[dict]) -> None:
+    """Fragments one frame adds to this stream's tool calls.
+
+    A streamed call arrives in slices: the name rides the first fragment,
+    every later fragment adds a piece of `function.arguments`. They are
+    indexed on purpose — one answer may run more than one call.
+    """
+    fragments = delta.get("tool_calls")
+    if not isinstance(fragments, list):
+        return
+    for fragment in fragments:
+        if not isinstance(fragment, dict):
+            continue
+        index = fragment.get("index")
+        if not isinstance(index, int) or index < 0:
+            index = 0
+        while len(carry) <= index:
+            carry.append({"tool": "", "args": []})
+        function = fragment.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = function.get("name")
+        if isinstance(name, str) and name:
+            carry[index]["tool"] = name
+        piece = function.get("arguments")
+        if isinstance(piece, str) and piece:
+            carry[index]["args"].append(piece)
+
+
+def _pieces(event: dict, source: str = "",
+            carry: list[dict] | None = None) -> list[tuple[str, str]]:
     """The text pieces one OpenAI-shaped frame of the pool's stream carries.
 
     `reasoning_content` is kept because several pool providers think out loud in
     that field, and the agent shows it separately from the answer. An `error`
     frame is the pool explaining itself, and that sentence belongs in front of
     the user rather than turned into "the pool streamed nothing".
+
+    When the stream ends with native tool calls (`delta.tool_calls`), they are
+    gathered across the frames and re-emitted once as the shed JSON block —
+    the same block the agent's parser reads on every other path. Without this,
+    a model that answered through the native channel but streamed it printed
+    nothing, and the turn read as silence.
     """
     check_error_frame(event, source or _pool_word(), exc=PoolStreamError)
     choices = event.get("choices")
@@ -718,4 +912,26 @@ def _pieces(event: dict, source: str = "") -> list[tuple[str, str]]:
         value = delta.get(field)
         if isinstance(value, str) and value:
             out.append(("reasoning", value))
+    if carry is not None:
+        _gather(first, delta, carry)
+        if first.get("finish_reason") == "tool_calls":
+            calls = [{"tool": one["tool"], "args": _joined(one["args"])}
+                     for one in carry
+                     if isinstance(one, dict) and one.get("tool")]
+            if calls:
+                out.append(("content", "\n```json\n"
+                            + json.dumps({"calls": calls}, ensure_ascii=False)
+                            + "\n```"))
     return out
+
+
+def _joined(pieces: list) -> dict:
+    """Arguments a stream cut into fragments, assembled once."""
+    if not isinstance(pieces, list) or not pieces:
+        return {}
+    text = "".join(part for part in pieces if isinstance(part, str))
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
