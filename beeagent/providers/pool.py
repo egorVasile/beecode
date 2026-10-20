@@ -68,8 +68,16 @@ _MESSAGE_FOR = {
 
 
 def _unknown_seat(error: BaseException) -> bool:
-    """The pool does not know this token: wiped disk, revoked seat, stale file."""
-    return "unknown token" in str(error or "")
+    """The pool does not know this token: wiped disk, revoked seat, stale file.
+
+    Three wordings, one fact. The legacy pools rejected with "unknown token";
+    the seat scheme says "unknown install id"; and a replaced key file makes
+    the seat unprovable ("prove this install holds the seat"), which a fresh
+    enroll heals too — the new key takes a new seat of its own.
+    """
+    text = str(error or "").lower()
+    return ("unknown token" in text or "unknown install id" in text
+            or "prove this install holds the seat" in text)
 
 
 def _reason(status: int, body: object) -> str:
@@ -406,13 +414,23 @@ class PoolProvider(BaseProvider):
     # (plain provider use, tests) means live-only.
     on_token = None
 
-    def _re_enroll(self, dead: str) -> str | None:
-        """A new seat for a dead token, or None when that cannot help."""
+    def _re_enroll(self) -> str | None:
+        """A new seat for a dead token, or None when that cannot help.
+
+        The seat is the install id now: `enroll` fills `id` for every pool
+        (a legacy `token` is copied into `id` before the answer comes back),
+        so the fresh seat is read from `id` and never from `token`. An id
+        coming back identical to the dead one is no longer a dead end — the
+        seat scheme re-creates the same row on the server (the id is derived
+        from the install key, not minted per enroll), so the retry lands.
+        A truly revoked secret answer stays bounded either way: the retry
+        runs once, then the original failure surfaces.
+        """
         try:
-            fresh = enroll(self.url).get("token") or ""
+            fresh = enroll(self.url).get("id") or ""
         except Exception:
             return None
-        if not fresh or fresh == dead:
+        if not fresh:
             return None
         self.token = fresh
         if callable(self.on_token):
@@ -457,7 +475,7 @@ class PoolProvider(BaseProvider):
                 # A token that comes back identical was revoked, not lost —
                 # retrying it would loop, so the original error stands.
                 if attempt == 1 and _unknown_seat(e):
-                    fresh = self._re_enroll(token)
+                    fresh = self._re_enroll()
                     if fresh is not None:
                         token = fresh
                         continue
@@ -544,7 +562,7 @@ class PoolProvider(BaseProvider):
             except PoolError as e:
                 if started or attempt == 2 or not _unknown_seat(e):
                     raise
-                fresh = self._re_enroll(token)
+                fresh = self._re_enroll()
                 if fresh is None:
                     raise
                 token = fresh

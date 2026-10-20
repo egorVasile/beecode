@@ -349,6 +349,140 @@ def test_dead_seat_reenrolls_once_then_answers(monkeypatch):
     assert calls["chat"] == 2
 
 
+def test_unknown_install_id_reenrolls_once_then_answers(monkeypatch):
+    """The seat scheme's own rejection ("unknown install id") with the seat
+    handed back under `id`: a wiped tokens table heals without a human."""
+    import asyncio
+    import json as _json
+
+    from beeagent.providers import pool as pool_mod
+
+    calls = {"chat": 0}
+    saved = []
+
+    class Reply:
+        def __init__(self, status_code, text):
+            self.status_code = status_code
+            self.text = text
+
+        def json(self):
+            return _json.loads(self.text)
+
+    class Sync:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, content=None, headers=None):
+            if url.endswith("/v1/enroll"):
+                return Reply(200, _json.dumps(
+                    {"id": "#beecode0000000000", "approved": True}))
+            return Reply(200, _json.dumps(
+                {"choices": [{"message": {"content": "hi"}}]}))
+
+    class AsyncClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, content=None, headers=None):
+            calls["chat"] += 1
+            if calls["chat"] == 1:
+                return Reply(401, _json.dumps(
+                    {"error": "unknown install id - enroll again"}))
+            return Reply(200, _json.dumps(
+                {"choices": [{"message": {"content": "hi"}}]}))
+
+    monkeypatch.setattr(pool_mod.httpx, "Client", Sync)
+    monkeypatch.setattr(pool_mod.httpx, "AsyncClient", AsyncClient)
+    provider = pool_mod.PoolProvider(url="https://pool.test", token="#beecode0000000000")
+    provider.on_token = saved.append
+
+    async def go():
+        return await provider.chat([{"role": "user", "content": "hi"}], model="m")
+
+    assert asyncio.run(go()) == "hi"
+    assert provider.token == "#beecode0000000000"
+    assert saved == ["#beecode0000000000"]
+    assert calls["chat"] == 2
+
+
+def test_unprovable_seat_reenrolls_once_then_answers(monkeypatch):
+    """A replaced key file makes the seat unprovable ("prove this install
+    holds the seat"): re-enroll gives the new key its own seat and the turn
+    still lands."""
+    import asyncio
+    import json as _json
+
+    from beeagent.providers import pool as pool_mod
+
+    calls = {"chat": 0}
+
+    class Reply:
+        def __init__(self, status_code, text):
+            self.status_code = status_code
+            self.text = text
+
+        def json(self):
+            return _json.loads(self.text)
+
+    class Sync:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, content=None, headers=None):
+            if url.endswith("/v1/enroll"):
+                return Reply(200, _json.dumps(
+                    {"id": "#beecode9999999999", "approved": True}))
+            return Reply(200, _json.dumps(
+                {"choices": [{"message": {"content": "hi"}}]}))
+
+    class AsyncClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, content=None, headers=None):
+            calls["chat"] += 1
+            if calls["chat"] == 1:
+                return Reply(401, _json.dumps(
+                    {"error": "prove this install holds the seat: no match vs stored key"}))
+            return Reply(200, _json.dumps(
+                {"choices": [{"message": {"content": "hi"}}]}))
+
+    monkeypatch.setattr(pool_mod.httpx, "Client", Sync)
+    monkeypatch.setattr(pool_mod.httpx, "AsyncClient", AsyncClient)
+    provider = pool_mod.PoolProvider(url="https://pool.test", token="#beecode0000000000")
+
+    async def go():
+        return await provider.chat([{"role": "user", "content": "hi"}], model="m")
+
+    assert asyncio.run(go()) == "hi"
+    assert provider.token == "#beecode9999999999"
+    assert calls["chat"] == 2
+
+
 def test_pool_429_waits_and_retries_within_bounds(monkeypatch):
     """Overload is a wait, not a failure: honor Retry-After, then answer."""
     import asyncio
