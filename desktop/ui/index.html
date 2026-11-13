@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>BeeCode Desktop</title>
+<script>try{var t=localStorage.getItem("beecode-theme");if(t==="zinc")document.documentElement.dataset.theme="zinc"}catch(e){}</script>
+<link id="skinlink" rel="stylesheet" href="skins/brutal.css">
+<link rel="stylesheet" href="skins/conversation.css">
+<script>try{var s=localStorage.getItem("beecode-skin");if(s==="paper"||s==="brutal"){document.getElementById("skinlink").href="skins/"+s+".css"}}catch(e){}</script>
+</head>
+<body>
+<nav id="app-menu" aria-label="Меню приложения">
+  <div class="app-navigation" aria-label="Навигация по чатам">
+    <button id="nav-back" type="button" aria-label="Предыдущий чат" title="Предыдущий чат" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8 10 12.5M5.8 8H14"/></svg></button>
+    <button id="nav-forward" type="button" aria-label="Следующий чат" title="Следующий чат" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5M10.2 8H2"/></svg></button>
+    <button id="nav-sidebar" type="button" aria-label="Показать или скрыть боковую панель" title="Показать или скрыть боковую панель" aria-pressed="true"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M6.5 3v10"/></svg></button>
+  </div>
+  <details class="app-menu-group"><summary>Файл</summary><div class="app-menu-popup" role="menu">
+    <button role="menuitem" data-menu-action="new-chat">Новый чат <kbd>Ctrl+N</kbd></button>
+    <hr><button role="menuitem" data-menu-action="close">Закрыть окно <kbd>Ctrl+W</kbd></button>
+  </div></details>
+  <details class="app-menu-group"><summary>Правка</summary><div class="app-menu-popup" role="menu">
+    <button role="menuitem" data-menu-action="undo">Отменить <kbd>Ctrl+Z</kbd></button>
+    <button role="menuitem" data-menu-action="redo">Повторить <kbd>Ctrl+Y</kbd></button>
+    <hr><button role="menuitem" data-menu-action="cut">Вырезать <kbd>Ctrl+X</kbd></button>
+    <button role="menuitem" data-menu-action="copy">Копировать <kbd>Ctrl+C</kbd></button>
+    <button role="menuitem" data-menu-action="paste">Вставить <kbd>Ctrl+V</kbd></button>
+    <hr><button role="menuitem" data-menu-action="selectAll">Выделить всё <kbd>Ctrl+A</kbd></button>
+    <hr><button role="menuitem" data-menu-action="settings">Настройки <kbd>Ctrl+,</kbd></button>
+  </div></details>
+  <details class="app-menu-group"><summary>Вид</summary><div class="app-menu-popup" role="menu">
+    <button role="menuitem" data-menu-action="sidebar">Боковая панель <kbd>Ctrl+Shift+S</kbd></button>
+    <button role="menuitem" data-menu-action="search">Поиск по чатам <kbd>Ctrl+F</kbd></button>
+    <hr><button role="menuitem" data-menu-action="zoomIn">Увеличить <kbd>Ctrl++</kbd></button>
+    <button role="menuitem" data-menu-action="zoomOut">Уменьшить <kbd>Ctrl+-</kbd></button>
+    <button role="menuitem" data-menu-action="zoomReset">Фактический размер <kbd>Ctrl+0</kbd></button>
+    <hr><button role="menuitem" data-menu-action="fullscreen">Полный экран <kbd>F11</kbd></button>
+    <button role="menuitem" data-menu-action="reload">Обновить окно</button>
+  </div></details>
+  <details class="app-menu-group"><summary>Справка</summary><div class="app-menu-popup" role="menu">
+    <button role="menuitem" data-menu-action="instructions">Инструкции</button>
+  </div></details>
+  <span class="app-title" aria-hidden="true">BeeCode</span>
+</nav>
+<div id="app">
+  <div id="sidebar-wrap"><aside id="sidebar">
+    <div class="brand">
+      <span class="mark">B</span>
+      <span class="word">BeeCode</span>
+      <span class="ver" id="ver"></span>
+    </div>
+    <button id="new-chat">
+      <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      Новый чат
+    </button>
+    <div class="search-row">
+      <svg viewBox="0 0 16 16" width="13" height="13"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <input id="search" placeholder="Поиск по чатам" autocomplete="off">
+    </div>
+    <div class="sidebar-library">
+    <section id="projects-panel" aria-labelledby="projects-heading">
+      <div class="sidebar-section-heading"><span id="projects-heading">Проекты</span><button id="project-create" type="button" title="Создать проект" aria-label="Создать проект">+</button></div>
+      <div id="projects-list"></div>
+    </section>
+    <div class="sidebar-section-heading recent-heading">Недавние</div>
+    <div id="sessions"></div>
+    </div>
+    <div class="side-bottom">
+      <div id="project" title=""></div>
+      <div class="me">
+        <span class="avatar" id="avatar">·</span>
+        <span id="whoami">…</span>
+        <button id="gear" title="Настройки">
+          <svg viewBox="0 0 16 16" width="15" height="15"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6 11 5M5 11l-1.4 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside></div>
+  <main id="main">
+    <div id="trust" class="hidden">
+      <div>
+        <b>Папка хочет менять поведение BeeCode</b>
+        <div id="trust-claims"></div>
+      </div>
+      <div class="trust-btns">
+        <button id="trust-yes">Доверять</button>
+        <button id="trust-no">Нет</button>
+      </div>
+    </div>
+    <div id="modelwarn" class="hidden">
+      <span class="dot"></span><span id="modelwarn-text"></span>
+    </div>
+    <div id="greet">
+      <h1 id="greet-text"></h1>
+      <div class="hint" id="greet-sub"></div>
+    </div>
+    <div id="chat-area">
+      <nav id="chat-map" aria-label="Навигация по сообщениям" hidden></nav>
+      <div id="chat-map-preview" role="tooltip" hidden><div class="chat-map-title"></div><div class="chat-map-answer"></div></div>
+      <div id="chat"></div>
+      <section id="agent-view" class="hidden" aria-label="Чат субагента">
+        <header><div><strong id="agent-view-title">Субагент</strong><span id="agent-view-status">Только просмотр</span></div><button id="agent-view-close" type="button" aria-label="Закрыть">×</button></header>
+        <div id="agent-view-feed"></div>
+      </section>
+    </div>
+    <div id="composer-wrap">
+      <div id="chips"></div>
+      <div id="composer">
+        <div id="projchip" title="Рабочая папка"><span id="projchip-name"></span></div>
+        <textarea id="input" rows="1" placeholder="Спроси что-нибудь…  @ — файл, / — команда, Enter — отправить"></textarea>
+        <div id="composer-bar">
+          <div class="left">
+            <button id="attach" title="Прикрепить файлы">@</button>
+            <button id="modelpill" title="Модель">
+              <span class="mico"></span><span id="modelname">…</span>
+              <svg viewBox="0 0 10 10" width="9" height="9"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </button>
+            <details id="effort-picker" class="hidden"><summary id="effort-trigger" aria-label="Уровень рассуждения" aria-haspopup="listbox" aria-expanded="false"><span id="effort-label">Авто</span><svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></summary><div id="effort-menu" role="listbox" aria-label="Уровень рассуждения"></div></details>
+            <button id="permmode" title="Режим разрешений"></button>
+          </div>
+          <button id="stop" class="hidden" title="Остановить"><span></span></button>
+          <button id="send" title="Отправить">
+            <svg viewBox="0 0 16 16" width="15" height="15"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div id="modelmenu" class="hidden"></div>
+        <div id="slashmenu" class="hidden"></div>
+      </div>
+      <div id="ctxbar"><div id="ctxfill"><div></div></div><span id="ctxtext"></span></div>
+    </div>
+  </main>
+</div>
+
+<aside id="code-panel" class="hidden" aria-label="Code preview">
+  <div class="code-panel-head">
+    <b id="code-panel-title">Code preview</b>
+    <button id="code-panel-close" title="Close">×</button>
+  </div>
+  <div id="code-panel-meta"></div>
+  <pre id="code-panel-code" tabindex="0"></pre>
+  <button id="code-ask" class="hidden">Ask to AI</button>
+</aside>
+
+<div id="settings-back" class="hidden">
+  <div id="settings" role="dialog" aria-label="Настройки">
+    <div class="set-head">
+      <b>Настройки</b>
+      <button id="set-close" title="Закрыть">✕</button>
+    </div>
+    <div class="set-tabs">
+      <button data-tab="appearance">Оформление</button>
+      <button data-tab="extensions">Расширения</button>
+      <button data-tab="providers" class="on">Провайдеры</button>
+      <button data-tab="pool">Пул</button>
+      <button data-tab="model">Модель</button>
+      <button data-tab="agent">Агент</button>
+      <button data-tab="access">Доступ</button>
+      <button data-tab="instructions">Инструкции</button>
+      <button data-tab="folder">Папка</button>
+    </div>
+    <div class="set-body">
+      <section data-pane="extensions" class="hidden">
+        <p class="set-note">Навыки доступны агенту по мере необходимости. MCP-серверы запускаются после подключения и проверки доверия к папке.</p>
+        <div class="set-label">Навыки</div>
+        <div id="extension-skills"></div>
+        <div class="set-label">MCP-серверы</div>
+        <div id="extension-servers"></div>
+        <p class="set-note">Серверы настраиваются в файле <code>.beeagent/mcp.json</code> рабочей папки.</p>
+        <div id="extension-message" class="form-msg" role="status"></div>
+      </section>
+      <section data-pane="appearance" class="hidden">
+        <p class="set-note">Выбери оформление рабочего пространства. Изменения применяются сразу.</p>
+        <div class="set-label">Тема</div>
+        <div class="seg" id="appearance-theme">
+          <button data-v="paper"><b>Светлая</b></button>
+          <button data-v="zinc"><b>Тёмная</b></button>
+        </div>
+        <div class="set-label">Стиль интерфейса</div>
+        <div class="seg" id="appearance-skin">
+          <button data-v="brutal"><b>Brutal</b></button>
+          <button data-v="paper"><b>Paper</b></button>
+        </div>
+        <div class="set-label">Изменения агента</div>
+        <button type="button" id="reset-agent-ui">Сбросить изменения интерфейса</button>
+        <p class="set-note">Если настройки скрыты, нажми Ctrl+Shift+U.</p>
+      </section>
+      <section data-pane="providers">
+        <p class="set-note">Активный провайдер отвечает на вопросы. Ключи хранятся в <code>beeagent.json</code> рабочей папки — целиком их никто не увидит, только хвост.</p>
+        <div class="set-label">Настроены</div>
+        <div id="prov-list"></div>
+        <div class="set-label">Бесплатные эндпоинты — вставь свой ключ</div>
+        <div id="preset-list"></div>
+        <div class="set-label">Свой эндпоинт <span class="set-dim">(OpenAI-совместимый)</span></div>
+        <div class="form">
+          <label>Имя<input id="f-name" placeholder="mybox" autocomplete="off"></label>
+          <label>Base URL<input id="f-url" placeholder="https://api.example.com/v1" autocomplete="off"></label>
+          <label>Ключи <span class="set-dim">через запятую; при редактировании пустое поле сохраняет текущие ключи</span><input id="f-keys" type="password" placeholder="sk-…" autocomplete="off"></label>
+          <div class="set-label">Модели</div>
+          <div id="f-model-rows"></div>
+          <button type="button" id="f-add-model">Добавить модель</button>
+          <div class="form-row">
+            <button id="f-save">Сохранить</button>
+            <span id="f-msg" class="form-msg"></span>
+          </div>
+        </div>
+      </section>
+      <section data-pane="model" class="hidden">
+        <p class="set-note">Модель активного провайдера. Список привозит <code>/api/models</code> — измеренные помечены ✔.</p>
+        <div id="set-models"></div>
+      </section>
+      <section data-pane="pool" class="hidden">
+        <p class="set-note">Общий сервер с ключами: ответы едут к тебе, ключи — никогда. Место привязано к этой машине. Терминал не нужен — всё делается здесь.</p>
+        <div class="pool-status">
+          <span class="mdot" id="pool-dot"></span>
+          <span id="pool-state">Опрашиваю пул…</span>
+          <span id="gverify" class="gverify hidden" title="Место подтверждено через Google">
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <circle cx="8" cy="8" r="7" fill="none"/><path d="M4.6 8.4 7 10.7 11.5 5.9" fill="none"/>
+            </svg>
+          </span>
+        </div>
+        <div id="p-success" class="p-success hidden" role="status">🎉 Вы зарегистрировались! Место привязано к этой машине.</div>
+        <div class="kv"><span>Адрес</span><code id="pool-url">…</code></div>
+        <div class="kv"><span>Место</span><code id="pool-seat">…</code></div>
+        <div class="kv"><span>Бюджет</span><code id="pool-budget">…</code></div>
+        <div class="set-label">Взять место</div>
+        <div class="form">
+          <label>Адрес пула<input id="p-url" placeholder="https://pool.example.com" autocomplete="off"></label>
+          <div class="form-row">
+            <button id="p-url-save">Сохранить адрес</button>
+          </div>
+          <label>Секрет приглашения <span class="set-dim">если пул закрытый, иначе пусто</span><input id="p-secret" type="password" placeholder="необязательно" autocomplete="off"></label>
+          <div class="form-row">
+            <button id="p-enroll">Взять место</button>
+            <button id="p-google">Войти через Google</button>
+            <button id="p-phone">Подключить телефон</button>
+            <button id="p-use">Включить провайдер pool</button>
+          </div>
+          <div id="p-phone-code" class="p-phone-code hidden" title="Введи этот код в приложении BeeCode Data в течение 5 минут"></div>
+          <span id="p-msg" class="form-msg"></span>
+        </div>
+      </section>
+      <section data-pane="access" class="hidden">
+        <p class="set-note">Кто решает, что агенту можно запускать.</p>
+        <div id="set-modes">
+          <button data-mode="ask"><b>Спрашивать</b><small>опасные инструменты — только с разрешения</small></button>
+          <button data-mode="auto"><b>Авто</b><small>всё запускается само</small></button>
+          <button data-mode="readonly"><b>Только чтение</b><small>ничего не меняет на диске</small></button>
+        </div>
+      </section>
+      <section data-pane="agent" class="hidden">
+        <p class="set-note">Как агент думает и отвечает. Применяется сразу, сохраняется в <code>beeagent.json</code>.</p>
+        <div class="set-label">Режим работы</div>
+        <div class="seg" id="ag-mode">
+          <button data-v="normal"><b>Обычный</b><small>каждый вопрос — заново</small></button>
+          <button data-v="economy"><b>Экономный</b><small>повторы берёт из кэша</small></button>
+        </div>
+        <div class="set-label">Язык ответов</div>
+        <div class="seg" id="ag-lang">
+          <button data-v="ru"><b>Русский</b></button>
+          <button data-v="en"><b>English</b></button>
+        </div>
+        <div class="set-label">Вызов инструментов</div>
+        <label class="check-row"><input type="checkbox" id="ag-native">
+          <span><b>Нативный протокол</b><small>инструменты — данными, а не текстом в промпте. Выключай, только если провайдер чудит.</small></span>
+        </label>
+        <div class="set-label">Пределы</div>
+        <div class="num-grid">
+          <label>Макс. ходов<input id="ag-turns" type="number" min="1" max="500"></label>
+          <label>Потолок контекста, токены <span class="set-dim">0 — от модели</span><input id="ag-ctx" type="number" min="0" max="1000000"></label>
+          <label>Таймаут простоя, сек<input id="ag-idle" type="number" min="10" max="3600"></label>
+        </div>
+        <div class="set-label">Кэш экономных ответов</div>
+        <label class="check-row"><input type="checkbox" id="ag-cache">
+          <span><b>Кэш включён</b><small>одинаковые вопросы не тратят запросы заново</small></span>
+        </label>
+        <div class="num-grid">
+          <label>Ответ годен, минут<input id="ag-ttl" type="number" min="1" max="1440"></label>
+        </div>
+        <div class="form-row" style="margin-top:12px">
+          <button id="ag-save">Сохранить</button>
+          <span id="ag-msg" class="form-msg"></span>
+        </div>
+      </section>
+      <section data-pane="instructions" class="hidden">
+        <div class="ins-card">
+          <div class="ins-head">
+            <div class="ins-title">
+              <span class="ins-glyph">✦</span>
+              <b>Системные инструкции</b>
+            </div>
+            <span id="ins-badge" class="ins-badge">Пусто</span>
+          </div>
+          <p class="set-note">Ваши правила добавляются в <code>role: system</code> — тем же структурным слотом, что Claude/Gemini/OpenAI используют для системного промпта. Действуют на каждый ход и имеют высший приоритет. Пусто — только встроенный промпт.</p>
+          <div class="ins-editor">
+            <textarea id="ins-text" rows="9" spellcheck="false"
+              placeholder="Например: Отвечай кратко. Всегда предлагай тесты. Не используй библиотеки без нужды."></textarea>
+            <div class="ins-foot">
+              <span class="ins-hint">Ctrl+Enter — сохранить</span>
+              <span id="ins-count" class="ins-count">0 симв.</span>
+            </div>
+          </div>
+          <div class="ins-btns">
+            <button id="ins-save">Сохранить</button>
+            <button id="ins-clear" class="ghost">Очистить</button>
+            <span id="ins-msg" class="form-msg"></span>
+          </div>
+        </div>
+      </section>
+      <section data-pane="folder" class="hidden">
+        <p class="set-note">Рабочая папка агента и доверие к ней.</p>
+        <div class="kv"><span>Папка</span><code id="set-workdir">…</code></div>
+        <div class="kv"><span>Доверие</span><code id="set-trust">…</code></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div id="project-dialog" class="hidden" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title" aria-describedby="project-dialog-description">
+  <form id="project-form" class="project-dialog-card">
+    <header class="project-dialog-header">
+      <h2 id="project-dialog-title">Создать проект</h2>
+      <button type="button" id="project-dialog-close" aria-label="Закрыть">×</button>
+    </header>
+    <label id="project-form-label" for="project-name">Название проекта</label>
+    <div class="project-input-wrap">
+      <span class="project-input-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M2.8 6.2a2 2 0 0 1 2-2h3.4l1.5 1.6h5.5a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4.8a2 2 0 0 1-2-2z"/><path d="M3 8.3h14"/></svg></span>
+      <input id="project-name" maxlength="80" autocomplete="off" placeholder="Название проекта" aria-describedby="project-error">
+    </div>
+    <span id="project-error" role="alert"></span>
+    <div class="project-dialog-note" id="project-dialog-description">
+      <span aria-hidden="true">✦</span><p>Проекты объединяют чаты и группы чатов, чтобы было проще поддерживать порядок.</p>
+    </div>
+    <footer class="project-dialog-actions">
+      <button type="button" id="project-cancel">Отмена</button>
+      <button type="submit">Создать проект</button>
+    </footer>
+  </form>
+</div>
+
+<div id="gate" class="gate hidden" role="dialog" aria-modal="true" aria-labelledby="gate-title">
+  <div class="gate-card">
+    <div class="gate-title" id="gate-title">🐝 Войди, чтобы включить общий пул</div>
+    <p class="gate-text">Место в пуле выдаётся только через вход Google, и проверяет его сам сервер: без подтверждённого места пул отвечать не будет. Можешь пропустить — приложение работает, но без пула.</p>
+    <div class="gate-row">
+      <button id="gate-google">Войти через Google</button>
+      <button id="gate-skip">Продолжить без пула</button>
+    </div>
+    <p id="gate-msg" class="form-msg"></p>
+  </div>
+</div>
+
+<div id="fatal" class="hidden"></div>
+<script src="vendor/marked.js"></script>
+<script src="vendor/purify.js"></script>
+<script src="vendor/anime.min.js"></script>
+<script src="vendor/confetti.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

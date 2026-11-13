@@ -102,6 +102,7 @@ class Fields:
     dialect: str = ""                           # main speaks one shape: "openai_compat"
     was: str = ""                               # the name being edited, if any
     context: str = ""                           # as typed: "" keep, "0" unlimited, digits a ceiling
+    model_details: list[dict] | None = None
 
     @property
     def key_list(self) -> list[str]:
@@ -467,6 +468,8 @@ def apply(config, agent, fields: Fields, workdir: str = ".") -> tuple:
     entry = _entry(name=name, url=url, keys=keys, models=models,
                    keep_model=already.model if already is not None else "",
                    context=context)
+    entry.model_details = (fields.model_details if fields.model_details is not None
+                           else list(getattr(already, "model_details", []) or []))
     kept.append(entry)
     config.custom_providers = kept
 
@@ -617,7 +620,9 @@ def register_custom_endpoint(agent, config, custom, replace: bool = False) -> No
             model=getattr(custom, "model", "") or "llama3",
             idle_timeout=idle, name=name), replace=replace)
         return
-    models = cached_models(name) or [getattr(custom, "model", "") or "gpt-4"]
+    details = getattr(custom, "model_details", []) or []
+    models = [item["id"] for item in details if isinstance(item, dict) and item.get("id")]
+    models = models or cached_models(name) or [getattr(custom, "model", "") or "gpt-4"]
     agent.providers.register(OpenAICompatProvider(
         base_url=getattr(custom, "url", ""),
         api_key=getattr(custom, "key", "") or "",
@@ -637,8 +642,6 @@ def register_live_config(agent, config) -> None:
     if agent is None or config is None:
         return
     from beeagent.providers.presets import ENDPOINTS, key_for
-
-    from beeagent.providers.presets import BY_NAME
 
     for custom in getattr(config, "custom_providers", None) or []:
         try:
@@ -733,6 +736,16 @@ def sync_context(agent) -> None:
     """
     unlimited, ceiling = context_for(
         agent.config, getattr(agent.config, "provider", ""))
+    agent.context.model_window = None
+    for provider in getattr(agent.config, "custom_providers", []) or []:
+        if str(provider.name).lower() == str(agent.config.provider or "").lower():
+            for item in getattr(provider, "model_details", []) or []:
+                if isinstance(item, dict) and item.get("id") == agent.config.model:
+                    value = item.get("context")
+                    if isinstance(value, int) and not isinstance(value, bool) and value >= 1024:
+                        agent.context.model_window = value
+                    break
+            break
     agent.context.unlimited = unlimited
     if ceiling:
         agent.context._window_cap = ceiling

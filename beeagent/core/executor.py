@@ -12,9 +12,16 @@ flight so the cancel handler in `run()` can kill it (a bash command left
 orphaned writes files indefinitely after the loop has stopped).
 """
 import asyncio
+import itertools
 
 from beeagent.tools.ask import AskTool
 from beeagent.tools.base import ToolResult
+
+# Every tool call in the process gets a number. `tool_start` and `tool_end`
+# carry the same one, so a UI can update one visual block (progress → finish)
+# instead of appending a second block per call. Sequential turns never collide;
+# concurrent ones cannot share the counter.
+_CALL_SEQ = itertools.count(1)
 
 
 def _read_grant_answer(tool_name: str, folder: str) -> str:
@@ -39,9 +46,9 @@ def _read_grant_answer(tool_name: str, folder: str) -> str:
 async def _maybe_grant_outside(callback, tool_name: str) -> bool:
     """Ask the human about a path outside the working directory.
 
-    Returns True when the tool may run again now. Three answers: decline
-    (the refusal stands), once (this folder, this session), always (this and
-    every later outside folder, this session). A non-terminal never asks.
+    Returns True when the tool may run again now. Desktop and CLI share the
+    same question registry; the desktop answers it over HTTP, while the CLI
+    falls back to its terminal prompt. Always is process-lifetime only.
     """
     from beeagent.i18n import L
     from beeagent.tools import _path_policy as policy
@@ -49,19 +56,28 @@ async def _maybe_grant_outside(callback, tool_name: str) -> bool:
     kind, folder = policy.take_refusal()
     if kind != "outside" or not folder:
         return False
-    try:
-        import sys
+    question = L(
+        f"The model wants to access this folder outside the project:\n{folder}",
+        f"Модель хочет получить доступ к папке вне проекта:\n{folder}")
+    if callable(callback) and getattr(callback, "handles_questions", False):
+        from beeagent.core import asks
 
-        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        answer = await asyncio.to_thread(
+            asks.ask, callback, question,
+            {"kind": "path_grant", "tool": tool_name, "folder": folder,
+             "buttons": ["allow_once", "deny", "always_allow"]})
+    else:
+        try:
+            import sys
+
+            if not (sys.stdin.isatty() and sys.stdout.isatty()):
+                return False
+        except (OSError, ValueError):
             return False
-    except (OSError, ValueError):
-        return False
-    if callable(callback):
-        callback("ask", {"question": L(
-            f"the model reached outside the working directory: {folder}",
-            f"модель вышла за рабочую папку: {folder}")})
-    answer = await asyncio.to_thread(_read_grant_answer, tool_name, folder)
-    if answer in ("3", "always", "всегда"):
+        print(f"\n{question}")
+        answer = await asyncio.to_thread(_read_grant_answer, tool_name, folder)
+    answer = str(answer or "").strip().lower()
+    if answer in ("3", "always", "always_allow", "всегда"):
         policy.grant_root(folder)
         policy.set_always()
         print(L("granted always: outside folders run without asking from now on "
@@ -69,7 +85,7 @@ async def _maybe_grant_outside(callback, tool_name: str) -> bool:
                 "разрешено всегда: папки снаружи работают без спроса "
                 "(эта сессия; BEECODE_TRUSTED_DIRS — навсегда)."))
         return True
-    if answer in ("2", "once", "разово", "раз", "y", "yes", "да"):
+    if answer in ("2", "once", "allow_once", "разово", "раз", "y", "yes", "да"):
         policy.grant_root(folder)
         print(L(f"granted once: {folder}",
                 f"разрешено разово: {folder}"))
@@ -130,6 +146,7 @@ async def execute_commands(agent, session, parsed, callback) -> None:
     tools = agent.tools
     permissions = agent.permissions
     for cmd in parsed.commands:
+        call = next(_CALL_SEQ)
         asked = cmd.tool
         tool = tools.get(asked)
 
@@ -195,7 +212,7 @@ async def execute_commands(agent, session, parsed, callback) -> None:
         tool.granted = permissions.mode == "auto" or cmd.tool in permissions.granted
         silent = bool(getattr(tool, "silent", False))
         if callback and not silent:
-            callback("tool_start", {"tool": cmd.tool, "args": args})
+            callback("tool_start", {"tool": cmd.tool, "args": args, "call": call})
 
         ask_tool = tool if isinstance(tool, AskTool) else None
         if ask_tool:
@@ -207,6 +224,12 @@ async def execute_commands(agent, session, parsed, callback) -> None:
             # in a worker thread keeps the prompt and stream alive.
             raw = await asyncio.to_thread(tool.execute, **args)
         except asyncio.CancelledError:
+            interrupt = getattr(tool, "interrupt", None)
+            if callable(interrupt):
+                try:
+                    interrupt()
+                except Exception:
+                    pass
             raise
         except Exception as e:
             raw = ToolResult(output=f"ERROR: {e}", error=True)
@@ -240,6 +263,12 @@ async def execute_commands(agent, session, parsed, callback) -> None:
                     agent.running_tool = tool
                     raw = await asyncio.to_thread(tool.execute, **args)
                 except asyncio.CancelledError:
+                    interrupt = getattr(tool, "interrupt", None)
+                    if callable(interrupt):
+                        try:
+                            interrupt()
+                        except Exception:
+                            pass
                     raise
                 except Exception as e:
                     raw = ToolResult(output=f"ERROR: {e}", error=True)
@@ -277,7 +306,8 @@ async def execute_commands(agent, session, parsed, callback) -> None:
             # Silent tools draw instead of announcing: the render payload
             # travels on the same event, so no new event name, no skin drift.
             event = dict(tool=cmd.tool, args=args, output=output,
-                         error=result.error)
+                         error=result.error, call=call,
+                         metadata=result.metadata or {})
             if silent and not result.error:
                 event["render"] = result.metadata
             callback("tool_end", event)

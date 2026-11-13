@@ -263,6 +263,57 @@ def test_a_freshly_enrolled_seat_reaches_the_running_provider():
     assert live.url == "https://pool.example"
 
 
+def test_google_wait_returns_the_seat_once_it_reads_approved(monkeypatch):
+    """The browser round trip is human-paced: one miss, then the seat."""
+    from beeagent.providers import pool as pool_mod
+    from beeagent.ui.commands import _wait_for_google_seat
+
+    answers = iter([{"ok": False, "error": "no seat"},
+                    {"ok": True, "approved": True, "requests_limit": 200}])
+    monkeypatch.setattr(pool_mod, "seat_status", lambda *a, **k: next(answers))
+    seat = _wait_for_google_seat("https://pool.example", "#beecode1",
+                                 timeout_s=30, interval_s=0)
+    assert seat is not None and seat.get("approved"), "the approved seat must come back"
+
+
+def test_google_wait_gives_up_after_the_deadline(monkeypatch):
+    """Nobody signed in: the wait ends and the caller falls back to polling."""
+    from beeagent.providers import pool as pool_mod
+    from beeagent.ui.commands import _wait_for_google_seat
+
+    monkeypatch.setattr(pool_mod, "seat_status", lambda *a, **k: {"ok": False})
+    assert _wait_for_google_seat("https://pool.example", "#beecode1",
+                                 timeout_s=0, interval_s=0) is None
+
+
+def test_pool_google_congratulates_and_saves_the_seat(tmp_path, monkeypatch):
+    """`/pool google` waits like the desktop and celebrates the new seat."""
+    import webbrowser
+
+    from beeagent.core.agent import Agent
+    from beeagent.providers import pool as pool_mod
+    from beeagent.ui.commands import _cmd_pool
+
+    monkeypatch.setenv("BEECODE_POOL_KEY_FILE", str(tmp_path / "pool-key.json"))
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(pool_mod, "seat_status",
+                        lambda *a, **k: {"ok": True, "approved": True})
+
+    config = BeeConfig(provider="pool", pool_url="https://pool.example")
+    agent = Agent(config=config)
+    agent.workdir = str(tmp_path)
+    ctx = ReplContext(agent=agent, config=config, session=Session())
+
+    answer = _cmd_pool(ctx, ["google"])
+    text = str(getattr(answer, "output", ""))
+    assert opened and opened[0].startswith("https://pool.example/v1/google/authorize"), \
+        "the browser must open the pool's authorize URL"
+    assert "зарегистрировались" in text or "Registered" in text, \
+        f"the success must be congratulated, not just reported: {text[:160]!r}"
+    assert config.pool_token == pool_mod.install_id(), "the seat id becomes the token"
+
+
 def test_switching_provider_back_to_g4f_moves_the_model_with_it(tmp_path, monkeypatch):
     """The reset used to happen only when leaving g4f.
 
@@ -379,3 +430,48 @@ def test_the_todo_tool_refuses_to_write_the_same_task_twice(tmp_path, monkeypatc
     listed = tool.execute("list")
     assert listed.metadata["count"] == 2, listed.output
     assert not third.error
+
+
+def test_run_repl_does_not_shadow_its_own_i18n():
+    """`/history` once killed the whole REPL with UnboundLocalError.
+
+    `run_repl` carried a late `from beeagent.i18n import L` on the no-tty
+    early-return branch — a branch the suite never takes — and any binding in
+    a function body, however unreachable, makes the name local to the whole
+    function. So every `L(...)` below died. The rule this pins: a name the
+    module imports at top is never rebound inside `run_repl` — by assignment,
+    argument, import or `del`. Nested functions keep their own locals and are
+    not inspected: only direct bindings count.
+    """
+    import ast
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parent.parent
+              / "beeagent" / "ui" / "repl.py")
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    top = set()
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom):
+            top.update(a.asname or a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.Import):
+            top.update((a.asname or a.name).split(".")[0] for a in node.names)
+    repl = next(n for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and n.name == "run_repl")
+    rebound = set()
+    stack = list(repl.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef, ast.Lambda)):
+            continue                    # their locals are not ours
+        stack.extend(ast.iter_child_nodes(node))
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            rebound.add(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            rebound.update(a.asname or a.name.split(".")[0] for a in node.names)
+    for args in (repl.args.posonlyargs, repl.args.args, repl.args.kwonlyargs):
+        rebound.update(a.arg for a in args)
+    clash = sorted(set(top) & rebound)
+    assert clash == [], \
+        f"run_repl rebinds module-level names {clash} — every later use dies UnboundLocal"

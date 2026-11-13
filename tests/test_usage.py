@@ -369,9 +369,9 @@ def test_stats_never_crashes_on_a_ledger_nothing_was_written_to(tmp_path, monkey
 def test_live_stats_show_the_seat_budget_and_send_the_token(pool_ctx, monkeypatch):
     """The number the free-model pitch actually owes: how much of the seat is left.
 
-    Also the regression the stub is here for: `/v1/seat` must be asked *with* the
-    seat token, and with a short timeout rather than the ninety seconds enrolment
-    allows itself.
+    Also the regression the stub is here for: `/v1/seat` must be asked as this
+    install (X-Bee-Id plus signature, never a bearer secret), and with a short
+    timeout rather than the ninety seconds enrolment allows itself.
     """
     from beeagent.ui.commands import dispatch
 
@@ -380,7 +380,9 @@ def test_live_stats_show_the_seat_budget_and_send_the_token(pool_ctx, monkeypatc
 
     seat = wire.seen("/v1/seat")
     assert seat, wire.calls
-    assert seat[0]["headers"]["Authorization"] == "Bearer seat-token-abc"
+    assert "Authorization" not in seat[0]["headers"], \
+        "bearer seat tokens are retired — nothing secret rides the header"
+    assert seat[0]["headers"]["X-Bee-Id"], "the install names itself"
     assert seat[0]["timeout"] <= 15, "a seat ask runs on the prompt's own thread"
     assert "47 / 200" in text
     assert "153 requests" in text, "what is left, not only what is gone"

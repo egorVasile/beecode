@@ -1,0 +1,519 @@
+"""Install/remove/list plugins, skills, and MCP servers.
+
+Installed units live in `.beeagent/plugins/<name>/` (skills + plugin packs)
+and `.beeagent/mcp.json` (MCP servers). State (installed, enabled) is tracked
+in `.beeagent/plugins.json`.
+
+A market install is the one path here that reaches the network, and it is written
+around one rule: the bytes are hashed before they touch a disk, and a licence that
+was not granted never gets that far.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+from datetime import datetime
+from pathlib import Path
+
+from beeagent.plugins.catalog import (
+    Catalog, CatalogItem, MarketError, MarketItem, TEMPLATES_DIR,
+    fetch_bytes, install_name_ok, license_allowed, unpack,
+)
+from beeagent.i18n import L
+from beeagent.tools.shell import decode
+
+PLUGINS_DIR = Path(".beeagent") / "plugins"
+STATE_PATH = Path(".beeagent") / "plugins.json"
+MCP_CONFIG_PATH = Path(".beeagent") / "mcp.json"
+
+
+def _digest(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _entry_digest(cfg: object) -> str:
+    """A stable hash of one MCP server's config, for the same reason as a file's."""
+    try:
+        return _digest(json.dumps(cfg, sort_keys=True).encode("utf-8"))
+    except (TypeError, ValueError):
+        return ""
+
+
+def _as_market_item(item: CatalogItem) -> MarketItem:
+    """Rebuild an index entry from an install record.
+
+    A reinstall reads `.beeagent/plugins.json`, which stores the source as a plain
+    dict; the gate and the hash live on the entry, so it goes back to being one.
+    """
+    src = item.source or {}
+    return MarketItem(
+        name=item.name, type=item.type, category=item.category,
+        description=item.description, source=src,
+        id=str(src.get("id") or item.name), license=str(src.get("license") or ""),
+        repo=str(src.get("repo") or ""), path=str(src.get("path") or ""),
+        commit=str(src.get("commit") or ""), download=str(src.get("download") or ""),
+        sha256=str(src.get("sha256") or ""),
+    )
+
+
+def _artifact_name(entry: MarketItem) -> str:
+    """What to call the download when it turns out to be one file, not an archive.
+
+    A path naming a folder ("skills/demo") has no extension to keep, and the
+    loader discovers a skill by its `SKILL.md`, so that is the name it gets.
+    """
+    tail = (entry.path or entry.download or "").replace("\\", "/").rstrip("/").split("/")[-1]
+    return tail if "." in tail else "SKILL.md"
+
+
+class PluginManager:
+    def __init__(self, catalog: Catalog | None = None,
+                 plugins_dir: Path = PLUGINS_DIR,
+                 state_path: Path = STATE_PATH,
+                 mcp_path: Path = MCP_CONFIG_PATH):
+        self.catalog = catalog or Catalog()
+        self.plugins_dir = plugins_dir
+        self.state_path = state_path
+        self.mcp_path = mcp_path
+
+    # --- which folder this is ------------------------------------------------
+
+    def project_root(self) -> Path:
+        """The folder whose `.beeagent/` these extensions belong to.
+
+        Trust is decided per folder (see core/trust.py), so it has to be decided
+        about the place the files live, not about the process' cwd — which is the
+        same thing while BeeCode runs in the project, and stops being the same
+        thing the moment an embedding program points this manager somewhere else.
+        In that case there is no `.beeagent` above the install root, and the
+        caller vouches for the bytes itself.
+        """
+        try:
+            here = Path(self.plugins_dir).resolve()
+        except OSError:
+            here = Path(self.plugins_dir)
+        return here.parent.parent if here.parent.name == ".beeagent" else Path(os.getcwd())
+
+    # --- state ---------------------------------------------------------------
+
+    def _state(self) -> dict:
+        try:
+            return json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"installed": {}}
+
+    @staticmethod
+    def _atomic_write(path: Path, text: str) -> None:
+        """State files through a unique temp: a crash mid-write used to leave a
+        torn JSON that the next load swallowed as "nothing installed"."""
+        import tempfile
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, tmp_name = tempfile.mkstemp(dir=str(path.parent),
+                                                prefix=path.name + ".",
+                                                suffix=".tmp")
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            Path(tmp_name).replace(path)
+        finally:
+            try:
+                if os.path.exists(tmp_name):
+                    os.remove(tmp_name)
+            except OSError:
+                pass
+
+    def _save_state(self, state: dict) -> None:
+        self._atomic_write(self.state_path, json.dumps(state, indent=2))
+
+    def installed(self) -> dict[str, dict]:
+        return self._state().get("installed", {})
+
+    def is_installed(self, name: str) -> bool:
+        return name in self.installed()
+
+    def is_enabled(self, name: str) -> bool:
+        return self.installed().get(name, {}).get("enabled", True)
+
+    def set_enabled(self, name: str, enabled: bool) -> None:
+        state = self._state()
+        if name in state["installed"]:
+            state["installed"][name]["enabled"] = enabled
+            self._save_state(state)
+
+    # --- install --------------------------------------------------------------
+
+    def install(self, target: str, item: CatalogItem | None = None) -> dict:
+        """Install by catalog name, git URL, or an already resolved market entry.
+
+        `item` is how a caller that has just fetched the market index hands the
+        entry over: resolving it is the command's job, verifying its bytes is
+        this one.
+        """
+        item = item or self.catalog.get(target) or self.catalog.find_git(target)
+        if item is None:
+            raise ValueError(f"'{target}' not found in catalog (and not a git URL)")
+
+        kind = item.source.get("kind")
+        if kind == "builtin":
+            self._install_builtin(item)
+        elif kind == "mcp":
+            self._install_mcp(item)
+        elif kind == "git":
+            self._install_git(item)
+        elif kind == "market":
+            self._install_market(item)
+        else:
+            raise ValueError(f"Unknown source kind '{kind}' for '{item.name}'")
+
+        state = self._state()
+        state.setdefault("installed", {})[item.name] = {
+            "type": item.type,
+            "category": item.category,
+            "description": item.description,
+            "enabled": True,
+            "installed_at": datetime.now().isoformat(),
+            "source": item.source,
+        }
+        self._save_state(state)
+        self._remember_trust(item)
+        # The keys of this report are pinned by tests: a caller that wants
+        # provenance reads it off the item or the state it just wrote.
+        return {"name": item.name, "type": item.type, "description": item.description}
+
+    def _remember_trust(self, item: CatalogItem) -> None:
+        """Pin the bytes this install put on disk, for the folder it put them in.
+
+        The alternative is to ask about a project plugin on every start, which is
+        how the legit case used to look: a user who ran
+        `/plugin install … --trust` — after reading the code, as that flag asks
+        them to — would be asked again the next morning, and would learn to say
+        yes to whatever appears. An install is the act of trust; running the bytes
+        it wrote is not a new one. It stays a hash, not a name: edit the plugin and
+        the question comes back, because the code you approved is not the code
+        that is about to run.
+        """
+        from beeagent.core import trust
+
+        root = self.project_root()
+        if item.type == "mcp" or item.source.get("kind") == "mcp":
+            cfg = self._mcp_config().get("servers", {}).get(item.name)
+            if cfg is not None:
+                trust.record_install(root, _entry_digest(cfg),
+                                     name=item.name, kind="mcp")
+            return
+        for entry in self._find_marker(item.name, "plugin.py"):
+            path = entry / "plugin.py"
+            try:
+                digest = _digest(path.read_bytes())
+            except OSError:
+                continue
+            trust.record_install(root, digest, name=item.name, kind="plugin")
+
+    def install_local(self, name: str, type: str, description: str = "") -> dict:
+        """Install a locally authored pack the model just wrote.
+
+        The files already sit at `.beeagent/plugins/<name>/` (written with the
+        `write` tool, so gated and undoable like any other edit) — this only
+        validates presence, records the state entry, and pins the bytes for
+        the trust gate, exactly like `_remember_trust` does for catalog
+        installs. Loading itself stays the loader's job, so a forged pack
+        faces the same gate as a downloaded one.
+        """
+        if type not in ("plugin", "skill"):
+            raise ValueError(f"'{type}' is not installable here — 'plugin' "
+                             f"(plugin.py) or 'skill' (SKILL.md)")
+        dst = self._plugin_dir(name)      # jailed; hostile names refused here
+        if not dst.is_dir():
+            raise ValueError(f"'{name}' has no folder at {dst} — write the "
+                             f"files first, then install")
+        markers = [m for m in ("plugin.py", "SKILL.md") if (dst / m).is_file()]
+        if not markers:
+            raise ValueError(f"'{name}' needs plugin.py and/or SKILL.md in it")
+        state = self._state()
+        state.setdefault("installed", {})[name] = {
+            "type": type,
+            "category": "forged",
+            "description": description,
+            "enabled": True,
+            "installed_at": datetime.now().isoformat(),
+            "source": {"kind": "local"},
+        }
+        self._save_state(state)
+        self._remember_trust(CatalogItem(
+            name=name, type=type, category="forged",
+            description=description, source={"kind": "local"}))
+        return {"name": name, "type": type, "description": description,
+                "markers": markers}
+
+    def _plugin_dir(self, name: str) -> Path:
+        """The install dir for `name`, jailed inside plugins_dir.
+
+        A crafted item handed straight to install()/uninstall() bypasses the
+        find_git/market checks: `../../victim` resolved outside and rmtree
+        below deleted it. Names outside the folder alphabet never resolve.
+        """
+        if not install_name_ok(name):
+            raise MarketError(L(f"refusing a plugin name that is not a folder name: {name!r}",
+                                f"отказываюсь от имени плагина, которое не имя папки: {name!r}"))
+        dst = self.plugins_dir / name
+        try:
+            here = self.plugins_dir.resolve()
+            there = dst.resolve() if dst.exists() else (here / name)
+        except OSError:
+            raise MarketError(L(f"refusing to resolve {name!r}",
+                                f"отказываюсь резолвить {name!r}"))
+        if there != here / name or here not in there.parents:
+            raise MarketError(L(f"refusing {name!r}: outside the plugins folder",
+                                f"отказываюсь от {name!r}: вне папки плагинов"))
+        return dst
+
+    def _install_builtin(self, item: CatalogItem) -> None:
+        src = TEMPLATES_DIR / item.source["path"]
+        if not src.is_dir():
+            raise ValueError(f"builtin template missing: {src}")
+        dst = self._plugin_dir(item.name)
+        if dst.exists():
+            shutil.rmtree(dst)
+        self.plugins_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, dst)
+
+    def _install_mcp(self, item: CatalogItem) -> None:
+        cfg = self._mcp_config()
+        cfg.setdefault("servers", {})[item.name] = {
+            "command": item.source["command"],
+            "args": list(item.source.get("args", [])),
+            "env": item.source.get("env", {}),
+            "enabled": True,
+        }
+        self._save_mcp_config(cfg)
+
+    def _install_git(self, item: CatalogItem) -> None:
+        from beeagent.plugins.catalog import _git_url_refused
+
+        url = item.source["url"]
+        # A crafted item handed straight to install() bypasses find_git: the
+        # name is the rmtree target below, so validate it here too.
+        if not install_name_ok(item.name):
+            raise MarketError(L(f"refusing to install under {item.name!r}",
+                                f"отказываюсь ставить в {item.name!r}"))
+        if _git_url_refused(url):
+            raise MarketError(L(f"refusing to clone {url!r}",
+                                f"отказываюсь клонировать {url!r}"))
+        dst = self._plugin_dir(item.name)
+        if dst.exists():
+            shutil.rmtree(dst)
+        self.plugins_dir.mkdir(parents=True, exist_ok=True)
+        res = subprocess.run(
+            ["git", "clone", "--depth", "1", "--", url, str(dst)],
+            capture_output=True, timeout=180,
+        )
+        if res.returncode != 0:
+            if dst.exists():
+                shutil.rmtree(dst, ignore_errors=True)
+            err = decode(res.stderr)
+            raise RuntimeError(f"git clone failed: {err.strip()[:300]}")
+
+    def _install_market(self, item: CatalogItem) -> None:
+        """Fetch one market entry and write it only if it is the promised bytes.
+
+        The order is the whole point: licence, then hash, then disk. An entry
+        whose licence nobody granted and a download whose sha256 does not match
+        both fail before a single file exists, so a refused install leaves the
+        project exactly as it was found.
+        """
+        entry = item if isinstance(item, MarketItem) else _as_market_item(item)
+
+        if not install_name_ok(entry.name):
+            raise MarketError(L(
+                f"the index calls “{entry.name}” by a name that is not a folder name — "
+                f"nothing was fetched or written",
+                f"индекс называет «{entry.name}» так, что папкой это быть не может — "
+                f"ничего не скачано и не записано"))
+        if not license_allowed(entry.license):
+            raise MarketError(L(
+                f"“{entry.name}” is licensed “{entry.license or 'nothing — no licence field'}”, "
+                f"which this client will not install. The licence, not the code, is what is "
+                f"missing here",
+                f"«{entry.name}» распространяется под лицензией "
+                f"«{entry.license or 'ничего — поля лицензии нет'}», и такую этот клиент "
+                f"не ставит: здесь не хватает лицензии, а не кода"))
+        if not entry.sha256:
+            raise MarketError(L(
+                f"the index names no sha256 for “{entry.name}”, so its bytes cannot be "
+                f"verified — nothing was downloaded or written",
+                f"в индексе нет sha256 для «{entry.name}», а значит его байты не проверить — "
+                f"ничего не скачано и не записано"))
+        if not entry.download:
+            raise MarketError(L(
+                f"the index gives provenance for “{entry.name}” ({entry.provenance}) but no "
+                f"download to fetch — it is a pointer, and there is nothing to install",
+                f"индекс даёт для «{entry.name}» только происхождение ({entry.provenance}) "
+                f"и не даёт адреса — это ссылка, ставить нечего"))
+
+        raw = fetch_bytes(entry.download)
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest != entry.sha256.lower():
+            raise MarketError(L(
+                f"sha256 mismatch for “{entry.name}”: the index promised {entry.sha256}, "
+                f"the bytes at {entry.provenance} are {digest} — nothing was written",
+                f"sha256 для «{entry.name}» не совпал: индекс обещал {entry.sha256}, "
+                f"по адресу {entry.provenance} лежит {digest} — ничего не записано"))
+
+        dst = self._plugin_dir(entry.name)
+        staging = self.plugins_dir / f"{entry.name}.market-partial"
+        if staging.resolve() != (self.plugins_dir.resolve() / f"{entry.name}.market-partial"):
+            raise MarketError(L(f"refusing staging outside the plugins folder",
+                                f"отказываюсь от стейджинга вне папки плагинов"))
+        shutil.rmtree(staging, ignore_errors=True)
+        self.plugins_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            unpack(raw, staging, fallback_name=_artifact_name(entry))
+            if dst.exists():
+                shutil.rmtree(dst)
+            staging.replace(dst)
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        # Remember where it came from, next to what was verified: `installed_at`
+        # alone would not tell anyone which commit these bytes were hashed at.
+        entry.source = dict(entry.source or {}) | entry.as_source()
+
+    # --- uninstall ------------------------------------------------------------
+
+    def uninstall(self, name: str) -> dict:
+        state = self._state()
+        entry = state.get("installed", {}).pop(name, None)
+        if entry is None:
+            raise ValueError(f"'{name}' is not installed")
+
+        if entry.get("type") == "mcp":
+            cfg = self._mcp_config()
+            cfg.get("servers", {}).pop(name, None)
+            self._save_mcp_config(cfg)
+        else:
+            # Jailed like the install paths: a hostile plugins.json entry
+            # ("../../../victim") used to rmtree outside the folder.
+            dst = self._plugin_dir(name)
+            if dst.exists():
+                shutil.rmtree(dst)
+        self._save_state(state)
+        return {"name": name, "removed": True}
+
+    # --- discovery ------------------------------------------------------------
+
+    def _find_marker(self, name: str, marker: str) -> list[Path]:
+        """Dirs holding `marker`, up to two folders below the install root.
+
+        Builtin templates keep SKILL.md/plugin.py at the root, while cloned
+        repos nest them (skills/<name>/SKILL.md).
+        """
+        root = self.plugins_dir / name
+        if not root.is_dir():
+            return []
+        if (root / marker).is_file():
+            return [root]
+        for depth in (1, 2):
+            pattern = "/".join(["*"] * depth) + "/" + marker
+            found = sorted({p.parent for p in root.glob(pattern)})
+            if found:
+                return found
+        return []
+
+    def _marker_names(self) -> list[str]:
+        """Installed names that are safe to resolve: a hostile plugins.json
+        ("../../outside") used to make the loader glob — and execute plugin.py
+        — outside the plugins folder."""
+        return [name for name in self.installed()
+                if install_name_ok(name)]
+
+    def installed_skill_dirs(self) -> list[Path]:
+        """Enabled skill/plugin dirs that contain a SKILL.md."""
+        out = []
+        for name, entry in self.installed().items():
+            if name not in self._marker_names():
+                continue
+            if not entry.get("enabled", True) or entry.get("type") == "mcp":
+                continue
+            out.extend(self._find_marker(name, "SKILL.md"))
+        return out
+
+    def installed_plugin_dirs(self) -> list[Path]:
+        """Enabled plugin dirs with an entry-point plugin.py."""
+        out = []
+        for name, entry in self.installed().items():
+            if name not in self._marker_names():
+                continue
+            if not entry.get("enabled", True) or entry.get("type") == "mcp":
+                continue
+            out.extend(self._find_marker(name, "plugin.py"))
+        return out
+
+    # --- mcp config ------------------------------------------------------------
+
+    def _mcp_config(self) -> dict:
+        try:
+            return json.loads(self.mcp_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"servers": {}}
+
+    def _save_mcp_config(self, cfg: dict) -> None:
+        self._atomic_write(self.mcp_path, json.dumps(cfg, indent=2))
+
+    def mcp_servers(self) -> dict[str, dict]:
+        servers = self._mcp_config().get("servers", {})
+        # merge installed-via-catalog servers (source of truth for enable state)
+        for name, entry in self.installed().items():
+            if entry.get("type") == "mcp":
+                src = entry.get("source", {})
+                merged = servers.get(name, {
+                    "command": src.get("command", ""),
+                    "args": list(src.get("args", [])),
+                    "env": src.get("env", {}),
+                })
+                merged["enabled"] = entry.get("enabled", True)
+                servers[name] = merged
+        return servers
+
+    def mcp_digest(self, name: str, cfg: dict | None = None) -> str:
+        """What the folder says this server is, as a hash the loader can check.
+
+        Read from `mcp.json` itself when the entry is there, because that is the
+        text the install pinned; the merged view an installed server is handed to
+        the loader is rebuilt from the state file, and rebuilding it here would be
+        a second chance to drift.
+        """
+        entry = self._mcp_config().get("servers", {}).get(name)
+        if entry is None:
+            entry = cfg
+        return _entry_digest(entry)
+
+    def add_mcp_server(self, name: str, command: str, args: list[str] | None = None,
+                       env: dict | None = None) -> None:
+        cfg = self._mcp_config()
+        cfg.setdefault("servers", {})[name] = {
+            "command": command,
+            "args": list(args or []),
+            "env": env or {},
+            "enabled": True,
+        }
+        self._save_mcp_config(cfg)
+
+        state = self._state()
+        state.setdefault("installed", {})[name] = {
+            "type": "mcp",
+            "category": "mcp",
+            "description": f"MCP server {command} {' '.join(args or [])}".strip(),
+            "enabled": True,
+            "installed_at": datetime.now().isoformat(),
+            "source": {"kind": "mcp", "command": command, "args": list(args or [])},
+        }
+        self._save_state(state)
+        # Same rule as a plugin install: the server was added by a user standing in
+        # this folder, so the folder may register it without being asked about it.
+        from beeagent.core import trust
+
+        trust.record_install(self.project_root(), self.mcp_digest(name),
+                             name=name, kind="mcp")

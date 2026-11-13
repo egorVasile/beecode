@@ -142,6 +142,44 @@ def test_alias_call_runs_the_canonical_tool(tmp_path, monkeypatch):
     assert answer == "готово"
 
 
+def test_tool_start_and_end_share_a_call_id(monkeypatch, tmp_path):
+    """Two calls in one answer get distinct ids; each start matches its end.
+
+    The desktop updates one visual block per id (progress → finish) instead of
+    appending a second block per call — without the id the outputs blur into
+    one shared row.
+    """
+    import asyncio
+    agent = Agent(config=BeeConfig())
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("b", encoding="utf-8")
+    events = []
+
+    calls = iter(['```json\n{"tool": "read", "args": {"path": "%s"}}\n```\n'
+                  '```json\n{"tool": "read", "args": {"path": "%s"}}\n```'
+                  % (tmp_path.joinpath("a.txt").as_posix(),
+                     tmp_path.joinpath("b.txt").as_posix()), "готово"])
+
+    async def fake_stream(provider, messages, callback=None, model=""):
+        text = next(calls)
+        if callback:
+            callback("stream_delta", {"text": text})
+        return text
+
+    monkeypatch.setattr(agent, "_stream_response", fake_stream)
+    answer = asyncio.run(agent.run("прочитай оба", session=Session(),
+                                   callback=lambda e, d: events.append((e, d))))
+
+    starts = [d for e, d in events if e == "tool_start"]
+    ends = [d for e, d in events if e == "tool_end"]
+    assert len(starts) == 2 and len(ends) == 2, events
+    assert all("call" in d for d in starts + ends), "every call is numbered"
+    assert starts[0]["call"] == ends[0]["call"], "first start matches first end"
+    assert starts[1]["call"] == ends[1]["call"], "second start matches second end"
+    assert starts[0]["call"] != starts[1]["call"], "two calls, two ids"
+    assert answer == "готово"
+
+
 def test_missing_arguments_are_reported_to_the_model(monkeypatch):
     import asyncio
     agent = Agent(config=BeeConfig())

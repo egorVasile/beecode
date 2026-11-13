@@ -842,7 +842,9 @@ def test_a_silent_pool_says_so_instead_of_leaking_a_read_timeout(monkeypatch, no
             call()
         text = str(raised.value).strip()
         assert text, f"{label} reported an empty error"
-        assert "ReadTimeout" not in text and "42" in text, f"{label}: {text!r}"
+        # The stall message names the wait that was actually kept: the pool
+        # floor (300 s), not the 42 s idle budget it overrode.
+        assert "ReadTimeout" not in text and "300" in text, f"{label}: {text!r}"
 
 
 def test_a_stream_dropped_mid_answer_is_not_glued_to_the_next_one(monkeypatch, no_wait):
@@ -1027,7 +1029,9 @@ def test_the_stream_waits_as_long_as_the_agent_says_it_may(monkeypatch, no_wait)
     """`stream_idle_timeout` is the budget the agent narrates a stall with.
 
     A read timeout shorter than it kills a slow model first, and the user reads a
-    bare ReadTimeout as a broken pool.
+    bare ReadTimeout as a broken pool. The pool floor (a proxy of proxies with
+    a 120 s upstream budget of its own) only ever raises that budget, and the
+    stall message names the wait that was actually kept.
     """
     Wire(lambda k, u, kw: Reply(lines=[content_frame("x"), "", "data: [DONE]"]))\
         .install(monkeypatch)
@@ -1037,8 +1041,12 @@ def test_the_stream_waits_as_long_as_the_agent_says_it_may(monkeypatch, no_wait)
     collect(provider.chat_stream([{"role": "user", "content": "х"}], "m"))
 
     timeout = provider._timeout()
-    assert timeout.read == 123.0
+    assert timeout.read == pool_mod.PoolProvider.POOL_READ_TIMEOUT == 300.0
     assert timeout.connect <= 10.0
+
+    generous = pool_mod.PoolProvider(url="http://pool.invalid", token="seat-token",
+                                     idle_timeout=600.0)
+    assert generous._timeout().read == 600.0, "a larger configured budget still wins"
 
 
 def test_a_pool_that_wants_no_config_at_all_still_waits_for_the_agent_default(
@@ -1071,3 +1079,213 @@ def test_the_new_honesties_have_a_russian_wording_too(monkeypatch, no_wait):
 
     assert "не читается" in str(torn) and "не весь ответ" in str(torn)
     assert "места" in note or "/pool enroll" in note
+
+
+# --- native tool calling ------------------------------------------------------
+
+NATIVE_TOOLS = [{"name": "read", "description": "Open a file.",
+                 "parameters": {"type": "object",
+                                "properties": {"path": {"type": "string"}},
+                                "required": ["path"]}}]
+
+
+def test_complete_sends_tools_natively_and_reads_tool_calls(monkeypatch, no_wait):
+    """The pool forwards the body untouched, so the tools array reaches the
+    upstream and the answer carries tool_calls — the model works with real
+    function definitions instead of prose shaped like a call."""
+    import json as _json
+
+    def respond(kind, url, kw):
+        body = _json.dumps({"choices": [{"message": {
+            "content": "",
+            "tool_calls": [{"id": "call_0001", "type": "function",
+                            "function": {"name": "read",
+                                         "arguments": '{"path": "a.txt"}'}}]}}]})
+        return Reply(status=200, body=body)
+
+    wire = Wire(respond).install(monkeypatch)
+    provider = pool_mod.PoolProvider(url="http://pool.invalid", token="seat-token")
+
+    async def go():
+        return await provider.complete([{"role": "user", "content": "hi"}],
+                                       "m", NATIVE_TOOLS)
+
+    out = asyncio.run(go())
+    assert out["tool_calls"] == [{"tool": "read", "args": {"path": "a.txt"}}]
+    sent = _json.loads(wire.last("chat/completions")["kw"]["content"])
+    assert sent["stream"] is False
+    assert sent["tool_choice"] == "auto"
+    assert isinstance(sent["tools"], list) and sent["tools"]
+    assert sent["tools"][0]["function"]["name"] == "read"
+
+
+def test_complete_without_tools_sends_no_tools_array(monkeypatch, no_wait):
+    """A plain turn stays a plain turn: no tools field, text answer as before."""
+    import json as _json
+
+    def respond(kind, url, kw):
+        return Reply(status=200, body=_json.dumps(
+            {"choices": [{"message": {"content": "hi"}}]}))
+
+    wire = Wire(respond).install(monkeypatch)
+    provider = pool_mod.PoolProvider(url="http://pool.invalid", token="seat-token")
+
+    async def go():
+        return await provider.complete([{"role": "user", "content": "hi"}], "m")
+
+    out = asyncio.run(go())
+    assert out == {"text": "hi", "tool_calls": [], "usage": {}}
+    sent = _json.loads(wire.last("chat/completions")["kw"]["content"])
+    assert "tools" not in sent and "tool_choice" not in sent
+
+
+def test_complete_refusal_is_a_pool_error(monkeypatch, no_wait):
+    import json as _json
+
+    def respond(kind, url, kw):
+        return Reply(status=403, body=_json.dumps({"error": "no"}))
+
+    Wire(respond).install(monkeypatch)
+    provider = pool_mod.PoolProvider(url="http://pool.invalid", token="seat-token")
+
+    async def go():
+        return await provider.complete([{"role": "user", "content": "hi"}], "m")
+
+    with pytest.raises(PoolError):
+        asyncio.run(go())
+
+def test_a_turn_that_used_a_tool_is_replayed_in_wire_shape(monkeypatch, no_wait):
+    """The pool sent the transcript in BeeCode's own shape: a call as
+    `{"tool": ..., "args": ...}` and a result as a bare `role: "tool"` row with
+    no `tool_call_id`. An upstream refuses that history, so the second request of
+    every tool-using turn came back 502 and the client reported it as "the pool
+    could not reach the provider" while the seat was healthy. One call and its
+    result must leave with ids that tie them together."""
+    import json as _json
+
+    history = [
+        {"role": "user", "content": "read note.txt"},
+        {"role": "assistant", "content": "reading",
+         "tool_calls": [{"tool": "read", "args": {"path": "note.txt"}}]},
+        {"role": "tool", "content": "[tool result] tool=read error=False\nhello"},
+    ]
+
+    def respond(kind, url, kw):
+        return Reply(status=200, body=_json.dumps(
+            {"choices": [{"message": {"content": "ok"}}]}))
+
+    wire = Wire(respond).install(monkeypatch)
+    provider = pool_mod.PoolProvider(url="http://pool.invalid", token="seat-token")
+
+    async def go():
+        return await provider.complete(history, "m", NATIVE_TOOLS)
+
+    asyncio.run(go())
+    sent = _json.loads(wire.last("chat/completions")["kw"]["content"])["messages"]
+    assistant = [m for m in sent if m.get("role") == "assistant" and m.get("tool_calls")]
+    assert assistant, "the call vanished from the request: %r" % (sent,)
+    call = assistant[0]["tool_calls"][0]
+    assert call["type"] == "function"
+    assert call["function"]["name"] == "read"
+    assert _json.loads(call["function"]["arguments"]) == {"path": "note.txt"}
+    results = [m for m in sent if m.get("role") == "tool"]
+    assert results, "the result left as prose, not a tool row: %r" % (sent,)
+    assert results[0]["tool_call_id"] == call["id"], \
+        "the result is not tied to the call it answers"
+
+
+def test_every_call_of_one_turn_keeps_its_own_id():
+    """A turn may ask for several tools at once; each result needs a distinct
+    id. Emitting only the first call left the rest unmatched."""
+    from beeagent.providers.crax import CraxProvider
+
+    sent = CraxProvider.to_openai_history([
+        {"role": "user", "content": "both"},
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"tool": "read", "args": {"path": "a"}},
+                        {"tool": "read", "args": {"path": "b"}}]},
+        {"role": "tool", "content": "A"},
+        {"role": "tool", "content": "B"},
+    ])
+    call = [m for m in sent if m.get("tool_calls")][0]
+    ids = [c["id"] for c in call["tool_calls"]]
+    assert len(ids) == 2, "a second call was dropped: %r" % (call,)
+    assert len(set(ids)) == 2, "two calls share one id: %r" % (ids,)
+    assert [m["tool_call_id"] for m in sent if m["role"] == "tool"] == ids
+
+def test_a_pool_that_could_not_reach_its_upstream_is_retried(monkeypatch, no_wait):
+    """The bare 502 is the pool failing to reach its own provider before any
+    answer existed: nothing was billed, nothing was shown. A tool-using turn
+    makes several requests, so without one short retry a single blip killed the
+    turn right after a tool ran and read as "the model died on read"."""
+    import json as _json
+
+    calls = {"n": 0}
+
+    def respond(kind, url, kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return Reply(status=502, body=_json.dumps(
+                {"error": "the pool could not reach the provider"}))
+        return Reply(status=200, body=_json.dumps(
+            {"choices": [{"message": {"content": "ok"}}]}))
+
+    Wire(respond).install(monkeypatch)
+    provider = pool_mod.PoolProvider(url="http://pool.invalid", token="seat-token")
+
+    async def go():
+        return await provider.complete([{"role": "user", "content": "hi"}], "m")
+
+    out = asyncio.run(go())
+    assert out["text"] == "ok", out
+    assert calls["n"] == 2, "the blip was not retried"
+
+
+def test_a_broken_model_is_not_retried(monkeypatch, no_wait):
+    """The other 502 names the model and will say the same thing forever.
+    Retrying it would only burn the turn's time."""
+    import json as _json
+
+    calls = {"n": 0}
+
+    def respond(kind, url, kw):
+        calls["n"] += 1
+        return Reply(status=502, body=_json.dumps(
+            {"error": "the account answered 502 for \"m\" - that model is at "
+                      "fault, not your seat; pick another one with /models"}))
+
+    Wire(respond).install(monkeypatch)
+    provider = pool_mod.PoolProvider(url="http://pool.invalid", token="seat-token")
+
+    async def go():
+        return await provider.complete([{"role": "user", "content": "hi"}], "m")
+
+    with pytest.raises(PoolError):
+        asyncio.run(go())
+    assert calls["n"] == 1, "a dead model was retried"
+
+
+def test_every_attempt_carries_a_fresh_nonce(monkeypatch, no_wait):
+    """The pool records each nonce it verified, so a retry that reuses the last
+    signature is answered as a replay."""
+    import json as _json
+
+    nonces = []
+
+    def respond(kind, url, kw):
+        nonces.append(kw["headers"].get("X-Seat-Nonce"))
+        if len(nonces) < 2:
+            return Reply(status=502, body=_json.dumps(
+                {"error": "the pool could not reach the provider"}))
+        return Reply(status=200, body=_json.dumps(
+            {"choices": [{"message": {"content": "ok"}}]}))
+
+    Wire(respond).install(monkeypatch)
+    provider = pool_mod.PoolProvider(url="http://pool.invalid", token="seat-token")
+
+    async def go():
+        return await provider.complete([{"role": "user", "content": "hi"}], "m")
+
+    asyncio.run(go())
+    assert len(nonces) == 2 and nonces[0] and nonces[1]
+    assert nonces[0] != nonces[1], "the retry reused a spent nonce"

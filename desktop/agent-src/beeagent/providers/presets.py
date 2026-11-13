@@ -1,0 +1,141 @@
+"""Free-tier LLM endpoints that speak the OpenAI API.
+
+Every entry needs a key **issued to you by the service itself** — sign up, copy
+the key, store it with `/key <name> <token>` (or export the env var listed
+here). BeeCode never ships, harvests or shares other people's keys: that is
+stolen access to their accounts and it gets everyone banned.
+
+`free` says what the provider publicly offers without paying; verify on the
+signup page, quotas move around.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Endpoint:
+    name: str            # used as the provider name: /provider <name>
+    label: str           # shown in /providers
+    url: str             # OpenAI-compatible base url (without /chat/completions)
+    env: str             # environment variable the key is read from
+    signup: str          # where to get your own key
+    free: str            # what the free tier gives
+    models: tuple[str, ...] = ()   # defaults; /models asks the endpoint live
+    keyless: bool = False          # answers with no key at all (anonymous tier)
+
+
+ENDPOINTS = (
+    Endpoint(
+        name="openrouter", label="OpenRouter",
+        url="https://openrouter.ai/api/v1", env="OPENROUTER_API_KEY",
+        signup="https://openrouter.ai/settings/keys",
+        free="a shelf of `:free` models, no card needed",
+        models=("meta-llama/llama-3.3-70b-instruct:free",
+                "deepseek/deepseek-chat-v3-0324:free",
+                "qwen/qwen3-235b-a22b:free"),
+    ),
+    Endpoint(
+        name="groq", label="Groq",
+        url="https://api.groq.com/openai/v1", env="GROQ_API_KEY",
+        signup="https://console.groq.com/keys",
+        free="very fast llama/qwen models with a generous free quota",
+        models=("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen3-32b"),
+    ),
+    Endpoint(
+        name="gemini", label="Google AI Studio",
+        url="https://generativelanguage.googleapis.com/v1beta/openai",
+        env="GEMINI_API_KEY",
+        signup="https://aistudio.google.com/apikey",
+        free="flash/mini models free per minute, no card",
+        models=("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"),
+    ),
+    Endpoint(
+        name="huggingface", label="Hugging Face",
+        url="https://router.huggingface.co/v1", env="HF_TOKEN",
+        signup="https://huggingface.co/settings/tokens",
+        free="free inference credits for a rotating set of open models",
+        models=("meta-llama/Llama-3.3-70B-Instruct", "deepseek-ai/DeepSeek-V3"),
+    ),
+    Endpoint(
+        name="github", label="GitHub Models",
+        url="https://models.inference.ai.azure.com", env="GITHUB_TOKEN",
+        signup="https://github.com/settings/tokens (model inference scope)",
+        free="gpt-4o/llama endpoints free for your own GitHub account",
+        models=("gpt-4o", "Meta-Llama-3.3-70B-Instruct", "Mistral-large"),
+    ),
+    Endpoint(
+        name="cerebras", label="Cerebras Cloud",
+        url="https://api.cerebras.ai/v1", env="CEREBRAS_API_KEY",
+        signup="https://cloud.cerebras.ai",
+        free="qwen/llama at very high speed, free tier",
+        models=("llama3.1-8b", "qwen-3-32b"),
+    ),
+    Endpoint(
+        name="mistral", label="Mistral La Plateforme",
+        url="https://api.mistral.ai/v1", env="MISTRAL_API_KEY",
+        signup="https://console.mistral.ai",
+        free="experiment tier: small models, rate limited, no card",
+        models=("mistral-small-latest", "open-mistral-nemo"),
+    ),
+    Endpoint(
+        name="together", label="Together AI",
+        url="https://api.together.xyz/v1", env="TOGETHER_API_KEY",
+        signup="https://api.together.xyz/settings/api-keys",
+        free="a one-time credit; some open models stay free",
+        models=("meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",),
+    ),
+    Endpoint(
+        name="nvidia", label="NVIDIA NIM",
+        url="https://integrate.api.nvidia.com/v1", env="NVIDIA_API_KEY",
+        signup="https://build.nvidia.com",
+        free="free credits on an account without a card, generous rate limits",
+        models=("meta-llama/llama-3.3-70b-instruct", "deepseek-ai/deepseek-r1",
+                "qwen/qwen3-235b-a22b"),
+    ),
+    Endpoint(
+        name="deepinfra", label="DeepInfra",
+        url="https://api.deepinfra.com/v1/openai", env="DEEPINFRA_API_KEY",
+        signup="https://deepinfra.com",
+        free="trial credits on signup; the serverless catalog is pay-per-token",
+        models=("deepseek-ai/DeepSeek-R1", "meta-llama/Llama-3.3-70B-Instruct"),
+    ),
+    Endpoint(
+        # Verified live: anonymous tier answers with no key at all, tools:true.
+        # Bring POLLINATIONS_API_KEY for higher limits; without it the shipped
+        # model still answers.
+        name="pollinations", label="Pollinations",
+        url="https://text.pollinations.ai/openai", env="POLLINATIONS_API_KEY",
+        signup="https://pollinations.ai",
+        free="anonymous, no key; a key from the site raises the limits",
+        models=("openai-fast",),
+        keyless=True,
+    ),
+    Endpoint(
+        # Two different 429s: a per-IP rate limit and a daily per-account
+        # allowance. `crax` is served by its own provider for that reason —
+        # see beeagent/providers/crax.py.
+        name="crax", label="crax-gpt",
+        url="https://gpt.crax.lol/v1", env="CRAX_API_KEY",
+        signup="https://gpt.crax.lol — Settings → API keys",
+        free="40 req/min per IP and a daily token allowance per account",
+        # Re-measured 2026-09-30 against live /v1/models + one tiny chat
+        # probe per id: all 17 answer, none says `Unknown model`.
+        models=("glm-5.3", "glm-5.3-flash", "glm-5.2", "instant",
+                "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5",
+                "claude-fable-5-1", "gpt-5-6-sol", "gpt-5-5", "gpt-5-4",
+                "gpt-6-astra", "gemini-3-8-flash", "deepseek-v4-pro",
+                "kimi-k3", "kimi-k2-6", "grok-4-6"),
+    ),
+)
+
+
+BY_NAME = {e.name: e for e in ENDPOINTS}
+
+
+def key_for(endpoint: Endpoint, api_keys: dict | None = None) -> str:
+    """The user's own key: config first, then the documented env var."""
+    import os
+
+    value = (api_keys or {}).get(endpoint.name) or os.environ.get(endpoint.env, "")
+    return value.strip()

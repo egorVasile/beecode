@@ -320,6 +320,12 @@ class PluginLoader:
 
     def connect_mcp(self, server: str, timeout: float = 90.0) -> list[dict]:
         """Discover a server's tools now, cache them, and register the tools."""
+        cfg = self.manager.mcp_servers().get(server)
+        if not isinstance(cfg, dict) or not cfg.get("enabled", True):
+            raise ValueError("MCP server is missing or disabled")
+        digest = self.manager.mcp_digest(server, cfg)
+        if not self.gate.allow("mcp", server, digest):
+            raise PermissionError("Trust this project before connecting its MCP server")
         tools = self.mcp.discover_tools_blocking(server, timeout=timeout)
         self._register_mcp_tools(server, tools)
         if server in self.pending_mcp:

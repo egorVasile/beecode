@@ -99,6 +99,7 @@ class Session:
         self.session_id = _safe_sid(session_id) if session_id else (
             datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(3))
         self.messages: list[Message] = []
+        self.title = ""
         self.created_at = datetime.now().isoformat()
 
     def add_user_message(self, content: str):
@@ -157,6 +158,7 @@ class Session:
             # later judges it is how a file gets called older than it is.
             "saved_at": time.time() if stamp is None else float(stamp),
             "message_count": len(rows),
+            "title": self.title,
             "messages": rows,
         }
         descriptor, tmp_name = tempfile.mkstemp(dir=str(path.parent),
@@ -207,6 +209,7 @@ class Session:
         if session.session_id != safe:
             raise ValueError(f"session {session_id} names a different id")
         session.created_at = str(data.get("created_at") or "")
+        session.title = str(data.get("title") or "")[:80]
         for m in data["messages"]:
             if not isinstance(m, dict):
                 raise ValueError(f"session {session_id} has a broken message")
@@ -283,6 +286,7 @@ SCALAR_INT = ("saved_at", "message_count")
 _SCALARS = {
     "id": re.compile(r'"id"\s*:\s*"((?:[^"\\]|\\.)*)"'),
     "created_at": re.compile(r'"created_at"\s*:\s*"((?:[^"\\]|\\.)*)"'),
+    "title": re.compile(r'"title"\s*:\s*("(?:[^"\\]|\\.)*")'),
     "closed": re.compile(r'"closed"\s*:\s*(true|false)'),
     "checkpoint": re.compile(r'"checkpoint"\s*:\s*(true|false)'),
     "saved_at": re.compile(r'"saved_at"\s*:\s*(-?\d+(?:\.\d+)?)'),
@@ -326,6 +330,11 @@ def read_head(path) -> dict:
         raw = match.group(1)
         if name in ("id", "created_at"):
             found[name] = raw
+        elif name == "title":
+            try:
+                found[name] = json.loads(raw)
+            except (ValueError, TypeError):
+                pass
         elif name in ("closed", "checkpoint"):
             found[name] = raw == "true"
         elif name == "saved_at":

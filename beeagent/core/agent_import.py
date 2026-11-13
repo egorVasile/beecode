@@ -275,8 +275,8 @@ def _detect_codex(home: Path) -> AgentFinding:
                 agent="codex", name=name, url=url, models=models,
                 note="no key named in the profile"))
             continue
-        field, value = named[0]
-        if field.startswith("env"):
+        slot, value = named[0]
+        if slot.startswith("env"):
             env_value = (os.environ.get(value) or "").strip()
             if not env_value:
                 finding.providers.append(FoundProvider(
@@ -341,8 +341,8 @@ def _aider_keys(text: str) -> list:
     return found
 
 
-def _preset_for_key(field: str) -> str:
-    low = field.lower()
+def _preset_for_key(text: str) -> str:
+    low = text.lower()
     for hint in KEY_HINTS:
         if hint in low:
             return hint if hint not in ("openai", "anthropic", "cohere") else ""

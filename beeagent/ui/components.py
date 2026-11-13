@@ -730,8 +730,6 @@ def print_providers(providers: list[dict]):
 
 
 def _now() -> float:
-    import time
-
     return time.monotonic()
 
 
@@ -796,6 +794,46 @@ def thinking_line(default: str) -> str:
     return _surface("thinking", default)
 
 
+def context_bar(ctx, width: int = 20) -> Optional[Text]:
+    """Pinned context-fill indicator: a colored bar plus percent, always on.
+
+    Both interfaces paint this above the prompt on every turn — the strip the
+    user watches instead of typing /token: green under half, yellow under 80,
+    red at and past it. Same ruler as /token (built messages, not JSON
+    escaping), so the two never disagree.
+
+    Total on purpose: no agent, no session, or any counting failure returns
+    None and the strip skips it — a HUD must never eat a turn.
+    """
+    try:
+        agent = getattr(ctx, "agent", None)
+        session = getattr(ctx, "session", None)
+        if agent is None or session is None:
+            return None
+        from beeagent.utils.tokens import count_tokens
+
+        model = getattr(getattr(ctx, "config", None), "model", "") or ""
+        context = agent.context
+        built = context.build_messages(session.to_dicts(),
+                                       agent.tools.to_schemas())
+        # The messages themselves, like /token does: counting json.dumps()
+        # charges Cyrillic for \\uXXXX escaping the model never sees.
+        total = sum(count_tokens(str(m.get("content") or ""), model)
+                    for m in built)
+        limit = int(getattr(context, "max_tokens", 0) or 0) or 1
+        pct = max(0, min(100, int(100 * total / limit)))
+    except Exception:
+        return None
+    filled = int(round(pct * max(1, int(width or 20)) / 100))
+    color = "green" if pct < 50 else ("yellow" if pct < 80 else "red")
+    bar = "█" * filled + "░" * (max(1, int(width or 20)) - filled)
+    text = Text()
+    text.append("📊 ", style="dim")
+    text.append(bar, style=f"bold {color}")
+    text.append(f" {pct}%", style="dim")
+    return text
+
+
 def hud_lines(painter, rows: int = 1) -> list:
     """The rows a skin paints into its HUD, as Rich text for either interface.
 
@@ -803,8 +841,6 @@ def hud_lines(painter, rows: int = 1) -> list:
     run of identical cells, so a HUD drawn at 12 fps prints as one line instead of
     a span per character.
     """
-    from rich.text import Text
-
     out = []
     grid = getattr(painter, "grid", None)
     if grid is None:

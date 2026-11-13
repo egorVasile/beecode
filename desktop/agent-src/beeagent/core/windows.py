@@ -1,0 +1,331 @@
+"""How large a model's context window actually is.
+
+g4f does not ship the number — its `Model` carries name, base_provider,
+best_provider and long_name, and provider classes keep `max_tokens = None`
+placeholders — so the only honest source left is the endpoint itself. Two
+signals are read off it: how large a prompt it refuses, and how large a prompt
+the model still *saw* — free endpoints commonly trim the request behind our
+back and answer as if the chat had just started, which no error would reveal.
+
+Measured values are cached in `.beeagent/windows.json`, per model *and* per
+provider, and win over any guess.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import secrets
+from pathlib import Path
+
+CACHE = Path(".beeagent") / "windows.json"
+
+# Sizes tried while climbing, in tokens. Each step is one real request.
+LADDER = (2048, 4096, 8192, 16384, 32768, 65536, 131072)
+
+# What providers write when a prompt is too big. Ordered by how precisely the
+# number names the ceiling: "200001 tokens > 128000 maximum" must give 128000,
+# not the size we happened to send.
+_LIMIT_PATTERNS = (
+    r">\s*(\d{3,})\s*(?:tokens?\s*)?maximum",
+    r"maximum(?: context)?(?: length)?(?: is|:)?\s*['\"]?(\d{3,})",
+    r"(\d{3,})\s*(?:tokens?\s*)?maximum",
+    r"context (?:window|length)[^0-9]{0,12}(\d{3,})",
+    r"max(?:imum)?[_ ](?:input |prompt |request )?tokens\D{0,20}(\d{3,})",
+    r"too many tokens[^0-9]{0,20}(\d{3,})",
+    r"prompt is too long\D{0,20}(\d{3,})",
+    r"exceeds the maximum\D{0,30}(\d{3,})",
+)
+
+
+def limit_from_error(text: str) -> int | None:
+    """Pull the advertised token limit out of a provider's error message."""
+    message = (text or "").lower()
+    if not message:
+        return None
+    for pattern in _LIMIT_PATTERNS:
+        match = re.search(pattern, message)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+_CACHED: dict | None = None
+_CACHED_KEY: tuple | None = None
+
+
+def load() -> dict:
+    """The measured windows, held in memory until the file actually changes.
+
+    A model list asks for one window per model — 600+ times per screen — and
+    re-reading the JSON each time was measured at over half a second of
+    `/models`. The file's identity (path, mtime, size) is the cache key, so a
+    test pointing CACHE elsewhere, or a probe writing new numbers, is picked up
+    without anyone having to remember to invalidate.
+    """
+    global _CACHED, _CACHED_KEY
+    try:
+        stat = CACHE.stat()
+        key = (str(CACHE), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        _CACHED, _CACHED_KEY = {}, None
+        return _CACHED
+    if _CACHED is not None and key == _CACHED_KEY:
+        return _CACHED
+    try:
+        data = json.loads(CACHE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        data = {}
+    _CACHED, _CACHED_KEY = (data if isinstance(data, dict) else {}), key
+    return _CACHED
+
+
+# A measurement belongs to the endpoint that made it. One model id is served by
+# several providers with different windows — gpt-4o at 128k through one route and
+# at 2k through a free one — and records keyed by the model name alone let a
+# single endpoint's number pin every other one, silently, for the whole project.
+# So a record is written as "model@provider"; a bare "model" key stays readable as
+# an *unattributed* hint, which is what caches written before this held, and what
+# `remember()` from a caller with no endpoint in hand still produces.
+SEP = "@"
+
+# Distinguishes "the caller has no provider" from "nobody told me the provider".
+_UNKNOWN = object()
+
+_CURRENT_PROVIDER = ""
+
+
+def note_provider(name: str) -> None:
+    """Say which endpoint the agent is now talking to.
+
+    `window_for(model)` in core/context.py takes a model name and nothing else —
+    the ContextManager is built once and outlives a `/provider` switch — so a
+    provider-less read has no way to know whose window it is asking about. The
+    agent names the provider it selected at the start of each turn, which makes
+    the reads that cannot carry the argument still resolve to the right record.
+    """
+    global _CURRENT_PROVIDER
+    _CURRENT_PROVIDER = str(name or "")
+
+
+def current_provider() -> str:
+    """The endpoint the agent last named, or "" when nobody has."""
+    return _CURRENT_PROVIDER
+
+
+def _name_of(provider) -> str:
+    """The part of the key a provider contributes."""
+    if provider is _UNKNOWN:
+        return _CURRENT_PROVIDER
+    if isinstance(provider, str):
+        return provider.strip()
+    return str(getattr(provider, "name", "") or "").strip()
+
+
+def _key(model: str, provider: str = "") -> str:
+    model = str(model or "")
+    return f"{model}{SEP}{provider}" if provider else model
+
+
+def _record(data: dict, key: str) -> int | None:
+    value = data.get(key)
+    return int(value) if isinstance(value, (int, float)) and value else None
+
+
+def measured(model: str, provider=_UNKNOWN) -> int | None:
+    """The window measured for this model, on this endpoint if one is named.
+
+    A number taken through provider A is never handed to provider B: the worst
+    thing this file can do is cap a 128k route at what a crippled free route
+    managed to swallow. An unattributed record is fair game for anyone — it
+    claims no endpoint — but it is only ever a fallback.
+    """
+    data = load()
+    name = _name_of(provider)
+    for key in ((f"{model}{SEP}{name}" if name else None), _key(model)):
+        value = _record(data, key) if key else None
+        if value:
+            return value
+    return None
+
+
+def remember(model: str, tokens: int, provider=None) -> None:
+    """Cache a measured window, named for the endpoint it was measured on."""
+    data = dict(load())
+    key = _key(model, _name_of(provider) if provider is not None else "")
+    data[key] = int(tokens)
+    try:
+        CACHE.parent.mkdir(parents=True, exist_ok=True)
+        # Atomic like usage/Session: a torn windows.json used to wipe every
+        # measured window on the next load.
+        import tempfile
+        descriptor, tmp_name = tempfile.mkstemp(dir=str(CACHE.parent),
+                                                prefix="windows.", suffix=".tmp")
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(data, indent=2, sort_keys=True))
+            os.replace(tmp_name, CACHE)
+        finally:
+            try:
+                if os.path.exists(tmp_name):
+                    os.remove(tmp_name)
+            except OSError:
+                pass
+        _CACHED[key] = int(tokens)       # keep the in-memory copy in step
+    except OSError:
+        pass
+
+
+def _filler(tokens: int, needle: str = "") -> str:
+    """Roughly `tokens` worth of text that no provider will want to answer."""
+    from beeagent.utils.tokens import count_tokens
+
+    unit = "контекстное окно проверяется на размер "
+    block = unit * max(1, tokens // max(1, count_tokens(unit, "gpt-4")))
+    while count_tokens(block, "gpt-4") < tokens:
+        block += unit * 8
+    return f"{needle}\n{block}" if needle else block
+
+
+def _new_needle() -> str:
+    return "BEE-" + secrets.token_hex(3).upper()
+
+
+RECALL_ASK = ("\n\nВ самом начале этого сообщения стоит код вида BEE-XXXXXX. "
+              "Напиши ровно этот код и больше ничего.")
+PLAIN_ASK = "\nОтветь одним словом: ok"
+
+
+# Only these phrases mean "your prompt is too big". Anything else — rate limit,
+# auth, timeout, a dead endpoint — says nothing about the window, and recording
+# it as one is how a 2048 got written for a 4k model.
+_OVERFLOW_HINT = re.compile(
+    r"maximum context|context length|context window|window exceeded|prompt is too long"
+    r"|too many tokens|exceeds the maximum|input length|request too large"
+    r"|文字过长|请输入更短", re.I)   # Yqcloud answers 429 with this in Chinese
+
+
+class ProbeResult:
+    def __init__(self, window: int | None = None, note: str = ""):
+        self.window = window
+        self.note = note
+
+    def __bool__(self) -> bool:
+        return bool(self.window)
+
+
+def _describe(error: Exception) -> str:
+    """Something printable for any exception, including the empty ones.
+
+    `asyncio.TimeoutError` carries no message at all, and a probe that reports
+    "not a size problem: " with nothing after the colon teaches the user
+    nothing about why the measurement stopped.
+    """
+    text = str(error).strip()
+    return text or type(error).__name__
+
+
+async def _send(provider, model: str, content: str, timeout: int, attempts: int):
+    """One probe request, retried while the failure says nothing about size.
+
+    A free endpoint drops ordinary requests constantly — 401 from a guest
+    upstream, a rotated provider that needs a key, a quota error — and one such
+    hiccup must not end a measurement that is three steps in. A real refusal is
+    not retried: it is the answer we came for. A step that ran out of patience
+    is not retried either — it already cost `timeout` seconds, and repeating
+    that would only make the honest conclusion arrive later.
+    """
+    error = None
+    for _ in range(max(1, attempts)):
+        try:
+            return "ok", await asyncio.wait_for(
+                provider.chat([{"role": "user", "content": content}], model=model), timeout)
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError as e:
+            return "timeout", e
+        except Exception as e:
+            error = e
+            message = _describe(e)
+            if limit_from_error(message) or _OVERFLOW_HINT.search(message):
+                return "error", e
+    return "error", error
+
+
+async def probe(model: str, provider, ceiling: int = LADDER[-1], timeout: int = 240,
+                attempts: int = 3, on_step=None) -> ProbeResult:
+    """Climb the ladder until the endpoint stops really taking the prompt.
+
+    Two ways to fail are measured. The endpoint may refuse, ideally naming its
+    limit (the good case); an unhelpful "too long" still narrows the window
+    between the last size that fitted and the first that did not. Or it may
+    accept the request and quietly drop the front of it — caught by burying a
+    random code at the very start and asking for it back, so a prompt the model
+    never saw cannot be counted as fitting. An endpoint that cannot do that at
+    the smallest size is not being dishonest, just dim, and falls back to the
+    refusal signal alone.
+
+    And one way of answering proves nothing at all, so it ends the measurement
+    without writing a number: silence. Every record is filed under the model *and*
+    the provider it was taken from, because the same model id on two endpoints has
+    two windows and one number cannot serve both.
+    """
+    accepted = 0
+    reads_it_back = True
+    for size in [step for step in LADDER if step <= ceiling]:
+        needle = _new_needle() if reads_it_back else ""
+        content = _filler(size, needle) + (RECALL_ASK if needle else PLAIN_ASK)
+        if on_step:
+            on_step(size, accepted)
+        kind, value = await _send(provider, model, content, timeout, attempts)
+        if kind == "timeout":
+            # Our own patience ran out. A free upstream can spend minutes on a
+            # big prompt it will answer perfectly well — the least useful thing
+            # to do is call that a small window.
+            return ProbeResult(
+                None, f"{size} tokens went unanswered in {timeout}s — that is a slow "
+                      f"endpoint, not a small window. Retry with a longer --timeout.")
+        if kind == "error":
+            message = _describe(value)
+            named = limit_from_error(message)
+            if named:
+                remember(model, named, provider)
+                return ProbeResult(named, f"endpoint named the limit: {named}")
+            if not _OVERFLOW_HINT.search(message):
+                return ProbeResult(None, f"not a size problem after {attempts} tries: "
+                                         f"{message[:140]}")
+            if accepted:
+                remember(model, accepted, provider)
+                return ProbeResult(accepted, f"refused between {accepted} and {size} tokens")
+            return ProbeResult(None, "the very first request was refused")
+        reply = value
+
+        if not (reply or "").strip():
+            # An empty answer is not "the prompt fitted". Nothing was said about
+            # the prompt either way, and counting the step as accepted let a model
+            # that answers nothing measure as the top of the ladder — 131072 for a
+            # model that had never held a sentence — and pin that number for every
+            # provider serving the name.
+            return ProbeResult(
+                None, f"{size} tokens came back with no answer at all. A silent "
+                      f"model proves nothing about its window — it may be broken, "
+                      f"rate-limited or simply dim — so nothing was measured.")
+
+        if needle and needle.lower() not in (reply or "").lower():
+            if not accepted:
+                # It failed the trick at the smallest size, so the trick tells us
+                # nothing here; keep climbing on refusals alone.
+                reads_it_back = False
+                accepted = size
+                continue
+            remember(model, accepted, provider)
+            return ProbeResult(
+                accepted, f"read it, forgot it: at {size} tokens the model no longer "
+                          f"repeats the code at the start of the prompt")
+        accepted = size
+    if not accepted:
+        return ProbeResult(None, "nothing was tried")
+    remember(model, accepted, provider)
+    seen = "the model still recalled the prompt" if reads_it_back else "no refusal"
+    return ProbeResult(accepted, f"{seen} up to {accepted} tokens (a ceiling, not a limit)")

@@ -106,8 +106,8 @@ ENDPOINTS = (
         # model still answers.
         name="pollinations", label="Pollinations",
         url="https://text.pollinations.ai/openai", env="POLLINATIONS_API_KEY",
-        signup="no signup needed for the anonymous tier",
-        free="anonymous, no key; key raises the limits",
+        signup="https://pollinations.ai",
+        free="anonymous, no key; a key from the site raises the limits",
         models=("openai-fast",),
         keyless=True,
     ),

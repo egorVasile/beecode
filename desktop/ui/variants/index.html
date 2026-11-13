@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>BeeCode · выбери вариант</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 40px 32px; background: #12121a; color: #eee;
+    font-family: "Inter","Segoe UI",system-ui,sans-serif; }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  p.sub { color: #8a8aa0; margin: 0 0 32px; font-size: 14px; max-width: 760px; line-height: 1.6; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 24px; }
+  .card { text-decoration: none; color: #eee; background: #1b1b26; border: 1px solid #2a2a3a;
+    border-radius: 16px; padding: 18px; transition: transform .15s, border-color .15s, box-shadow .15s; }
+  .card:hover { transform: translateY(-4px); border-color: var(--c, #d4f000); }
+  .num { font-size: 12px; font-weight: 800; letter-spacing: .08em; color: var(--c, #d4f000); }
+  .card h2 { margin: 8px 0 4px; font-size: 20px; }
+  .card p { margin: 0; color: #9a9ab0; font-size: 13.5px; line-height: 1.5; }
+  .swatches { display: flex; gap: 6px; margin-top: 14px; }
+  .swatch { width: 26px; height: 26px; border-radius: 8px; border: 2px solid #26263a; }
+</style>
+</head>
+<body>
+  <h1>Выбери характер BeeCode</h1>
+  <p class="sub">Четыре направления — один интерфейс. Открой каждый (клик по карточке),
+    попробуй: понажимай кнопки, введи текст и Enter, открой меню модели и выбери другую —
+    акцент поменяется под бренд. Потом назови номер.</p>
+  <div class="grid">
+    <a class="card" style="--c:#4d6bfe" href="v1-neon.html">
+      <div class="num">01 · ТЁМНЫЙ НЕОН</div>
+      <h2>Neon Glass</h2>
+      <p>Глубокий тёмный фон, стеклянные панели, неоновые свечения от акцента модели.
+        Стекло + градиенты. Самый «дорогой» вид.</p>
+      <div class="swatches">
+        <span class="swatch" style="background:#05050a"></span>
+        <span class="swatch" style="background:#4d6bfe"></span>
+        <span class="swatch" style="background:#7b5cff"></span>
+      </div>
+    </a>
+    <a class="card" style="--c:#a58cff" href="v2-aurora.html">
+      <div class="num">02 · СВЕТЛЫЙ ПАСТЕЛЬ</div>
+      <h2>Aurora Paper</h2>
+      <p>Мягкие акварельные градиенты, белые карточки, воздух. Тёплый уютный минимализм
+        с цветными акцентами.</p>
+      <div class="swatches">
+        <span class="swatch" style="background:#f7f5ff"></span>
+        <span class="swatch" style="background:#7c6ff0"></span>
+        <span class="swatch" style="background:#ffb4d9"></span>
+      </div>
+    </a>
+    <a class="card" style="--c:#33ff66" href="v3-terminal.html">
+      <div class="num">03 · РЕТРО-ТЕРМИНАЛ</div>
+      <h2>Terminal CRT</h2>
+      <p>Моноширинный шрифт, сканлайны, фосфорный акцент. Для тех, кто любит хакерский стиль —
+        как старый добрый CRT.</p>
+      <div class="swatches">
+        <span class="swatch" style="background:#040604"></span>
+        <span class="swatch" style="background:#33ff66"></span>
+        <span class="swatch" style="background:#1c2a1c"></span>
+      </div>
+    </a>
+    <a class="card" style="--c:#ff3d00" href="v4-brutal.html">
+      <div class="num">04 · РЕЗКИЙ СТУДИЙНЫЙ</div>
+      <h2>Brutal Studio</h2>
+      <p>Жёсткие чёрные рамки, смещённые тени, крупная типографика. Без скруглений,
+        максимально характерно.</p>
+      <div class="swatches">
+        <span class="swatch" style="background:#f4f1ea"></span>
+        <span class="swatch" style="background:#ff3d00"></span>
+        <span class="swatch" style="background:#111"></span>
+      </div>
+    </a>
+  </div>
+</body>
+</html>

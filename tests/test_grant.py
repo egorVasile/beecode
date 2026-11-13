@@ -92,6 +92,16 @@ def test_no_terminal_never_asks(tmp_path, isolated_roots, monkeypatch):
     assert asked == []
 
 
+def test_plain_event_callback_uses_terminal_prompt(tmp_path, tty, isolated_roots, monkeypatch):
+    from beeagent.tools.read import ReadTool
+
+    outside = tmp_path.parent / "elsewhere"
+    assert ReadTool().execute(path=str(outside)).error is True
+    monkeypatch.setattr("builtins.input", lambda *args: "1")
+    assert asyncio.run(executor._maybe_grant_outside(lambda *args: None, "read")) is False
+    assert policy._granted == []
+
+
 def test_loop_reruns_after_once(tmp_path, tty, isolated_roots, monkeypatch):
     """End to end: refused read, "2", the tool runs, the model sees output."""
     from beeagent.tools.read import ReadTool

@@ -39,23 +39,29 @@ from pathlib import Path
 
 from beeagent.i18n import L
 
-# What the last guard() call refused, and where it pointed. Thread-local:
-# tools run in worker threads, and two parallel refusals must not swap folders.
-# The executor reads it to ask the human about "outside" refusals instead of
-# just failing the turn; `take_refusal()` consumes it so a stale note never
-# answers for a later call.
-_local = threading.local()
+# What the last guard() call refused, and where it pointed. Shared across
+# threads on purpose: the tool runs in a worker thread (asyncio.to_thread)
+# while the executor reads the note on the event loop — a thread-local note
+# was invisible there, so an outside-path refusal silently became a dead end
+# instead of a question. A lock keeps two parallel refusals from swapping
+# folders; `take_refusal()` consumes the note so a stale one never answers
+# for a later call.
+_local_lock = threading.Lock()
+_refusal = {"kind": "", "path": ""}
 
 
 def note_refusal(kind: str, path: str = "") -> None:
-    _local.kind = kind
-    _local.path = path
+    with _local_lock:
+        _refusal["kind"] = kind
+        _refusal["path"] = path
 
 
 def take_refusal() -> tuple[str, str]:
-    kind = getattr(_local, "kind", "")
-    path = getattr(_local, "path", "")
-    _local.kind, _local.path = "", ""
+    with _local_lock:
+        kind = _refusal["kind"]
+        path = _refusal["path"]
+        _refusal["kind"] = ""
+        _refusal["path"] = ""
     return kind, path
 
 # What a user sets when they want the tools to reach a second folder: the path

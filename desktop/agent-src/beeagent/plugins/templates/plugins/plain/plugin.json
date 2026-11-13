@@ -1,0 +1,7 @@
+{
+    "name": "plain",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Strips the interface: no frames, no animated logo, no waiting phrases",
+    "entry": "plugin.py"
+}

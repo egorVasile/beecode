@@ -78,11 +78,19 @@ class McpStdioClient:
     async def start(self) -> None:
         if self._proc is not None and self._proc.returncode is None:
             return
+        if not isinstance(self.env, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in self.env.items()
+        ):
+            raise ValueError("MCP environment must contain string names and values")
+        environment = os.environ.copy()
+        environment.update(self.env)
         self._proc = await asyncio.create_subprocess_exec(
             *spawn_argv(self.command, self.args),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
+            env=environment,
         )
         await self._request("initialize", {
             "protocolVersion": PROTOCOL_VERSION,
@@ -137,8 +145,21 @@ class McpStdioClient:
                     return data.get("result", {})
 
     async def list_tools(self) -> list[dict]:
-        result = await self._request("tools/list", {}, timeout=30.0)
-        return result.get("tools", [])
+        tools, seen = [], set()
+        cursor = None
+        while True:
+            result = await self._request(
+                "tools/list", {"cursor": cursor} if cursor else {}, timeout=30.0)
+            page = result.get("tools", [])
+            if not isinstance(page, list):
+                raise ValueError("MCP tools/list returned an invalid tools list")
+            tools.extend(page)
+            cursor = result.get("nextCursor")
+            if not cursor:
+                return tools
+            if not isinstance(cursor, str) or cursor in seen:
+                raise ValueError("MCP tools/list returned an invalid or repeated cursor")
+            seen.add(cursor)
 
     async def call_tool(self, tool: str, arguments: dict) -> str:
         result = await self._request(

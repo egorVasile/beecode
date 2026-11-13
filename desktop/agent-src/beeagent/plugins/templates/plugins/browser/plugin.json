@@ -1,0 +1,7 @@
+{
+    "name": "browser",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Tool browser: drive a real page with Playwright (navigate, click, type, read the DOM, screenshot). Playwright must already be installed; needs /allow browser",
+    "entry": "plugin.py"
+}

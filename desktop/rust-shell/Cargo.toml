@@ -1,0 +1,29 @@
+[package]
+name = "beecode-rust"
+version = "5.0.2"
+edition = "2021"
+
+[[bin]]
+name = "beecode-desktop-rust"
+path = "src/main.rs"
+
+[[bin]]
+name = "beecode-rust-test"
+path = "src/main.rs"
+required-features = ["test-automation"]
+
+[features]
+test-automation = []
+
+[dependencies]
+wry = "0.57.2"
+tao = "0.37.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+rfd = "0.17"
+webbrowser = "1"
+arboard = { version = "3", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,7 @@
+{
+    "name": "seat",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "/seat: what is left of today's pool budget, in requests and tokens, and when it resets",
+    "entry": "plugin.py"
+}

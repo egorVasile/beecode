@@ -1,0 +1,7 @@
+{
+    "name": "scoreboard",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "/board: models ranked by what answered on this machine — median latency, failures, and the ids a provider never served",
+    "entry": "plugin.py"
+}

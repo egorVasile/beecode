@@ -24,7 +24,7 @@ from rich.text import Text
 from beeagent.i18n import L, get_lang
 
 from beeagent.ui.components import (
-    console, brand_ramp,
+    console, brand_ramp, context_bar,
     get_stream, show_thinking_fallback, thinking_body,
     render_tool_start, render_tool_end,
     render_error, render_economy_hit,
@@ -221,6 +221,9 @@ def handle_callback(event: str, data: dict):
             for row in ThinkTool.hud():
                 console.print(Text(f"  📋 {row}" if row.startswith("plan") else
                                    f"     {row}", style="dim"))
+            bar = context_bar(ctx)
+            if bar is not None:
+                console.print(bar)
 
     elif event == "nudged":
         _note("🐝", "the model promised a step but sent no tool call — asked it to act",
@@ -578,8 +581,6 @@ async def _ask_route(agent, error):
     """
     import subprocess
 
-    from beeagent.i18n import L
-
     config = getattr(agent, "config", None)
     wait = int(getattr(error, "retry_after", 0) or 0) or 60
     command = (getattr(config, "vpn_command", "") if config else "").strip()
@@ -622,8 +623,11 @@ async def _ask_route(agent, error):
 
 
 async def run_repl(agent, config, session=None):
+    # Only updater is imported late (heavy, and nothing above needs it):
+    # Session and L live at module top, and re-importing either here would
+    # make the name function-local and kill every use below with UnboundLocal
+    # (which is exactly how `/history` once crashed the whole REPL).
     from beeagent.core import updater
-    from beeagent.core.session import Session
 
     try:
         has_tty = sys.stdin.isatty() and sys.stdout.isatty()
@@ -632,8 +636,9 @@ async def run_repl(agent, config, session=None):
     if not has_tty:
         # Piped stdin / captured stdout: prompt_toolkit would die below with
         # NoConsoleScreenBufferError. Say what runs headless instead.
-        from beeagent.i18n import L
-
+        # No local import of L here: any binding in this function (even on an
+        # early-return branch that tests never take) makes L function-local,
+        # and every L() below dies with UnboundLocalError. Module top has it.
         console.print(L("the interactive prompt needs a real terminal — pipe a "
                         "single request instead: beecode -p \"...\"",
                         "интерактиву нужен настоящий терминал — одиночный запрос "
@@ -695,6 +700,9 @@ async def run_repl(agent, config, session=None):
                 for row in ThinkTool.hud():
                     console.print(Text(f"  📋 {row}" if row.startswith("plan") else
                                        f"     {row}", style="dim"))
+                bar = context_bar(ctx)
+                if bar is not None:
+                    console.print(bar)
             except Exception:
                 pass
             try:

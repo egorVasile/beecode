@@ -297,3 +297,29 @@ def test_table_runs_without_announcement_but_reports_render(tmp_path, monkeypatc
     assert len(ends) == 1
     assert ends[0][1]["render"]["headers"] == ["a", "b"]
     assert ends[0][1]["render"]["rows"] == [["1", "2"], ["3", "4"]]
+
+
+def test_explicit_color_marker_without_space_renders_in_both_paths():
+    from beeagent.core.markup import render_line, stylize_prose, _apply_markers
+    from rich.text import Text
+    text = '/с.redЧестно про косяк:/с.'
+    rendered = _apply_markers(Text(stylize_prose(text)))
+    assert rendered.plain == 'Честно про косяк:'
+    assert rendered.spans and 'red' in str(rendered.spans[0].style)
+    line = render_line(text)
+    assert line.plain == 'Честно про косяк:'
+    assert line.spans and 'red' in str(line.spans[0].style)
+    assert stylize_prose('`/с.redx/с.`') == '`/с.redx/с.`'
+
+
+def test_explicit_bold_italic_and_underline_without_spaces():
+    from beeagent.core.markup import render_line, stylize_prose, _apply_markers
+    from rich.text import Text
+    for tag, style in [('b', 'bold'), ('i', 'italic'), ('u', 'underline')]:
+        source = f'/{tag}Привет/{tag}'
+        line = render_line(source)
+        assert line.plain == 'Привет'
+        assert line.spans and style in str(line.spans[0].style)
+        result = stylize_prose(source)
+        assert source not in result
+    assert stylize_prose('/bin/bash') == '/bin/bash'

@@ -100,6 +100,8 @@ class _Job:
     stamp: tuple
     old_bytes: int
     written: int = 0
+    line_added: int = 0
+    line_removed: int = 0
 
 
 class PatchTool(BaseTool):
@@ -578,7 +580,9 @@ def _plan_one(section: _Section, root_dir: Path):
     action = "new" if created else ("delete" if deleted else "modify")
     return label, [], _Job(label=label, target=target, action=action,
                            content="" if deleted else new_content, notes=notes, shifts=shifts,
-                           stamp=stamp, old_bytes=old_bytes)
+                           stamp=stamp, old_bytes=old_bytes,
+                           line_added=max(0, _count_lines(new_content) - _count_lines(content)),
+                           line_removed=max(0, _count_lines(content) - _count_lines(new_content)))
 
 
 def _home_in_path(label: str) -> str:
@@ -924,4 +928,5 @@ def _commit(jobs: list[_Job]) -> ToolResult:
 
 def _facts(jobs: list[_Job]) -> list[dict]:
     return [{"path": str(job.target), "action": job.action, "hunks": len(job.notes),
-             "bytes": job.written, "bytes_before": job.old_bytes} for job in jobs]
+             "bytes": job.written, "bytes_before": job.old_bytes,
+             "line_added": job.line_added, "line_removed": job.line_removed} for job in jobs]

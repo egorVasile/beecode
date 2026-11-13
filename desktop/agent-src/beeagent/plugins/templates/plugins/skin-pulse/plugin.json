@@ -1,0 +1,7 @@
+{
+    "name": "skin-pulse",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Animated reference skin: a thinking pulse per token, a tool progress line on the skin's own character ramp, self-demoting when the terminal or the budget says stop",
+    "entry": "plugin.py"
+}

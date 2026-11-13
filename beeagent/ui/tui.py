@@ -34,7 +34,7 @@ from beeagent.core.session import Session
 from beeagent.i18n import L
 from beeagent.ui.bee import BEE_FRAME_COUNT, render_bee
 from beeagent.ui.commands import COMMANDS, ReplContext, dispatch, history_body, visible_commands
-from beeagent.ui.components import DARK_LEAF, HONEY, LEAF, bee_title, hud_lines
+from beeagent.ui.components import DARK_LEAF, HONEY, LEAF, bee_title, context_bar, hud_lines
 
 # The picker is the classic dialog (`repl.BEE_DIALOG_STYLE`) drawn in Textual:
 # deep hive backdrop, honey headings, leaf frame. A default-styled Textual
@@ -1327,8 +1327,6 @@ class BeeCodeApp(App):
         thread.start()
 
     def _model_sync_note(self, text: str) -> None:
-        from beeagent.i18n import L
-
         for line in text.splitlines():
             self._note("📋", line, line)
         self._note("💾", L("the new lists are saved.", "новые списки сохранены."))
@@ -1345,7 +1343,11 @@ class BeeCodeApp(App):
             rows = ThinkTool.hud()
         except Exception:
             rows = []
-        if not rows:
+        try:
+            bar = context_bar(self.ctx)
+        except Exception:
+            bar = None
+        if not rows and bar is None:
             strip.display = False
             strip.update("")
             return
@@ -1357,6 +1359,10 @@ class BeeCodeApp(App):
                 text.append("\n")
             style = "bold #ffcc00" if row.startswith("plan") else "dim"
             text.append(("📋 " if number == 0 else "  ") + row, style=style)
+        if bar is not None:
+            if rows:
+                text.append("\n")
+            text.append_text(bar)
         strip.display = True
         strip.update(text)
 

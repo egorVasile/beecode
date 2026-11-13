@@ -1,0 +1,869 @@
+"""One door for an endpoint: the `/key` line, the guided REPL form and the modal
+all write through this file, so the three doors cannot promise different things.
+
+Ported from the `keep-9.0.0` attempt (`beeagent/core/provider_setup.py`) and
+adapted to what main has: the branch discovered both the OpenAI shape and an
+Anthropic one and registered both provider classes; main's providers package
+ships only the OpenAI shape (plus ollama), so the Anthropic half is cut and the
+discovery asks `OpenAICompatProvider.list_models` per key. The branch imported
+`keys_of` from `providers/presets.py`, which main does not export — it lives
+here instead, because `beeagent/providers/*` is not this command's to change.
+
+A provider in this project is four facts: a name, where it lives, who may ask it
+(the keys, any number, tried in turn), and what it answers for (the models).
+Those are exactly the four fields `ui/provider_form.py` shows.
+
+Keys are secrets: nothing here ever returns a whole key in a message — `mask_key`
+and `key_tails` are the only way a key leaves this file towards a screen.
+"""
+import asyncio
+import json
+import re
+import time
+from dataclasses import dataclass, field
+
+from beeagent.i18n import L
+from beeagent.providers.presets import BY_NAME
+
+#: `http://` or `https://` and nothing else: a base URL that reaches the machine
+#: as a file path or a shell word is not an endpoint.
+URL_SHAPE = re.compile(r"^https?://[^\s/][^\s]*$", re.IGNORECASE)
+NAME_SHAPE = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
+
+#: Words `/providers` itself answers to. An endpoint named `add` could never be
+#: reached through its own door, so the name is refused where it is typed.
+RESERVED_NAMES = ("add", "use", "edit", "set", "change", "key", "models",
+                  "remove", "rm", "delete")
+
+#: Names the program owns and a form must not overwrite: the keyless route and
+#: the operator's pool are built by code, not by an endpoint entry.
+BUILTIN_NAMES = ("g4f", "pool")
+
+
+def keys_of(raw) -> list[str]:
+    """A stored pool, however it was written, as the ordered list it means.
+
+    Main's `providers/presets.py` does not export this helper (the old form
+    imported it from there), so the split lives here: a pool is one comma
+    separated string in `beeagent.json` and a list everywhere else.
+    """
+    if raw is None:
+        return []
+    parts = [str(item) for item in raw] if isinstance(raw, (list, tuple)) \
+        else str(raw).split(",")
+    out: list[str] = []
+    for part in parts:
+        key = part.strip()
+        if key and key not in out:
+            out.append(key)
+    return out
+
+
+#: What the UI prints, and accepts back, for "this endpoint needs no key".
+NO_KEY = ("-", "none", "nokey")
+
+
+def keys_text(raw) -> str:
+    """The key pool as saved, with "no keys" spelled several ways coming out empty.
+
+    A line that lists an endpoint without a key writes `-` for it, and a person
+    pasting that line back must not end up holding a key called `-`.
+    """
+    parts = [part for part in keys_of(raw) if part.strip().lower() not in NO_KEY]
+    return ",".join(parts)
+
+
+def mask_key(key: str) -> str:
+    """A key for the screen: everything but the last four characters, hidden.
+
+    A key of four characters or fewer is hidden whole — its tail is the key.
+    """
+    key = (key or "").strip()
+    if not key:
+        return "—"
+    if len(key) <= 4:
+        return "…" + "•" * max(3, len(key))
+    return "…" + key[-4:]
+
+
+def key_tails(keys) -> str:
+    """A whole pool, named only by its tails: enough to tell two keys apart."""
+    pool = keys_of(keys)
+    return ", ".join(mask_key(key) for key in pool) if pool else L("none", "нет")
+
+
+@dataclass
+class Fields:
+    """The facts, as typed, plus how the models were found out."""
+    name: str = ""
+    url: str = ""
+    keys: str = ""                              # comma separated, in the typed order
+    models: list[str] = field(default_factory=list)
+    dialect: str = ""                           # main speaks one shape: "openai_compat"
+    was: str = ""                               # the name being edited, if any
+    context: str = ""                           # as typed: "" keep, "0" unlimited, digits a ceiling
+    model_details: list[dict] | None = None
+
+    @property
+    def key_list(self) -> list[str]:
+        return keys_of(keys_text(self.keys))
+
+    @property
+    def model(self) -> str:
+        return self.models[0] if self.models else ""
+
+
+def looks_like_url(value: str) -> bool:
+    return bool(URL_SHAPE.match((value or "").strip()))
+
+
+def _echo(value: str) -> str:
+    """Show a rejected value back to whoever typed it — unless it could be a secret.
+
+    An address has slashes and dots; a pasted key has neither. A rejected word
+    that is long and pathless is shown by its tail, so the refusal sentence
+    cannot put a secret on the screen by complaining about it.
+    """
+    value = (value or "").strip()
+    if value and "/" not in value and len(value) > 8:
+        return mask_key(value)
+    return repr(value)
+
+
+def url_refusal(url: str) -> str:
+    """Why an address cannot be saved, in the words the person can act on."""
+    value = (url or "").strip()
+    if not value:
+        return L("an endpoint needs an address: /providers add asks for it, "
+                 "or /key <name> <base-url> <keys> [models ...]",
+                 "нужен адрес эндпоинта: /providers add спросит его, "
+                 "или /key <имя> <base-url> <ключи> [модели ...]")
+    if not looks_like_url(value):
+        return L(f"{_echo(value)} is not an http(s) address — the base URL is the "
+                 f"part before /chat/completions, for example "
+                 f"https://api.example.com/v1",
+                 f"{_echo(value)} — не http(s)-адрес; base URL — это часть до "
+                 f"/chat/completions, например https://api.example.com/v1")
+    return ""
+
+
+def name_refusal(name: str) -> str:
+    value = (name or "").strip()
+    if not value:
+        return L("name the provider: /providers add asks for it, "
+                 "or /key <name> <base-url> <keys> [models ...]",
+                 "назовите провайдер: /providers add спросит его, "
+                 "или /key <имя> <base-url> <ключи> [модели ...]")
+    if not NAME_SHAPE.match(value.lower()):
+        return L(f"{value!r} cannot be a provider name — one word, letters, digits, "
+                 f"“.”, “-” and “_”",
+                 f"{value!r} не может быть именем провайдера: одно слово из букв, "
+                 f"цифр, «.», «-» и «_»")
+    if value.lower() in RESERVED_NAMES:
+        return L(f"“{value}” is a word /providers answers to itself — a provider "
+                 f"under that name could never be reached; choose another",
+                 f"«{value}» — служебное слово /providers; провайдер с таким именем "
+                 f"бы было не достать; выберите другое")
+    return ""
+
+
+def parse_context(value, keep=None):
+    """A typed context size: (number|None, refusal).
+
+    "" keeps what is stored (an edit that says nothing changes nothing);
+    "0" is unlimited — no trimming, no clip, no digest; digits are a ceiling
+    in tokens for this endpoint only. Anything else is refused with the menu.
+    """
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return keep, ""
+    if text == "0":
+        return 0, ""
+    if text.isdigit() and int(text) > 0:
+        return int(text), ""
+    return None, L(f"{text!r} is not a context size — a number of tokens, or 0 "
+                   f"for unlimited (no trimming at all)",
+                   f"{text!r} — не размер контекста: число токенов или 0 для "
+                   f"безлимита (никаких обрезок)")
+
+
+def split_models(values) -> list[str]:
+    """The model names as given: several per argument or one per line, deduplicated.
+
+    Spaces inside a name are kept, because the g4f catalogue has ids with spaces
+    in them and cutting at the first one would make such a model untypeable.
+    """
+    raw = values if isinstance(values, (list, tuple)) else str(values).splitlines()
+    out: list[str] = []
+    for item in raw:
+        for part in str(item).split(","):
+            name = " ".join(part.split())
+            if name and name not in out:
+                out.append(name)
+    return out
+
+
+def dialect_of(url: str, discovered: str = "") -> str:
+    """Which chat protocol an endpoint is saved as.
+
+    Main's providers package speaks the OpenAI shape (ollama has its own door and
+    its own command); the Anthropic class the old attempt registered does not
+    exist here, so every endpoint this writes is saved as `openai_compat`.
+    """
+    return "openai_compat"
+
+
+def models_cache_path(name: str):
+    """The cache file `commands._cached_models` reads — same path, same shape.
+
+    `CustomProvider` on main persists one `model`, not a list, and that schema
+    file is not this command's to change; the full list lives beside it in the
+    cache the completion already consults.
+    """
+    from pathlib import Path
+
+    return Path(".beeagent") / f"models_{str(name).strip().lower()}.json"
+
+
+def write_models_cache(name: str, models: list[str]) -> None:
+    from beeagent import __version__
+    from pathlib import Path
+
+    if not models:
+        return
+    try:
+        path = models_cache_path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"saved_at": time.time(), "version": __version__,
+                                    "models": list(models)}), encoding="utf-8")
+    except OSError:
+        pass                                        # the config stays the truth
+
+
+#: How long a live model list stays trustworthy. An endpoint rewrites its catalogue
+#: without telling anyone (crax did, 2026-09-26: twelve of thirteen ids ceased to
+#: exist), and the picker offering names that answer `Unknown model` is the report
+#: "the models do not answer" — so a cached list is a cache, with an expiry, not a
+#: fact. Fourteen days: long enough that a sleeping box does not cost the list on
+#: every start, short enough that one `beecode --update` does not leave a person
+#: choosing a dead model for a month.
+MODELS_CACHE_DAYS = 14
+
+
+def cached_models(name: str) -> list[str]:
+    """The models written for this endpoint before, or [] when that is stale.
+
+    Stale means "written by another BeeCode", "written before this file knew which
+    BeeCode wrote it", or "older than `MODELS_CACHE_DAYS`".
+    """
+    from beeagent import __version__
+
+    try:
+        data = json.loads(models_cache_path(name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if str(data.get("version") or "") != __version__:
+        return []
+    try:
+        age = time.time() - float(data.get("saved_at") or 0)
+    except (TypeError, ValueError):
+        return []
+    if age > MODELS_CACHE_DAYS * 86400:
+        return []
+    return [str(m) for m in data.get("models", []) if str(m).strip()]
+
+
+def stored_keys(config, name: str) -> list[str]:
+    """The pool this provider holds right now, from the config the user owns."""
+    name = (name or "").strip().lower()
+    stored = keys_of((getattr(config, "api_keys", None) or {}).get(name))
+    if stored:
+        return stored
+    for custom in getattr(config, "custom_providers", None) or []:
+        if str(custom.name).lower() == name:
+            return keys_of(custom.key)
+    return []
+
+
+def context_for(config, provider_name: str) -> tuple:
+    """(unlimited, ceiling) for the active provider.
+
+    A custom endpoint may carry its own context rule: 0 means unlimited — no
+    trimming, no per-message clip, no digest — a positive number is a ceiling
+    in tokens just for it. Unset means the global rules. Built-ins always take
+    the global rules: their windows are measured, not owned.
+    """
+    wanted = (provider_name or "").strip().lower()
+    for custom in getattr(config, "custom_providers", None) or []:
+        if str(custom.name).lower() != wanted:
+            continue
+        limit = getattr(custom, "max_context_tokens", None)
+        if limit is None:
+            return False, None
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            return False, None
+        if limit <= 0:
+            return True, None
+        return False, limit
+    return False, None
+
+
+def exists(config, name: str) -> bool:
+    """Whether this name already means an endpoint — the form says "edit" then."""
+    name = (name or "").strip().lower()
+    if not name:
+        return False
+    if name in BY_NAME or name in BUILTIN_NAMES:
+        return True
+    if any(str(custom.name).lower() == name
+           for custom in (getattr(config, "custom_providers", None) or [])):
+        return True
+    return bool(stored_keys(config, name))
+
+
+def current(config, name: str) -> Fields:
+    """What is configured for this provider right now, so a form can open filled in."""
+    name = (name or "").strip().lower()
+    endpoint = BY_NAME.get(name)
+    fields = Fields(name=name,
+                    url=getattr(endpoint, "url", "") if endpoint else "",
+                    keys=",".join(stored_keys(config, name)),
+                    models=list(getattr(endpoint, "models", ()) or ()) if endpoint else [])
+    for custom in getattr(config, "custom_providers", None) or []:
+        if str(custom.name).lower() != name:
+            continue
+        fields.url = custom.url or fields.url
+        if not fields.keys:
+            fields.keys = ",".join(keys_of(custom.key))
+        if custom.model:
+            fields.models = [custom.model]
+        stored = getattr(custom, "max_context_tokens", None)
+        fields.context = "" if stored is None else str(stored)
+        break
+    cached = cached_models(name)
+    if cached:
+        fields.models = cached
+    if fields.url and endpoint is None:
+        fields.dialect = "openai_compat"
+    return fields
+
+
+def discover(url: str, keys, timeout: float = 12.0) -> tuple:
+    """Ask the endpoint which models it has. Returns `(models, dialect, refusal)`.
+
+    The three empty-handed outcomes are kept apart because they need different
+    sentences: an endpoint that answered with an empty list, an endpoint that
+    refused the key, and an endpoint that never answered at all are three
+    different things to tell a person. Several keys are asked in turn, because
+    one of them may be the one that is accepted.
+    """
+    refusal = url_refusal(url)
+    if refusal:
+        return [], "", refusal
+    from beeagent.plugins.mcp import run_coro_blocking
+
+    pool = keys_of(keys_text(keys)) or [""]
+    try:
+        # The command's own thread, so a second here is not a second the terminal
+        # cannot draw, answer or cancel: the wait has a ceiling, and a timeout is
+        # an answer of its own rather than a hung command.
+        models, failure = run_coro_blocking(
+            lambda: _ask_pairs(url, pool), timeout=timeout)
+    except Exception as exc:                             # noqa: BLE001 - reported, not raised
+        return [], "", L(f"the model list could not be asked of {url}: {exc}",
+                         f"список моделей не получен от {url}: {exc}")
+    if models:
+        return models, "openai", ""
+    return [], "", str(failure) if failure is not None else ""
+
+
+async def _ask_pairs(url: str, pool: list[str]):
+    """The first key an endpoint answers for, or the last refusal it gave."""
+    from beeagent.providers.openai_compat import OpenAICompatProvider
+
+    last = None
+    for key in pool:
+        probe = OpenAICompatProvider(base_url=url, api_key=key,
+                                     name="discovery", model="")
+        try:
+            found = await probe.list_models()
+        except Exception as exc:                         # noqa: BLE001 - reported
+            last = exc
+            continue
+        if found:
+            return list(found), None
+        last = last or L("the endpoint answered but listed no models",
+                         "эндпоинт ответил, но не назвал ни одной модели")
+    return [], last
+
+
+def apply(config, agent, fields: Fields, workdir: str = ".") -> tuple:
+    """Save one provider. Returns `(message, refusal)`; a refusal changes nothing.
+
+    The live agent is re-registered in the same call, so what was just typed
+    works in this session and does not wait for a restart — and the message says
+    whether it is the provider being used right now, because `/providers` marks
+    the active one with an arrow and would look wrong if the answer did not say
+    where the person still is.
+    """
+    from beeagent.config.loader import save_config
+
+    refusal = name_refusal(fields.name)
+    if refusal:
+        return "", refusal
+    name = fields.name.strip().lower()
+    if name in BUILTIN_NAMES:
+        return "", L(f"{name} is built into BeeCode, not stored as an endpoint — "
+                     f"switch to it with /providers {name}",
+                     f"{name} встроен в BeeCode, это не эндпоинт в конфиге — "
+                     f"переключение: /providers {name}")
+    keys = keys_text(fields.keys)
+    models = split_models(fields.models)
+
+    if name in BY_NAME:
+        return _apply_preset(config, agent, name, fields, keys, models,
+                             save_config, workdir)
+
+    url = (fields.url or "").strip()
+    refusal = url_refusal(url)
+    if refusal:
+        return "", refusal
+    already = next((custom for custom in (getattr(config, "custom_providers", None) or [])
+                    if str(custom.name).lower() == name), None)
+
+    if not models and not keys and already is None and not cached_models(name):
+        # Saving an endpoint with neither would put a name in /providers that
+        # cannot answer anything: `model` is required by the schema, and filling
+        # it with "gpt-4" would make the provider look real to whoever reads the
+        # file next month.
+        return "", L(f"{name} has neither keys nor models — nothing to save; "
+                     f"paste a key, or name the models",
+                     f"у {name} нет ни ключей, ни моделей — сохранять нечего; "
+                     f"вставьте ключ или назовите модели")
+
+    if keys:
+        config.api_keys[name] = keys
+    else:
+        # An empty pool means "none": what was stored under this name goes.
+        # The interview keeps stored keys in the box unless told otherwise, so
+        # arriving here empty is a decision, not an oversight.
+        config.api_keys.pop(name, None)
+
+    was = (fields.was or "").strip().lower()
+    if was and was != name:
+        # Renamed in the form: the old entry and the keys stored under the old
+        # name move with it. Left alone, the edit would leave a second provider
+        # pointing at the same address with the same keys.
+        _carry_over(config, was, name)
+
+    kept = [custom for custom in (getattr(config, "custom_providers", None) or [])
+            if str(custom.name).lower() not in (name, was)]
+    already_limit = getattr(already, "max_context_tokens", None) \
+        if already is not None else None
+    context, refusal = parse_context(fields.context, keep=already_limit)
+    if refusal:
+        return "", refusal
+    entry = _entry(name=name, url=url, keys=keys, models=models,
+                   keep_model=already.model if already is not None else "",
+                   context=context)
+    entry.model_details = (fields.model_details if fields.model_details is not None
+                           else list(getattr(already, "model_details", []) or []))
+    kept.append(entry)
+    config.custom_providers = kept
+
+    if models:
+        write_models_cache(name, models)
+    _register(config, agent, name, url, keys, models)
+    if agent is not None and hasattr(agent, "sync_context"):
+        # The context rule (unlimited/ceiling) takes effect on the next turn,
+        # not on the next restart.
+        agent.sync_context()
+    if was and was != name and agent is not None:
+        agent.providers.unregister(was)
+        agent.ready_presets = [p for p in agent.ready_presets if p != was]
+    try:
+        save_config(config, workdir)
+    except OSError as exc:
+        return "", L(f"nothing was saved: {exc}", f"ничего не сохранено: {exc}")
+
+    return _saved_message(name, url, fields, models, config, agent), ""
+
+
+def _apply_preset(config, agent, name, fields: Fields, keys: str, models,
+                  save_config, workdir) -> tuple:
+    """A built-in preset keeps its own URL and class; here only keys and models move.
+
+    A preset typed with a foreign address is refused rather than shadowed: two
+    endpoints under one name is exactly the drift the shared door exists to stop.
+    """
+    from beeagent.providers.presets import BY_NAME as PRESETS
+
+    endpoint = PRESETS[name]
+    url = (fields.url or "").strip() or endpoint.url
+    if url != endpoint.url:
+        return "", L(f"{name} is a built-in endpoint at {endpoint.url} — its address "
+                     f"is not editable here; to point at {url}, save it under a new "
+                     f"name (/providers add)",
+                     f"{name} — встроенный эндпоинт по адресу {endpoint.url}; его адрес "
+                     f"здесь не меняется; для {url} сохраните под новым именем "
+                     f"(/providers add)")
+    if keys:
+        config.api_keys[name] = keys
+    else:
+        config.api_keys.pop(name, None)
+    if models:
+        write_models_cache(name, list(models))
+    if agent is not None and (keys or endpoint.keyless):
+        # Through the agent's factory, so an endpoint with its own provider class
+        # (crax splits a pool; the generic ones carry one key) keeps that class.
+        # Keyless endpoints (Pollinations anonymous tier) attach with no key.
+        agent.attach_preset(name, keys)
+        agent.ready_presets = list(dict.fromkeys(list(agent.ready_presets) + [name]))
+    try:
+        save_config(config, workdir)
+    except OSError as exc:
+        return "", L(f"nothing was saved: {exc}", f"ничего не сохранено: {exc}")
+    fields = Fields(name=name, url=endpoint.url, keys=keys, models=list(models))
+    return _saved_message(name, endpoint.url, fields, list(models), config, agent), ""
+
+
+def _context_note(config, name: str) -> str:
+    """" · context ∞" for an unlimited endpoint, " · context 128k" for a ceiling."""
+    unlimited, ceiling = context_for(config, name)
+    if unlimited:
+        return L(" · context ∞ (unlimited — nothing is trimmed)",
+                 " · контекст ∞ (безлимит — ничего не режется)")
+    if ceiling:
+        return L(f" · context {ceiling} tokens", f" · контекст {ceiling} токенов")
+    return ""
+
+
+def _saved_message(name, url, fields: Fields, models, config, agent) -> str:
+    active = (getattr(config, "provider", "") or "").lower() == name
+    switched = ""
+    if active and models and agent is not None:
+        switched = L(f" · active, model → {models[0]}", f" · активен, модель → {models[0]}")
+    elif active:
+        switched = L(" · active", " · активен")
+    hint = "" if active else L(f" · switch: /providers {name}",
+                               f" · включить: /providers {name}")
+    return (f"{name}: {url} · {L('keys', 'ключей')}: "
+            f"{key_tails(fields.keys)} · {L('models', 'моделей')}: {len(models) or '—'}"
+            + _context_note(config, name) + switched + hint)
+
+
+def _carry_over(config, was: str, name: str) -> None:
+    """Move stored keys from an old provider name to the new one."""
+    stored = (getattr(config, "api_keys", None) or {}).pop(was, None)
+    if stored and not (getattr(config, "api_keys", None) or {}).get(name):
+        config.api_keys[name] = stored
+
+
+def _entry(name: str, url: str, keys: str, models: list[str], keep_model: str = "",
+           context=None):
+    from beeagent.config.schema import CustomProvider
+
+    # main's schema persists one `model` per custom entry — no list — so the
+    # first name is the entry and the whole list goes to the models cache.
+    return CustomProvider(name=name, type="openai_compat", url=url,
+                          key=keys or None,
+                          model=(models[0] if models else (keep_model or "gpt-4")),
+                          max_context_tokens=context)
+
+
+def _register(config, agent, name: str, url: str, keys: str,
+              models: list[str]) -> None:
+    """Put the saved endpoint in front of the running agent, not only on disk.
+
+    A pool on a plain OpenAI endpoint is carried by its first key here: key
+    rotation belongs to `providers/` (only crax splits a pool on main), which is
+    not this command's to change — the whole pool is still what gets saved.
+    """
+    if agent is None:
+        return
+    from beeagent.providers.openai_compat import OpenAICompatProvider
+
+    idle = max(10, int(getattr(config, "stream_idle_timeout", 90) or 90))
+    pool = keys_of(keys)
+    first = pool[0] if pool else ""
+    provider = OpenAICompatProvider(base_url=url, api_key=first, name=name,
+                                    model=models[0] if models else "gpt-4",
+                                    models=models or (["gpt-4"] if not models else models),
+                                    idle_timeout=idle)
+    agent.providers.register(provider, replace=True)
+    if models and (getattr(config, "provider", "") or "").lower() == name:
+        config.model = models[0]
+        agent.context.model = models[0]
+
+
+def register_custom_endpoint(agent, config, custom, replace: bool = False) -> None:
+    """One saved endpoint into the running agent, under its own name.
+
+    `Agent.__init__` used to register every custom endpoint nameless, so two of
+    them collapsed into one "openai_compat" entry, the second silently refused —
+    and `/providers use <name>` answered "not configured" until the endpoint
+    was added again in the same session. Names, models and timeouts ride along
+    now, exactly like the `/providers add` path below does.
+    """
+    from beeagent.providers.ollama import OllamaProvider
+    from beeagent.providers.openai_compat import OpenAICompatProvider
+
+    name = str(getattr(custom, "name", "") or "").strip().lower()
+    if not name:
+        raise ValueError("a custom endpoint without a name")
+    idle = max(10, int(getattr(config, "stream_idle_timeout", 90) or 90))
+    if getattr(custom, "type", "") == "ollama":
+        agent.providers.register(OllamaProvider(
+            base_url=getattr(custom, "url", ""),
+            model=getattr(custom, "model", "") or "llama3",
+            idle_timeout=idle, name=name), replace=replace)
+        return
+    details = getattr(custom, "model_details", []) or []
+    models = [item["id"] for item in details if isinstance(item, dict) and item.get("id")]
+    models = models or cached_models(name) or [getattr(custom, "model", "") or "gpt-4"]
+    agent.providers.register(OpenAICompatProvider(
+        base_url=getattr(custom, "url", ""),
+        api_key=getattr(custom, "key", "") or "",
+        model=models[0], name=name, models=models,
+        idle_timeout=idle), replace=replace)
+
+
+def register_live_config(agent, config) -> None:
+    """(Re)register everything the config holds, into the running agent.
+
+    The agent builds its providers once, from the config as it stood at
+    startup — so values that arrive later (`/trust yes` restoring a folder's
+    keys, seats and endpoints) were saved but never worked until a restart,
+    while the answer said they were "now in use". This repeats exactly what
+    startup does, so a restored value behaves like a restarted one.
+    """
+    if agent is None or config is None:
+        return
+    from beeagent.providers.presets import ENDPOINTS, key_for
+
+    for custom in getattr(config, "custom_providers", None) or []:
+        try:
+            name = str(getattr(custom, "name", "") or "").strip().lower()
+            if name in BY_NAME:
+                # A hand-edited config shadowing a built-in: refused here the
+                # same way `apply` refuses it, never by swapping the live one.
+                raise ValueError(f"{name} is a built-in provider name")
+            register_custom_endpoint(agent, config, custom, replace=True)
+        except Exception as exc:
+            errors = getattr(agent, "provider_errors", None)
+            if isinstance(errors, list):
+                errors.append(f"{getattr(custom, 'name', '?')}: {exc}")
+    for endpoint in ENDPOINTS:
+        try:
+            key = key_for(endpoint, getattr(config, "api_keys", None) or {})
+        except Exception:
+            continue
+        if key or endpoint.keyless:
+            try:
+                agent.attach_preset(endpoint.name, key)
+            except Exception:
+                continue
+    try:
+        pool = agent.providers.get("pool")
+    except Exception:
+        pool = None
+    if pool is not None:
+        try:
+            pool.url = (getattr(config, "pool_url", "") or "").rstrip("/")
+            pool.token = getattr(config, "pool_token", "") or ""
+        except Exception:
+            pass
+    try:
+        sync = getattr(agent, "sync_context", None)
+        if callable(sync):
+            sync()
+    except Exception:
+        pass
+
+
+def forget(config, agent, name: str, workdir: str = ".") -> tuple:
+    """Drop one custom endpoint: its entry, its keys, its live registration.
+
+    Returns `(what_went_away, refusal)`; the caller decides which built-in names
+    are refused before ever reaching here.
+    """
+    from beeagent.config.loader import save_config
+
+    name = (name or "").strip().lower()
+    had_key = (getattr(config, "api_keys", None) or {}).pop(name, None) is not None
+    before = len(getattr(config, "custom_providers", None) or [])
+    config.custom_providers = [custom for custom in (config.custom_providers or [])
+                               if str(custom.name).lower() != name]
+    dropped = before - len(config.custom_providers)
+    if not had_key and not dropped:
+        return [], ""
+    if agent is not None:
+        agent.providers.unregister(name)
+        agent.ready_presets = [p for p in agent.ready_presets if p != name]
+    try:
+        path = models_cache_path(name)
+        if path.exists():
+            path.unlink()
+    except OSError:
+        pass
+    try:
+        save_config(config, workdir)
+    except OSError as exc:
+        return [], L(f"nothing was saved: {exc}", f"ничего не сохранено: {exc}")
+    parts = []
+    if had_key:
+        parts.append(L("key removed", "ключ удалён"))
+    if dropped:
+        parts.append(L("endpoint removed", "эндпоинт удалён"))
+    return parts, ""
+
+
+# --- provider resolution: moved out of Agent (core/agent.py) ------------------
+# The agent loop needs three answers per turn — which endpoint, which model,
+# and whether the context budget follows them — and all three used to live in
+# the god object. Behaviour is unchanged; only the address moved.
+
+def sync_context(agent) -> None:
+    """Point the context budget at the active provider.
+
+    A custom endpoint with its own context rule (0 = unlimited, N = a
+    ceiling just for it) wins for that provider; everywhere else the
+    global `max_context_tokens` applies. Called at startup and on every
+    model resolution, so a switch takes effect on the next turn, not on
+    the next restart.
+    """
+    unlimited, ceiling = context_for(
+        agent.config, getattr(agent.config, "provider", ""))
+    agent.context.model_window = None
+    for provider in getattr(agent.config, "custom_providers", []) or []:
+        if str(provider.name).lower() == str(agent.config.provider or "").lower():
+            for item in getattr(provider, "model_details", []) or []:
+                if isinstance(item, dict) and item.get("id") == agent.config.model:
+                    value = item.get("context")
+                    if isinstance(value, int) and not isinstance(value, bool) and value >= 1024:
+                        agent.context.model_window = value
+                    break
+            break
+    agent.context.unlimited = unlimited
+    if ceiling:
+        agent.context._window_cap = ceiling
+    else:
+        agent.context._window_cap = agent.config.max_context_tokens or None
+        if unlimited:
+            agent.context._window_cap = None
+
+
+def model_for(agent, provider, callback=None) -> str:
+    """The model id to actually send.
+
+    `config.model` is one global string while every provider has its own
+    catalogue, so a groq key pointed at "gpt-4" only ever answers 404. A
+    provider that lists its models gets the request corrected to one of
+    them; g4f routes any name it advertises, so it is left alone.
+    """
+    wanted = agent.config.model or ""
+    known = list(getattr(provider, "models", None) or [])
+    if not known or wanted in known:
+        return wanted or getattr(provider, "default_model", "")
+    if callable(getattr(provider, "discover_models", None)):
+        return wanted
+    model = known[0]
+    # Deliberate, documented and announced: `/provider groq` with gpt-4 in
+    # config would otherwise 404 forever. The UI prints the substitution
+    # ("this provider has no gpt-4 — answering with …"), so the change is
+    # never silent.
+    agent.config.model = model
+    agent.context.model = model
+    sync_context(agent)
+    if callback:
+        callback("model_switched", {"from": wanted, "to": model})
+    return model
+
+
+def g4f_installed() -> bool:
+    """Is g4f importable here at all — without importing it."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec("g4f") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def provider_or_pool(agent, callback):
+    """The configured provider, unless it cannot exist on this machine.
+
+    g4f is pure Python, but it declares pycryptodome and brotli, which have no
+    Android wheel and no pure-Python fallback, so `pip install beecode` leaves
+    g4f out on a phone (see the Termux section of the README for the recipe
+    that installs it anyway). Without it the default provider is a dead end:
+    the first question would come back "Error calling provider" and the person
+    would conclude BeeCode is broken. The pool is the other half of the same
+    promise — an answer without owning a key — so it takes over, out loud.
+    """
+    name = agent.config.provider or "g4f"
+    # Through the agent's own door, not this module's function: the tests
+    # (and a phone) override `_g4f_installed`, and a direct call here would
+    # walk past the override.
+    installed = type(agent)._g4f_installed()
+    if name != "g4f" or installed:
+        return agent.providers.select(name)
+    pool = agent.providers.get("pool")
+    if pool is None or not getattr(pool, "url", ""):
+        return agent.providers.select(name)
+    agent.config.provider = "pool"
+    if callback:
+        callback("provider_fallback", {"from": "g4f", "to": "pool",
+                                       "seat": bool(pool.token)})
+    return pool
+
+
+def preset_provider(agent, name: str, key: str):
+    """Build the provider for a preset endpoint, with the class that fits it.
+
+    One factory, because `/key <name>` used to build a generic OpenAI client
+    for every name — which replaced crax's provider (two kinds of 429, key
+    rotation, the question it asks) with a plain one, and sent a comma-separated
+    list of keys as a single bearer token.
+    """
+    endpoint = BY_NAME.get(name)
+    if endpoint is None:
+        return None
+    idle = max(10, int(agent.config.stream_idle_timeout or 90))
+    if name == "crax":
+        from beeagent.providers.crax import CraxProvider
+        return CraxProvider(api_key=key, base_url=endpoint.url, idle_timeout=idle,
+                            ask=lambda error: ask_route(agent, error))
+    from beeagent.providers.openai_compat import OpenAICompatProvider
+    return OpenAICompatProvider(base_url=endpoint.url, api_key=key,
+                                model=endpoint.models[0] if endpoint.models else "gpt-4",
+                                name=name, models=endpoint.models)
+
+
+def attach_preset(agent, name: str, key: str) -> bool:
+    """Register (or re-register) a preset endpoint after a key change."""
+    provider = preset_provider(agent, name, key)
+    if provider is None:
+        return False
+    agent.providers.register(provider, replace=True)
+    if name not in agent.ready_presets:
+        agent.ready_presets.append(name)
+    return True
+
+
+async def ask_route(agent, error):
+    """Hand a rate limit to whoever is showing the interface.
+
+    With no UI around — one-shot mode, a plugin driving the agent — there is
+    nobody to ask, so the only safe answer is to wait out what the endpoint
+    said and try again.
+    """
+    if agent.route_question is None:
+        return "wait" if getattr(error, "retry_after", 0) else None
+    try:
+        return await agent.route_question(error)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return "wait"

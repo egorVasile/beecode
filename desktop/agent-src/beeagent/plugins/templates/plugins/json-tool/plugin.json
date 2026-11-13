@@ -1,0 +1,7 @@
+{
+    "name": "json-tool",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Validate and pretty-print JSON strings/files",
+    "entry": "plugin.py"
+}

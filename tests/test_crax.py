@@ -90,6 +90,13 @@ def run(coro):
     return asyncio.run(coro)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_cwd(tmp_path, monkeypatch):
+    """The tools-support cache lives under the working directory — keep the
+    suite from filing verdicts into the checkout it runs from."""
+    monkeypatch.chdir(tmp_path)
+
+
 def test_several_keys_are_written_as_one_config_value():
     assert keys_from("a, b,,c") == ["a", "b", "c"]
     assert keys_from("") == []
@@ -252,3 +259,161 @@ def test_the_default_model_is_one_that_answered_the_last_time_we_measured():
         "gpt-6-astra", "gemini-3-8-flash", "deepseek-v4-pro",
         "kimi-k3", "kimi-k2-6", "grok-4-6"], \
         list(CraxProvider.models)
+
+
+# --- native tools dropped upstream: the JSON fallback -------------------------
+
+TOOLS = [{"name": "read", "description": "Open a file.",
+          "parameters": {"type": "object",
+                         "properties": {"path": {"type": "string"}}}}]
+MSGS = [{"role": "user", "content": "открой note.txt"}]
+
+
+def _cache_of(tmp_path):
+    import json as _json
+    from pathlib import Path as _Path
+    path = _Path(tmp_path) / ".beeagent" / "crax_tools.json"
+    return _json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def test_native_tool_calls_come_back_untouched(make_endpoint, tmp_path):
+    """The happy path pays nothing extra: one request, no cache file."""
+    endpoint = make_endpoint([
+        (200, {"choices": [{"message": {
+            "content": "",
+            "tool_calls": [{"id": "1", "type": "function",
+                            "function": {"name": "read",
+                                         "arguments": '{"path": "note.txt"}'}}]}}]},
+         {}, False),
+    ])
+    provider = CraxProvider(api_key="k", base_url=endpoint.url)
+
+    out = run(provider.complete(MSGS, "glm-5.3-flash", TOOLS))
+
+    assert out["tool_calls"] == [{"tool": "read", "args": {"path": "note.txt"}}]
+    assert len(endpoint.requests) == 1
+    assert "tools" in endpoint.requests[0]["body"]
+    assert _cache_of(tmp_path) == {}
+
+
+def test_a_refusal_falls_back_to_the_json_protocol(make_endpoint, tmp_path):
+    """200 OK carrying 'no access' is a dropped `tools` field, not an answer:
+    re-ask in prose, parse the block, file the verdict about this model id."""
+    endpoint = make_endpoint([
+        (200, {"choices": [{"message":
+                            {"content": "У меня нет доступа к вашим файлам."}}]},
+         {}, False),
+        (200, {"choices": [{"message": {"content":
+            '```json\n{"tool": "read", "args": {"path": "note.txt"}}\n```' }}]},
+         {}, False),
+    ])
+    provider = CraxProvider(api_key="k", base_url=endpoint.url)
+
+    out = run(provider.complete(MSGS, "gpt-5-5", TOOLS))
+
+    assert out["tool_calls"] == [{"tool": "read", "args": {"path": "note.txt"}}]
+    assert len(endpoint.requests) == 2
+    assert "tools" in endpoint.requests[0]["body"], "first: native, as always"
+    retry = endpoint.requests[1]["body"]
+    assert "tools" not in retry, "retry: prose, or it fails the same way"
+    assert "Respond with EXACTLY one JSON code block" in retry["messages"][-1]["content"]
+    assert "gpt-5-5" in _cache_of(tmp_path), "the verdict is filed"
+
+
+def test_a_session_denial_falls_back_to_the_json_protocol(make_endpoint, tmp_path):
+    """Seen live 2026-10-07: 'в этой сессии у меня нет доступа к файловой
+    системе и терминалу, подключены только веб-поиск и генерация картинок'.
+    Same denial, new words — the prose retry must still happen."""
+    endpoint = make_endpoint([
+        (200, {"choices": [{"message":
+                            {"content": "В этой сессии у меня нет доступа к файловой "
+                                        "системе и терминалу, подключены только "
+                                        "веб-поиск и генерация картинок."}}]},
+         {}, False),
+        (200, {"choices": [{"message": {"content":
+            '```json\n{"tool": "read", "args": {"path": "note.txt"}}\n```' }}]},
+         {}, False),
+    ])
+    provider = CraxProvider(api_key="k", base_url=endpoint.url)
+
+    out = run(provider.complete(MSGS, "gpt-5-5", TOOLS))
+
+    assert out["tool_calls"] == [{"tool": "read", "args": {"path": "note.txt"}}]
+    assert len(endpoint.requests) == 2
+    assert "tools" not in endpoint.requests[1]["body"]
+
+
+def test_a_cached_model_skips_the_wasted_native_request(make_endpoint, tmp_path):
+    """Second session with the same dead route: straight to prose, one request."""
+    import json as _json
+    import time as _time
+    from pathlib import Path as _Path
+    cache = _Path(tmp_path) / ".beeagent"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "crax_tools.json").write_text(
+        _json.dumps({"gpt-5-5": {"at": _time.time()}}), encoding="utf-8")
+    endpoint = make_endpoint([
+        (200, {"choices": [{"message": {"content":
+            '{"tool": "read", "args": {"path": "a.txt"}}' }}]}, {}, False),
+    ])
+    provider = CraxProvider(api_key="k", base_url=endpoint.url)
+
+    out = run(provider.complete(MSGS, "gpt-5-5", TOOLS))
+
+    assert out["tool_calls"] == [{"tool": "read", "args": {"path": "a.txt"}}]
+    assert len(endpoint.requests) == 1
+    assert "tools" not in endpoint.requests[0]["body"]
+
+
+def test_a_fallback_that_finds_nothing_returns_the_latest_answer(make_endpoint):
+    """Prose that also refuses is still the model's latest word: hand it back,
+    never an empty reply, never a crash."""
+    endpoint = make_endpoint([
+        (200, {"choices": [{"message": {"content": "I have no access to data."}}]},
+         {}, False),
+        (200, {"choices": [{"message": {"content": "Still cannot access files, sorry."}}]},
+         {}, False),
+    ])
+    provider = CraxProvider(api_key="k", base_url=endpoint.url)
+
+    out = run(provider.complete(MSGS, "gpt-5-5", TOOLS))
+
+    assert out["tool_calls"] == []
+    assert "Still cannot" in out["text"]
+    assert len(endpoint.requests) == 2
+
+
+def test_no_tools_means_no_fallback_even_on_denial_text(make_endpoint):
+    """The fallback repairs tool turns only: a plain answer that happens to say
+    'attached the log' must not cost a second request."""
+    endpoint = make_endpoint([
+        (200, {"choices": [{"message": {"content": "attached the log below, all green"}}]},
+         {}, False),
+    ])
+    provider = CraxProvider(api_key="k", base_url=endpoint.url)
+
+    out = run(provider.complete(MSGS, "gpt-5-5"))
+
+    assert out["tool_calls"] == []
+    assert len(endpoint.requests) == 1
+
+
+def test_every_key_failing_names_the_model_not_the_keys(make_endpoint):
+    """A dead model route fails on every key while the accounts are fine —
+    'refused every key' used to send the user retyping keys that were never it."""
+    async def ask(error):
+        return "wait"
+
+    endpoint = make_endpoint([
+        (429, {"error": {"message": "Too many requests", "type": "rate_limit_exceeded"}},
+         {"Retry-After": "0"}, False),
+        (429, {"error": {"message": "Too many requests", "type": "rate_limit_exceeded"}},
+         {"Retry-After": "0"}, False),
+    ])
+    provider = CraxProvider(api_key="k1,k2", base_url=endpoint.url, ask=ask)
+
+    with pytest.raises(CraxError) as raised:
+        run(provider.complete(MSGS, "gpt-5-5", TOOLS))
+
+    assert "gpt-5-5" in str(raised.value)
+    assert "/models" in str(raised.value)

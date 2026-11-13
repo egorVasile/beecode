@@ -18,6 +18,25 @@ def calls(response):
     return [(c.tool, c.args) for c in CommandParser().parse(response).commands]
 
 
+def test_the_prose_protocol_teaches_the_format_like_a_manual():
+    """The retry prose is the second chance after a refusal: numbered steps,
+    a concrete example (not placeholders), the no-other-syntax rule and the
+    anti-denial must all be in it — a vague 'you can use tools' is what the
+    model already ignored once."""
+    from beeagent.core.parser import CommandParser
+
+    text = CommandParser().format_tool_prompt([
+        {"name": "read", "description": "Open a file.",
+         "parameters": {"type": "object",
+                        "properties": {"path": {"type": "string"}},
+                        "required": ["path"]}}])
+    assert "1." in text and "2." in text and "3." in text
+    assert '{"tool": "read", "args": {"path": "note.txt"}}' in text
+    assert "no XML" in text
+    assert "Do not say you lack access" in text
+    assert "tool_name" not in text, "placeholders do not teach spelling"
+
+
 def test_a_value_written_across_real_newlines_still_runs():
     """The usual death of a file write: Enter inside a quoted value."""
     parsed = CommandParser().parse('{"tool": "write", "args": {"path": "a.txt", '

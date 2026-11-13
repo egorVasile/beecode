@@ -7,6 +7,7 @@ in the full-screen Textual TUI. Nothing here writes to the console directly.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -95,7 +96,7 @@ COMMANDS: list[Command] = [
     Command("thinking", "Show the last model reasoning (scrollable)", category="info"),
     Command("window", "Show or measure the model context window", usage="/window [measure] [model]", category="info"),
     Command("update", "Check for a newer BeeCode and install it", category="info"),
-    Command("pool", "Address, seat and budget of a key pool", usage="/pool [url <адрес> | enroll | status]", category="info"),
+    Command("pool", "Address, seat and budget of a key pool", usage="/pool [url <адрес> | enroll | google | status]", category="info"),
     # model / provider / mode — `/model` and `/provider` are hidden aliases of
     # their plurals: they share the handler, they are not advertised in /help.
     Command("model", "Switch the active model", arg="model", usage="/model <name>",
@@ -113,6 +114,8 @@ COMMANDS: list[Command] = [
     Command("allow", "Grant one unsafe tool for this session", arg="tool",
             usage="/allow <tool>", category="engine"),
     Command("lang", "Switch the interface language", usage="/lang <en|ru>", category="engine"),
+    Command("instructions", "Show or set your system instructions (role: system)",
+             usage="/instructions [text|clear]", category="engine"),
     Command("skin", "Choose interface variants: frames, banner, spinner", usage="/skin [slot] [variant]", category="engine"),
     Command("extensions", "What the installed plugins added", category="engine"),
     # direct tool commands
@@ -477,6 +480,22 @@ def _err(msg: str) -> CommandResult:
 
 def _ok(msg: str) -> CommandResult:
     return CommandResult(output=Text(msg, style="bold green"))
+
+
+def _cmd_plain(output) -> str:
+    """A command result as plain text — the phone cannot render rich."""
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        return output
+    try:
+        from rich.console import Console
+
+        console = Console(record=True, width=100)
+        console.print(output)
+        return console.export_text().rstrip() or str(output)
+    except Exception:
+        return str(output)
 
 
 def _tool_panel(title: str, output: str, error: bool) -> Panel:
@@ -900,11 +919,11 @@ def _providers_import(ctx, args) -> CommandResult:
     Keys are shown by their tails only, here and everywhere else.
     """
     import os
-    from pathlib import Path
 
     from beeagent.core import agent_import, provider_setup
     from beeagent.providers.presets import BY_NAME
     from beeagent.ui.components import providers_table
+
 
     home = Path.home()
     appdata = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming"))
@@ -1310,6 +1329,41 @@ def _cmd_lang(ctx, args):
         ctx.config.language = code
         _persist_config(ctx)
     return _ok(L(f"interface language → {code}", f"язык интерфейса → {code}"))
+
+
+def _cmd_instructions(ctx, args):
+    """Show or replace the user's system instructions (role: "system").
+
+    The same structural slot Claude/Gemini/OpenAI use — appended to the
+    built-in identity, in force on every turn. Empty clears it.
+    """
+    from beeagent.config.loader import save_config
+
+    current = (getattr(ctx.config, "custom_instructions", "") or "").strip()
+    if not args:
+        if not current:
+            return CommandResult(output=Text(
+                L("no custom instructions — the built-in system prompt is the whole contract",
+                  "своих инструкций нет — действует только встроенный системный промпт"),
+                style="dim"))
+        return CommandResult(output=Text(
+            L(f"custom instructions ({len(current)} chars):\n{current}",
+              f"свои инструкции ({len(current)} симв.):\n{current}"), style="dim"))
+    text = " ".join(args).strip()
+    if text.lower() in ("clear", "reset", "clear"):
+        ctx.config.custom_instructions = ""
+        try:
+            save_config(ctx.config, ctx.agent.workdir if ctx.agent is not None else ".")
+        except OSError:
+            pass
+        return _ok(L("custom instructions cleared", "свои инструкции очищены"))
+    ctx.config.custom_instructions = text
+    try:
+        save_config(ctx.config, ctx.agent.workdir if ctx.agent is not None else ".")
+    except OSError:
+        pass
+    return _ok(L(f"custom instructions set ({len(text)} chars) — in force from the next turn",
+                 f"свои инструкции заданы ({len(text)} симв.) — действуют со следующего хода"))
 
 
 def _cmd_mode(ctx, args):
@@ -1922,7 +1976,6 @@ def _cmd_session(ctx, args):
 
 def _cmd_sessions(ctx, args):
     from beeagent.core.session import read_head
-    from pathlib import Path
 
     workdir = _workdir_of(ctx)
     ids = Session.list_sessions(workdir)
@@ -2474,7 +2527,6 @@ def _cmd_skill(ctx, args):
         if s.name == name:
             from rich.markdown import Markdown
 
-            from beeagent.utils.sanitize import strip_terminal
             # SKILL.md is someone else's bytes: terminal escapes reach the
             # emulator through Markdown untouched (OSC 52 writes the clipboard).
             return CommandResult(output=Panel(
@@ -2528,7 +2580,6 @@ def _cmd_mcp(ctx, args):
             lines.append(f"{name}:")
             # Descriptions arrive from the MCP server: strip terminal escapes
             # before they reach the renderer.
-            from beeagent.utils.sanitize import strip_terminal
             lines.extend(
                 f"  - {t.get('name')}: {strip_terminal(str(t.get('description') or ''))[:90]}"
                 for t in cached)
@@ -2610,9 +2661,6 @@ def _cmd_stop(ctx, args):
 
 def _cmd_tasks(ctx, args):
     """The agent's own task list, from the same file the `todo` tool writes."""
-    import json
-    from pathlib import Path
-
     from beeagent.tools.todo import TODO_FILE
 
     path = Path(TODO_FILE)
@@ -2628,10 +2676,7 @@ def _cmd_tasks(ctx, args):
         return CommandResult(output=Text(L("the task list is empty", "список задач пуст"),
                                          style="dim"))
 
-    from rich.table import Table
-
     from beeagent.ui import skin
-    from beeagent.ui.components import bee_title
 
     table = Table(title=bee_title(L("🐝 tasks", "🐝 задачи")),
                   **skin.frame_kwargs(BORDER, 'picker'), header_style="bold " + HONEY, expand=False)
@@ -2674,6 +2719,33 @@ def _pool_provider_refresh(ctx) -> None:
         return
     provider.url = (ctx.config.pool_url or "").rstrip("/")
     provider.token = ctx.config.pool_token or ""
+
+
+def _wait_for_google_seat(url: str, ident: str, timeout_s: float = 180.0,
+                           interval_s: float = 3.0) -> dict | None:
+    """Poll the pool until this install's seat reads approved, or None.
+
+    The browser round trip is human-paced (consent screen, picking the
+    account), so this waits the way the desktop does instead of sending the
+    person away with another command to run.
+    """
+    import time
+
+    from beeagent.providers import pool as pool_mod
+
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    while True:
+        try:
+            seat = pool_mod.seat_status(url, ident, timeout=20.0)
+        except KeyboardInterrupt:
+            return None
+        except Exception:
+            seat = None
+        if isinstance(seat, dict) and seat.get("ok") and seat.get("approved"):
+            return seat
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(min(max(0.0, interval_s), max(0.0, deadline - time.monotonic())))
 
 
 def _cmd_pool(ctx, args):
@@ -2738,6 +2810,150 @@ def _cmd_pool(ctx, args):
                              "переключись на него: /providers pool"), style="dim")
         return CommandResult(output=text)
 
+    if sub == "google":
+        if not config.pool_url:
+            return _err(L("no address yet: /pool url https://…", "сначала адрес: /pool url https://…"))
+        url = pool_mod.google_authorize_url(config.pool_url)
+        if not url:
+            return _err(L("the pool has no address", "у пула нет адреса"))
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
+        # Wait for the round trip the way the desktop does: the seat appears
+        # the moment the pool's callback verifies the Google account.
+        ident = pool_mod.install_id()
+        seat = _wait_for_google_seat(config.pool_url.rstrip("/"), ident)
+        if seat is None:
+            text = Text()
+            text.append(L("🐝 Google sign-in opened in your browser. ",
+                          "🐝 Вход через Google открыт в браузере. "), style="bold #ffcc00")
+            text.append("\n" + L("Sign in with any Google account — registration is open. "
+                                 "The seat binds to this install automatically; when the "
+                                 "page says done, run: /pool status",
+                                 "Войди любым Google-аккаунтом — регистрация открыта для всех. "
+                                 "Место привяжется к этой установке само; когда страница "
+                                 "скажет 'готово' — выполни: /pool status"), style="dim")
+            return CommandResult(output=text)
+        config.pool_token = ident
+        saved = _persist_config(ctx)
+        _pool_provider_refresh(ctx)
+        tail = ident[-4:]
+        text = Text()
+        text.append(L(f"🎉 Registered! Seat …{tail} is bound to this machine. ",
+                      f"🎉 Вы зарегистрировались! Место …{tail} привязано к этой машине. "),
+                    style="bold #7cb342")
+        if saved:
+            text.append(L("The seat id is saved in beeagent.json. ",
+                          "Id места сохранён в beeagent.json. "), style="dim")
+        else:
+            text.append(L("beeagent.json could not be written — the seat works "
+                          "for this session; enroll again after restart. ",
+                          "beeagent.json не записался — место работает на эту сессию, "
+                          "после перезапуска возьми его заново. "), style="bold yellow")
+        text.append("\n" + L("switch to it with: /providers pool",
+                             "переключись на него: /providers pool"), style="dim")
+        return CommandResult(output=text)
+
+    if sub == "pair":
+        """A phone takes the wheel from the terminal: /pair, code, drive.
+
+        The five-minute code is printed; once the phone joins, everything it
+        types runs as turns right here — the same agent, the same permission
+        asks on this very terminal — and each answer is filed back to the
+        phone as a `done` event. Bounded: the relay lives a few minutes past
+        the join, then /pair returns; the desktop's button is the long-lived
+        mode.
+        """
+        if not config.pool_url:
+            return _err(L("no pool address yet — /pool url https://…",
+                          "нет адреса пула — /pool url https://…"))
+        url = config.pool_url.rstrip("/")
+        try:
+            opened = pool_mod.relay_start(url)
+        except Exception as exc:
+            return _err(str(exc)[:300])
+        code = str(opened.get("code") or "")
+        text = Text()
+        text.append(L("phone pairing code: ", "код для телефона: "), style="dim")
+        text.append(code, style="bold #ffcc00")
+        text.append("\n" + L("type it in the app within 5 minutes — waiting…",
+                             "введи его в приложении в течение 5 минут — жду…"), style="dim")
+        deadline = time.time() + pool_mod.RELAY_PAIR_WAIT
+        joined = False
+        while time.time() < deadline and not joined:
+            try:
+                body = pool_mod.relay_wait(url)
+            except Exception:
+                body = {}
+            joined = bool(body.get("paired"))
+        if not joined:
+            text.append("\n" + L("no phone joined — /pair again when ready.",
+                                 "телефон не подключился — спари ещё раз, когда будешь готов."),
+                        style="yellow")
+            return CommandResult(output=text)
+        record: dict = {"tools": 0, "tail": "", "after": -1}
+
+        def phone_callback(event, data):
+            data = data or {}
+            try:
+                if event == "tool_start":
+                    record["tools"] = int(record["tools"]) + 1
+                    if record["tools"] <= 30:
+                        pool_mod.relay_report(url, [{
+                            "kind": "tool",
+                            "text": str(data.get("tool") or "инструмент")}])
+                elif event in ("stream_delta", "response"):
+                    piece = str(data.get("text") or "")
+                    if piece:
+                        record["tail"] = ((record["tail"] + " " + piece)
+                                          .strip()[-600:])
+            except Exception:
+                pass
+
+        phone_session = Session()
+        turns = 0
+        while time.time() < deadline:
+            try:
+                body = pool_mod.relay_poll(url, record["after"])
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                break
+            messages = body.get("messages") or []
+            for message in messages:
+                record["after"] = int(message.get("id", 0))
+                text_line = str(message.get("text") or "").strip()
+                if not text_line:
+                    continue
+                turns += 1
+                record["tools"] = 0
+                if text_line.startswith("/"):
+                    try:
+                        result = dispatch(ctx, text_line)
+                        answer = _cmd_plain(result.output)
+                    except Exception as exc:
+                        answer = f"{exc.__class__.__name__}: {exc}"
+                    pool_mod.relay_report(url, [{"kind": "done", "text": answer[:600]}])
+                    continue
+                record["tail"] = ""
+                try:
+                    answer = ctx.agent.run_sync(text_line, phone_session,
+                                                phone_callback)
+                except KeyboardInterrupt:
+                    raise
+                except Exception as exc:
+                    answer = f"{exc.__class__.__name__}: {exc}"
+                done = (record["tail"] or answer or "")
+                pool_mod.relay_report(url, [{"kind": "done", "text": done[:600]}])
+        text.append("\n" + L(f"phone connected! instructions ran: {turns}. "
+                             "the code window is over — /pair again for a new one.",
+                             f"телефон подключён! исполнено команд: {turns}. "
+                             "окно кода истекло — /pair ещё раз, когда понадобится."),
+                    style="bold #7cb342")
+        return CommandResult(output=text)
+
     if sub in ("", "status"):
         text = Text()
         text.append(L("pool: ", "пул: ", ), style="dim")
@@ -2766,8 +2982,8 @@ def _cmd_pool(ctx, args):
               "подтверждать нечего — места открыты, просто пользуйся пулом."),
             style="dim"))
 
-    return _err(L("usage: /pool [url <address> | enroll | status]",
-                  "использование: /pool [url <адрес> | enroll | status]"))
+    return _err(L("usage: /pool [url <address> | enroll | google | status]",
+                  "использование: /pool [url <адрес> | enroll | google | status]"))
 
 
 def _cmd_update(ctx, args):
@@ -2808,6 +3024,7 @@ HANDLERS: dict[str, Callable] = {
     "model": _cmd_models,
     "provider": _cmd_providers,
     "lang": _cmd_lang,
+    "instructions": _cmd_instructions,
     "skin": _cmd_skin,
     "extensions": _cmd_extensions,
     "mode": _cmd_mode,
@@ -2886,6 +3103,7 @@ def dispatch(ctx: ReplContext, line: str) -> CommandResult:
 # `from beeagent.ui.commands import COMMANDS` sees the same registry the README is
 # built from. It used to appear only once a PluginLoader happened to be built,
 # which made the command list depend on import order.
+from beeagent.core import bugreport as _bugreport  # noqa: E402  (bottom: it imports us lazily)
 from beeagent.core import compact as _compact  # noqa: E402  (bottom: it imports us lazily)
 from beeagent.core import contextview as _contextview  # noqa: E402  (bottom: it imports us lazily)
 from beeagent.core import dirs as _dirs  # noqa: E402  (bottom: it imports us lazily)
@@ -2898,6 +3116,7 @@ from beeagent.core import skins as _skins  # noqa: E402  (bottom: it imports us 
 from beeagent.core import trust as _trust  # noqa: E402  (bottom: trust imports us lazily)
 
 _trust.register_command()
+_bugreport.register_command()
 _journal.register_command()
 _compact.register_command()
 _skins.register_command()

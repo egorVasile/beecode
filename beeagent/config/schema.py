@@ -37,6 +37,7 @@ class CustomProvider(Model):
     # history goes out as-is. Only for endpoints of one's own: it is the
     # owner's bill and the owner's window.
     max_context_tokens: Optional[int] = None
+    model_details: list[dict] = default(list)
 
 
 class BeeConfig(Model):
@@ -51,6 +52,9 @@ class BeeConfig(Model):
     # the text parser to repair. Turn it off to force the old protocol.
     native_tools: bool = True
     language: str = "en"  # "en" | "ru"
+    # Extra instructions appended to the system prompt (role: "system"), the
+    # same structural slot Claude/Gemini/OpenAI use — not a tag in the text.
+    custom_instructions: str = ""
     max_turns: int = 50
     # 0 = take the window from the model; otherwise a ceiling in tokens.
     max_context_tokens: int = 0

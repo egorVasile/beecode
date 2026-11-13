@@ -1,0 +1,7 @@
+{
+    "name": "sysinfo",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Report system info: OS, CPU, RAM, disk usage, Python, key tool versions",
+    "entry": "plugin.py"
+}

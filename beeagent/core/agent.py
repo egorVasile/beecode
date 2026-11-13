@@ -40,6 +40,8 @@ from beeagent.tools.todo import TodoTool
 from beeagent.tools.think import ThinkTool
 from beeagent.tools.ask import AskTool
 from beeagent.tools.table import TableTool
+from beeagent.tools.forge import ForgeTool
+from beeagent.tools.ui import UiTool
 from beeagent.core.queue import PendingQueue
 from beeagent.core.session import Session
 from beeagent.core.context import ContextManager
@@ -202,8 +204,9 @@ class Agent:
             except Exception as e:
                 self.provider_errors.append(f"{custom.name}: {e}")
 
-        # Free-tier endpoints the user signed up for themselves. Registered only
-        # when a key exists, so /providers can show what is ready to use.
+        # Free-tier endpoints the user signed up for themselves. Registered when
+        # a key exists — or with no key at all for a keyless endpoint — so
+        # /providers can show what is ready to use.
         from beeagent.providers.presets import ENDPOINTS, key_for
         self.ready_presets: list[str] = []
         # The UI installs this to ask the user what to do about a rate limit;
@@ -231,7 +234,7 @@ class Agent:
                          GrepTool, GlobTool, ListDirectoryTool, WebSearchTool,
                          WebFetchTool, GitTool, TodoTool, DiagramTool,
                          DiagnosticsTool, PatchTool, MoveTool, RemoveTool,
-                         ThinkTool, AskTool, TableTool]:
+                         ThinkTool, AskTool, TableTool, ForgeTool, UiTool]:
             self.tools.register(tool_cls())
 
         self.economy = EconomyManager(
@@ -259,6 +262,9 @@ class Agent:
         # Skills, plugin tool packs, and MCP servers installed from the catalog.
         from beeagent.plugins.loader import PluginLoader
         self.plugins = PluginLoader(self, gate_project=True)
+        # The forge tool acts on the live loader (install/remove reload it),
+        # so it needs the agent long after construction finished.
+        ForgeTool.bind(self)
         try:
             self.plugins.load_all()
         except (asyncio.CancelledError, KeyboardInterrupt):
@@ -278,6 +284,8 @@ class Agent:
         # Python without killing the thread, so this ends the loop at the next
         # turn instead of pretending to cut the request mid-byte.
         self.stop_requested = False
+        from beeagent.tools.subagent import SubagentTool
+        self.tools.register(SubagentTool(self))
 
     def request_stop(self) -> bool:
         """Ask the running turn to end. True if something was actually running."""
@@ -289,6 +297,9 @@ class Agent:
         if not self.is_busy:
             return False
         self.stop_requested = True
+        children = self.tools.get("subagent")
+        if children is not None:
+            children.stop_all()
         return True
 
     def sync_config_permissions(self):
@@ -399,6 +410,7 @@ class Agent:
         try:
             provider = self._provider_or_pool(callback)
             model = self._model_for(provider, callback)
+            self.sync_context()
             # The context window is measured per endpoint, so reading it back has
             # to know which endpoint is answering (see core/windows.py).
             windows.note_provider(getattr(provider, "name", "") or self.config.provider)
@@ -412,7 +424,27 @@ class Agent:
             # A zero (or a negative, from a hand-edited beeagent.json) used to end
             # the run before the first request and still report "Max turns reached
             # without a final answer" — an answer was never even asked for.
-            for turn in range(max(1, int(self.config.max_turns or 0))):
+            max_turns = max(1, int(self.config.max_turns or 0))
+            turn = -1
+            while turn + 1 < max_turns or (self.tools.get("subagent") is not None and
+                                           self.tools.get("subagent").pending_results()):
+                turn += 1
+                if turn >= max_turns:
+                    children = self.tools.get("subagent")
+                    pending_children = children.pending_results()
+                    if callback:
+                        callback("waiting", {"message": "Waiting for subagents"})
+                    while not self.stop_requested:
+                        snapshots = [children.snapshot(child_id) for child_id in pending_children]
+                        if all(not row or row["status"] != "running" for row in snapshots):
+                            break
+                        await asyncio.sleep(0.2)
+                    if not self.stop_requested:
+                        results = children.collect_results(pending_children)
+                        session.add_user_message("[Subagent results, supplied by BeeCode] " +
+                                                 json.dumps(results, ensure_ascii=False) +
+                                                 "\nUse these results before answering the user.")
+                        max_turns += 1
                 if self.stop_requested:
                     # Reported, not swallowed: the user learns the answer was cut
                     # short rather than finished. The finally clears the flag.
@@ -444,6 +476,17 @@ class Agent:
                           and self.config.native_tools)
                 messages = self.context.build_messages(session.to_dicts(), tool_schemas,
                                                         native=native)
+                if turn == 0 and getattr(session, "request_title", False):
+                    title_instruction = ("For this first response only, begin with a concise chat title "
+                        "in the user's language in this exact format: █title█. "
+                        "The title must contain one or two words, not a sentence; "
+                        "do not add explanations or ending punctuation inside the markers. "
+                        "For example, for a greeting use █Приветствие█. "
+                        "Then respond normally or use tools. Do not repeat the title later.")
+                    if messages and messages[0].get("role") == "system":
+                        messages[0] = dict(messages[0], content=str(messages[0].get("content") or "") + "\n\n" + title_instruction)
+                    else:
+                        messages.insert(0, {"role": "system", "content": title_instruction})
                 if nudge_pending:
                     # The reminder rides on this request only: history stays the
                     # conversation the user actually had.
@@ -461,7 +504,9 @@ class Agent:
                         callback("context_trimmed", {"dropped": self.context.trimmed,
                                                      "shed": shed})
                 cached = self.economy.check_cache(prompt_str, model)
-                if cached and not _carries_a_call(self.parser, cached):
+                children = self.tools.get("subagent")
+                if (cached and not _carries_a_call(self.parser, cached) and
+                        not (children is not None and children.pending_results())):
                     if callback:
                         callback("economy_hit", {})
                         callback("response", {"text": cached})
@@ -561,6 +606,27 @@ class Agent:
                             if callback:
                                 callback("error", {"message": gave_up})
                             return gave_up
+                        continue
+                    children = self.tools.get("subagent")
+                    pending_children = children.pending_results() if children is not None else []
+                    if pending_children:
+                        if callback:
+                            callback("waiting", {"message": "Waiting for subagents"})
+                        while not self.stop_requested:
+                            snapshots = [children.snapshot(child_id) for child_id in pending_children]
+                            if all(not row or row["status"] != "running" for row in snapshots):
+                                break
+                            await asyncio.sleep(0.2)
+                        if self.stop_requested:
+                            if callback:
+                                callback("stopped", {"turn": turn})
+                            return "Stopped by you"
+                        results = children.collect_results(pending_children)
+                        max_turns += 1  # Give the orchestrator a turn to use the results.
+                        session.add_assistant_message(response)
+                        session.add_user_message("[Subagent results, supplied by BeeCode] " +
+                                                 json.dumps(results, ensure_ascii=False) +
+                                                 "\nUse these results before answering the user.")
                         continue
                     session.add_assistant_message(response)
                     if _PROMISE_TO_ACT.search(response or ""):
@@ -680,6 +746,9 @@ class Agent:
                         f"[tool result] tool={name} error=True\n{_ABANDONED}")
             raise
         finally:
+            children = self.tools.get("subagent")
+            if children is not None:
+                children.stop_all()
             self.is_busy = False
             self.stop_requested = False
 

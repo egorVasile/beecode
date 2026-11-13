@@ -400,11 +400,11 @@ def _describe_drop(fragment: str) -> str:
     """What arrived broken, in the words the model gets back."""
     name = _TOOL_NAME.search(fragment)
     tool = name.group(1) if name else "tool"
-    field = ""
+    key = ""
     for match in _OPEN_KEY.finditer(fragment):
-        field = match.group(1)
-    if _open_object(fragment) and field:
-        return (f'the "{tool}" call was cut off inside "{field}" after '
+        key = match.group(1)
+    if _open_object(fragment) and key:
+        return (f'the "{tool}" call was cut off inside "{key}" after '
                 f"{len(fragment)} characters")
     return f'the "{tool}" call could not be read as JSON'
 
@@ -619,21 +619,28 @@ class CommandParser:
 
     def format_tool_prompt(self, tools: list[dict]) -> str:
         lines = [
-            "You can use these tools. Respond with EXACTLY one JSON code block:",
+            "You CAN act on this machine: read and write files, run shell "
+            "commands, open things in the browser. Use these tools — answering "
+            "without calling one is wrong. Do not say you lack access; you do "
+            "not lack it.",
+            "Respond with EXACTLY one JSON code block and nothing else:",
             "",
             '```json',
-            '{"tool": "tool_name", "args": {"param": "value"}}',
+            '{"tool": "read", "args": {"path": "note.txt"}}',
             '```',
             "",
             "Writing the JSON:",
-            "- One call per block. For two steps, send one, wait, then send the other.",
+            "1. One call per block. For two steps, send one, wait, then send the other.",
+            "2. The tool field is one name copied exactly from below. The args "
+            "object holds only its declared parameters — same names, values "
+            "from the task.",
+            "3. After the block, STOP: the result comes back and only then you continue.",
+            "4. No other syntax exists here — no XML, no links, no plain-English calls.",
             '- A value is one JSON string: write newlines inside it as \\n. Never press '
             "Enter in the middle of a quoted value.",
             "- Escape a backslash as \\\\ and a quote as \\\" — paths included.",
             "- Keep a `content` value under about 200 lines; write the first part, "
             "then add to it with `edit`.",
-            "- Name the tool exactly as it is spelled below, and put every parameter "
-            "inside \"args\".",
             "",
         ]
 
@@ -656,8 +663,9 @@ class CommandParser:
             lines.append("")
 
         lines.append("## Rules")
-        lines.append("- Always use JSON format for tool calls")
+        lines.append("- Always use JSON format for tool calls, exactly as above")
         lines.append("- Include ALL required parameters")
+        lines.append("- Never answer 'no access' — call a tool instead")
         lines.append("- When the task is complete, respond with text only (no JSON)")
         lines.append("- Think step by step before acting")
         lines.append("")

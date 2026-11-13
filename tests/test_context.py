@@ -267,6 +267,25 @@ def test_build_messages_never_grows_the_callers_history():
     assert history == before                                     # but not stored
 
 
+def test_both_prompts_claim_the_real_capabilities():
+    """Seen live 2026-10-07: the model answered 'no file system, no terminal,
+    only web search in this session' and told the user to create the files by
+    hand. Both identities must name what the agent CAN do (write, bash, start)
+    and forbid exactly that denial, in both languages."""
+    from beeagent.core.context import SYSTEM_PROMPT, SYSTEM_PROMPT_NATIVE
+
+    for prompt in (SYSTEM_PROMPT, SYSTEM_PROMPT_NATIVE):
+        assert "start <path>" in prompt
+        assert "в этой сессии нет инструментов" in prompt
+        assert "только веб-поиск" in prompt
+
+    # The call protocol reads like a manual, not a hint: numbered steps, a
+    # concrete example, the stop rule and the no-other-syntax rule.
+    assert "THE ONLY WAY" in SYSTEM_PROMPT
+    assert '{"tool": "read", "args": {"path": "note.txt"}}' in SYSTEM_PROMPT
+    assert "no XML" in SYSTEM_PROMPT
+
+
 def test_the_prompt_still_leaves_room_for_the_conversation():
     """Identity + behaviour + tool catalog must stay a fraction of the window.
 
@@ -310,12 +329,19 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
     and URLs stay plain (the model wrapped them in highlight tags), measured
     4319 after it.
 
-    It moved on 2026-10-20, to 4400: the rule against ending a turn on a
-    promise — a live failure sold "Делаю портфолио — сейчас соберу" as a final
-    answer with zero tool calls, measured 4342 after it. Same day: the identity
-    line (never introduce yourself under the upstream model's name, a tool
-    claim without a call proves nothing) paid for its tokens by cutting slop
-    elsewhere, measured 4351 after it.
+    It moved on 2026-10-05, to 4450: the `forge` tool (twenty to twenty-one),
+    measured 4414. Same arithmetic, same rule.
+
+    It moved on 2026-10-07, to 4650: the capabilities oath in both prompts
+    (create with `write`, run with `bash`, open with `start <path>`) plus the
+    session-denial bans ("no terminal", "в этой сессии нет инструментов",
+    "только веб-поиск") after the model told a user it has no file system —
+    measured 4544.
+
+    It moved on 2026-10-07, to 4850: the call protocol rewritten as numbered
+    steps with a concrete example and a no-other-syntax rule, in the system
+    prompt and in the retry prose alike, after the model answered "I only have
+    web search" — measured 4765.
     """
     from beeagent.config.schema import BeeConfig
     from beeagent.core.agent import Agent
@@ -329,7 +355,7 @@ def test_the_prompt_still_leaves_room_for_the_conversation():
 
     header = count_tokens(SYSTEM_PROMPT + "\n" + CommandParser().format_tool_prompt(own),
                           "gpt-4")
-    assert header < 4400, f"BeeCode's own prompt header costs {header} tokens"
+    assert header < 4850, f"BeeCode's own prompt header costs {header} tokens"
 
     everything = count_tokens(SYSTEM_PROMPT + "\n"
                               + CommandParser().format_tool_prompt(schemas), "gpt-4")
@@ -407,3 +433,25 @@ def test_limited_context_still_trims():
     manager.build_messages(history, [])
     assert manager.trimmed > 0
     assert manager.unlimited is False
+
+
+def test_forge_pointer_rides_only_builds_nothing_was_cut_from():
+    """Discovery must not cost a tight budget a token: the self-extension
+    pointer joins roomy, untrimmed builds and stays out of everything else,
+    and the request still never exceeds the window either way."""
+    from beeagent.core.context import FORGE_POINTER
+    from beeagent.utils.tokens import count_tokens
+
+    marker = "# SELF-EXTENSION"
+    assert marker in FORGE_POINTER
+
+    roomy = ContextManager(model="gpt-4o")
+    built = roomy.build_messages([{"role": "user", "content": "hi"}], [])
+    assert marker in built[0]["content"], "fresh sessions must teach forging"
+    used = sum(count_tokens(str(m.get("content") or ""), "gpt-4o") for m in built)
+    assert used <= roomy.max_tokens
+
+    tight = ContextManager(model="glm-4.7-flash")
+    built = tight.build_messages(_long_history(30), [])
+    assert tight.trimmed > 0
+    assert marker not in built[0]["content"], "cut builds pay for history, not discovery"

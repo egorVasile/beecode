@@ -216,6 +216,7 @@ class MarketItem(CatalogItem):
     commit: str = ""
     download: str = ""
     sha256: str = ""
+    run: str = ""
 
     @property
     def provenance(self) -> str:
@@ -323,6 +324,7 @@ def parse_market(body: object, host: str = "") -> Market:
                 commit=_clean(source.get("commit"), 80),
                 download=_clean(raw.get("download") or source.get("download"), 500),
                 sha256=_clean(raw.get("sha256"), 80).lower(),
+                run=_clean(raw.get("run"), 300),
             ))
     return Market(entries=entries, policy=policy,
                   generated=_clean(body.get("generated"), 40), excluded=excluded,

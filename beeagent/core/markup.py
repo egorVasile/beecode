@@ -106,6 +106,23 @@ def _stylize_chunk(chunk: str) -> str:
     return "".join(out)
 
 
+def _explicit_style(value: str):
+    match = re.match(r"/([biu])([^\n]+?)/\1(?![\w])", value, re.I)
+    if not match or not match.group(2).strip():
+        return None
+    return match.group(1).lower(), match.group(2).strip(), match.end()
+
+
+def _explicit_highlight(value: str):
+    """Repair the model's /с.redText/с. spelling when fully delimited."""
+    names = "|".join(sorted((*COLORS, *ALIASES), key=len, reverse=True))
+    match = re.match(r"/[cс]\.(" + names + r")([^\n]+?)/[cс]\.", value, re.I)
+    if not match or not match.group(2).strip():
+        return None
+    color = _valid_color(match.group(1))
+    return color, match.group(2).lstrip(), match.end()
+
+
 def _try_tag(chunk: str, i: int) -> tuple[str, int] | None:
     """A slash tag at `i`, or None. Returns (replacement, next index)."""
     n = len(chunk)
@@ -115,6 +132,10 @@ def _try_tag(chunk: str, i: int) -> tuple[str, int] | None:
     low = letter.lower()
     rest = i + 2
     if low in TAG_LETTERS:
+        explicit = _explicit_style(chunk[i:])
+        if explicit is not None:
+            kind, content, consumed = explicit
+            return _md_close(kind)(content), i + consumed
         if rest < n and chunk[rest] in (" ", "\t", "\n"):
             return _closing(chunk, rest + 1, closer=_md_close(low))
         # Glued form, same rule as the line renderer: a clean closer must
@@ -126,6 +147,10 @@ def _try_tag(chunk: str, i: int) -> tuple[str, int] | None:
     if letter in HIGHLIGHT_LETTERS:
         if rest >= n or chunk[rest] != ".":
             return None
+        explicit = _explicit_highlight(chunk[i:])
+        if explicit is not None:
+            color, content, consumed = explicit
+            return (f"{_M_HL_OPEN}{color}{_M_HL_COLOR_END}{content}{_M_END}", i + consumed)
         match = re.match(r"([A-Za-z#][A-Za-z0-9#]*)\s", chunk[rest + 1:])
         if not match:
             return None
@@ -391,6 +416,21 @@ def _scan_inline(body: str):
             i += 1
             continue
         if ch == "/":
+            if (i == 0 or not _WORD.match(body[i - 1])) and not any(k == "`" for k, _ in stack):
+                styled = _explicit_style(body[i:])
+                if styled is not None:
+                    kind, text, consumed = styled
+                    flush()
+                    out.append((text, merged([s for _, s in stack] + [{"b": "bold", "i": "italic", "u": "underline"}[kind]])))
+                    i += consumed
+                    continue
+                explicit = _explicit_highlight(body[i:])
+                if explicit is not None:
+                    color, text, consumed = explicit
+                    flush()
+                    out.append((text, merged([s for _, s in stack] + [_highlight_style(color)])))
+                    i += consumed
+                    continue
             # An opener needs a boundary in front (`a/b` stays text); a
             # closer needs one behind (`bold/ `) — the letter before it is
             # the tag's own content.

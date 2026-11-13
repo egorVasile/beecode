@@ -51,13 +51,17 @@ def test_key_lookup_prefers_config_then_env(monkeypatch):
 def test_agent_registers_only_providers_with_keys():
     from beeagent.core.agent import Agent
 
+    # Keyless presets (pollinations' anonymous tier) are ready with no key at
+    # all — "no keys" no longer means "nothing ready".
+    keyless = [e.name for e in ENDPOINTS if e.keyless]
     plain = Agent(config=BeeConfig())
     assert "groq" not in plain.providers.list_names()
-    assert plain.ready_presets == []
+    # Sets, not lists: attach order follows ENDPOINTS, membership is the claim.
+    assert sorted(plain.ready_presets) == sorted(keyless)
 
     keyed = Agent(config=BeeConfig(api_keys={"groq": "gsk_test"}))
     assert "groq" in keyed.providers.list_names()
-    assert keyed.ready_presets == ["groq"]
+    assert sorted(keyed.ready_presets) == sorted(keyless + ["groq"])
 
 
 def test_api_keys_survive_a_config_round_trip(tmp_path):

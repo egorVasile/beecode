@@ -1,0 +1,7 @@
+{
+  "name": "skin-claude",
+  "version": "1.0.0",
+  "type": "plugin",
+  "description": "Claude Code look: coral pixel logo, crab mascot, per-role coral borders and ● tool lines",
+  "entry": "plugin.py"
+}

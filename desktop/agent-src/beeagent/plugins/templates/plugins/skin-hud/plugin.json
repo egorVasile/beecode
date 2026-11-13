@@ -1,0 +1,7 @@
+{
+    "name": "skin-hud",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Surface reference skin: claims the status, spinner, thinking and HUD lines, draws a timed strip through the painter, and asks only for what the screen can hold",
+    "entry": "plugin.py"
+}

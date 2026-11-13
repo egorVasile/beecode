@@ -42,6 +42,37 @@ def _pip_python() -> str:
     return sys.executable
 
 
+def _other_beecode_running() -> bool:
+    """Is a beecode.exe alive anywhere on this Windows box — us included.
+
+    pip uninstalls the package first and then fails to write the launcher
+    back while the image is locked, which leaves an install that starts with
+    "No module named 'beeagent'". Found in the wild as three `~eeagent`
+    debris folders from three such updates. Our own pid counts: running AS
+    beecode.exe means we are the very file pip has to overwrite.
+    """
+    import subprocess
+    if os.name != "nt":
+        # Replacing files under a running process is safe here; the lock is
+        # a Windows trap, not a Unix one.
+        return False
+    launched = os.path.basename(sys.executable).lower()
+    if launched.startswith(("beecode", "beeagent")) and launched.endswith(".exe"):
+        return True
+    try:
+        probe = subprocess.run(["tasklist", "/FO", "CSV", "/NH"],
+                               capture_output=True, text=True, timeout=15)
+    except Exception:
+        return False
+    mine = str(os.getpid())
+    for line in (probe.stdout or "").splitlines():
+        cells = [cell.strip('"') for cell in line.split('","')]
+        if len(cells) >= 2 and cells[0].lower() == "beecode.exe" \
+                and cells[1] != mine:
+            return True
+    return False
+
+
 def update_self(root=None) -> int:
     """Bring BeeCode up to date, whichever way it was installed.
 
@@ -64,10 +95,12 @@ def update_self(root=None) -> int:
         print("cannot find the Python of this BeeCode install — run "
               "`beecode --update` from npm, or reinstall.", flush=True)
         return 1
-    if python != sys.executable and os.name == "nt":
-        # We are the .exe pip has to overwrite, and Windows will not let it.
-        print("BeeCode is running from the very file the update replaces. Close this "
-              "window and run `beecode --update` from a terminal.", flush=True)
+    if _other_beecode_running():
+        # Ourselves running as the exe, or another window holding it: either
+        # way pip would uninstall first and fail to write the launcher back.
+        print("BeeCode is running, and pip cannot replace the files it is "
+              "using — close every BeeCode window, then run `beecode --update` "
+              "from a terminal.", flush=True)
         return 1
     print("updating the installed BeeCode and g4f", flush=True)
     # The published version does not move between commits, so `--upgrade` alone

@@ -499,6 +499,73 @@ def test_a_cancelled_turn_says_the_result_was_abandoned_not_stopped():
     assert agent.is_busy is False
 
 
+def test_cancel_invokes_interrupt_on_running_tool():
+    agent, _ = _agent(call_tool("blocker"))
+    blocker = BlockerTool()
+    interrupted = []
+    def interrupt():
+        interrupted.append(True)
+        blocker.release.set()
+    blocker.interrupt = interrupt
+    agent.tools.register(blocker, replace=True)
+
+    async def scenario():
+        task = asyncio.create_task(agent.run("do the thing", session=Session()))
+        assert await asyncio.to_thread(blocker.started.wait, 5)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    try:
+        asyncio.run(scenario())
+        assert interrupted == [True]
+    finally:
+        blocker.release.set()
+
+
+def test_cancel_interrupts_tool_retried_after_path_grant(monkeypatch):
+    from beeagent.core import executor
+
+    async def grant(*args): return True
+    monkeypatch.setattr(executor, "_maybe_grant_outside", grant)
+
+    class RetryBlocker(BlockerTool):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+            self.interrupted = False
+
+        def execute(self):
+            self.calls += 1
+            if self.calls == 1:
+                return ToolResult(output="outside", error=True)
+            return super().execute()
+
+        def interrupt(self):
+            self.interrupted = True
+            self.release.set()
+
+    agent, _ = _agent(call_tool("blocker"))
+    blocker = RetryBlocker()
+    agent.tools.register(blocker, replace=True)
+
+    async def scenario():
+        task = asyncio.create_task(agent.run("do the thing", session=Session()))
+        assert await asyncio.to_thread(blocker.started.wait, 5)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    try:
+        asyncio.run(scenario())
+        assert blocker.interrupted
+    finally:
+        blocker.release.set()
+
+
 def test_a_cancel_between_two_calls_answers_both():
     two = call_tool("blocker") + "\n" + call_tool("blocker")
     agent, session, blocker = _cancel_mid_tool(two)

@@ -126,12 +126,16 @@ class EditTool(BaseTool):
                                   metadata={"refused": "undo-journal-not-recorded"})
             write_text_preserving(target, working)
             remember(target)      # the new bytes are now what we showed
+            old_lines = content.count("\n") + (1 if content else 0)
+            new_lines = working.count("\n") + (1 if working else 0)
             return ToolResult(
                 output=L(f"Replaced lines {ranges} in {path}"
                          f"{journal.recoverable_clause(saved)}",
                          f"Изменены строки {ranges} в {path}"
                          f"{journal.recoverable_clause(saved)}"),
-                error=False, metadata={"undo": saved, "lines": ranges})
+                error=False, metadata={"undo": saved, "lines": ranges,
+                                       "line_added": max(0, new_lines - old_lines),
+                                       "line_removed": max(0, old_lines - new_lines)})
         except Exception as e:
             return ToolResult(output=str(e), error=True)
 

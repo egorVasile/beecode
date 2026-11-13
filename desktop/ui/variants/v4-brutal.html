@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>BeeCode · Вариант 4 — Brutal Studio</title>
+<style>
+  :root {
+    --accent: #ff3d00;
+    --accent-soft: #ff3d0014;
+    --bg: #f4f1ea;
+    --bg2: #fffdf6;
+    --card: #ffffff;
+    --card2: #ffffff;
+    --line: #111;
+    --line2: #111;
+    --ink: #111;
+    --muted: #444;
+    --faint: #777;
+    --good: #0a7c3b;
+    --radius: 0px;
+    --font: "Space Grotesk","Inter","Segoe UI",system-ui,sans-serif;
+    --shadow: 5px 5px 0 #111;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: var(--font); font-size: 14px; overflow: hidden; }
+  #app { display: flex; height: 100vh; }
+
+  .sidebar { width: 258px; min-width: 258px; background: var(--bg2);
+    border-right: 3px solid var(--ink); display: flex; flex-direction: column;
+    padding: 16px 14px; gap: 6px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 2px 6px 14px; }
+  .mark { width: 32px; height: 32px; background: var(--accent); color: #fff;
+    font-weight: 900; font-size: 17px; box-shadow: 3px 3px 0 var(--ink);
+    display: inline-flex; align-items: center; justify-content: center; }
+  .word { font-weight: 900; font-size: 18px; letter-spacing: -0.03em; text-transform: uppercase; }
+  .ver { color: var(--faint); font-size: 11px; margin-left: auto; font-weight: 700; }
+
+  .new-chat { display: flex; align-items: center; gap: 8px; background: var(--accent);
+    color: #fff; border: 2px solid var(--ink); box-shadow: var(--shadow);
+    padding: 10px 12px; font-family: inherit; font-size: 13.5px; font-weight: 800;
+    cursor: pointer; text-transform: uppercase; transition: transform .1s, box-shadow .1s; }
+  .new-chat:active { transform: translate(3px,3px); box-shadow: 0 0 0 var(--ink); }
+
+  .search-row { display: flex; align-items: center; gap: 7px; color: var(--muted);
+    background: #fff; border: 2px solid var(--ink); padding: 8px 11px; margin: 12px 0 6px; }
+  .search-row input { background: none; border: none; outline: none; color: var(--ink);
+    font-family: inherit; font-size: 13.5px; width: 100%; font-weight: 600; }
+  .search-row input::placeholder { color: var(--faint); }
+  .side-label { color: var(--muted); font-size: 11px; font-weight: 800;
+    letter-spacing: .1em; padding: 12px 6px 6px; }
+  .sessions { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+  .session { padding: 11px 12px; cursor: pointer; border: 2px solid transparent;
+    background: transparent; transition: background .12s, border-color .12s; }
+  .session b { display: block; font-size: 13.5px; font-weight: 800; }
+  .session small { color: var(--faint); font-size: 11px; font-weight: 600; }
+  .session:hover { border-color: var(--ink); }
+  .session.on { background: var(--accent); color: #fff; border-color: var(--ink);
+    box-shadow: 3px 3px 0 var(--ink); }
+  .session.on small { color: rgba(255,255,255,0.85); }
+
+  .side-bottom { margin-top: 10px; }
+  .project { color: var(--muted); font-size: 11px; font-weight: 700;
+    padding: 4px 8px 10px; text-transform: uppercase; }
+  .me { display: flex; align-items: center; gap: 8px; background: #fff;
+    border: 2px solid var(--ink); box-shadow: var(--shadow); padding: 9px 11px; }
+  .avatar { width: 28px; height: 28px; background: var(--ink); color: #fff;
+    font-size: 13px; font-weight: 900; display: inline-flex; align-items: center; justify-content: center; }
+  .whoami { font-size: 13.5px; font-weight: 800; margin-right: auto; }
+  .iconbtn { background: none; border: 2px solid transparent; color: var(--muted); cursor: pointer;
+    width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+    transition: border-color .12s, color .12s; }
+  .iconbtn:hover { border-color: var(--ink); color: var(--ink); }
+
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .greet { padding: 44px 44px 10px; }
+  .greet h1 { font-size: 40px; font-weight: 900; letter-spacing: -0.04em; margin: 0; line-height: 1.05;
+    text-transform: uppercase; }
+  .greet h1::after { content: "→"; color: var(--accent); }
+  .greet .hint { color: var(--muted); margin-top: 10px; font-size: 14px; font-weight: 600; }
+
+  .chat { flex: 1; overflow-y: auto; padding: 10px 44px 20px; display: flex; flex-direction: column; gap: 16px; }
+  .msg { display: flex; }
+  .msg.user { justify-content: flex-end; }
+  .bubble { max-width: 660px; padding: 14px 18px; line-height: 1.6; font-size: 14.5px; }
+  .msg.user .bubble { background: var(--accent); color: #fff; border: 2px solid var(--ink);
+    box-shadow: 5px 5px 0 var(--ink); }
+  .msg.assistant .bubble { background: var(--card); border: 2px solid var(--ink);
+    box-shadow: 5px 5px 0 var(--ink); }
+  .bubble code { background: var(--ink); color: var(--bg); padding: 0 6px;
+    font-family: Consolas, monospace; font-size: 12.5px; }
+
+  .composer-wrap { padding: 8px 44px 22px; }
+  .chips { display: flex; gap: 8px; margin-bottom: 10px; }
+  .chip { background: #fff; border: 2px solid var(--ink); color: var(--muted);
+    padding: 4px 13px; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+  .composer { position: relative; background: #fff; border: 3px solid var(--ink);
+    box-shadow: 7px 7px 0 var(--ink); padding: 13px 15px 12px 17px; }
+  .input { width: 100%; border: none; outline: none; resize: none; background: none;
+    color: var(--ink); font-family: inherit; font-size: 15px; min-height: 26px; max-height: 160px; font-weight: 600; }
+  .input::placeholder { color: var(--faint); }
+  .composer-bar { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+  .left { display: flex; align-items: center; gap: 8px; }
+  .attach { border: 2px solid var(--ink); width: 32px; height: 32px; background: #fff; font-weight: 800; }
+  .modelpill { display: flex; align-items: center; gap: 8px; border: 2px solid var(--ink);
+    background: #fff; color: var(--ink); padding: 6px 12px; font-size: 13px; font-weight: 800;
+    cursor: pointer; text-transform: uppercase; transition: transform .1s, box-shadow .1s; }
+  .modelpill:hover { transform: translate(-2px,-2px); box-shadow: 3px 3px 0 var(--ink); }
+  .mico { width: 20px; height: 20px; display: inline-flex; }
+  .mico img { width: 100%; height: 100%; }
+  .modelname { font-weight: 900; }
+  .chev { color: var(--faint); font-size: 10px; }
+  .permmode { border: 2px solid var(--ink); background: #fff; color: var(--muted);
+    padding: 6px 11px; font-size: 12px; font-weight: 700; cursor: pointer; text-transform: uppercase; }
+  .send { width: 38px; height: 38px; border: 2px solid var(--ink); background: var(--accent);
+    color: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    font-weight: 900; transition: transform .1s, box-shadow .1s; }
+  .send:hover { transform: translate(-2px,-2px); box-shadow: 3px 3px 0 var(--ink); }
+
+  .modelmenu { position: absolute; bottom: calc(100% + 10px); left: 48px; width: 310px;
+    background: #fff; border: 3px solid var(--ink); box-shadow: 7px 7px 0 var(--ink); z-index: 20; }
+  .modelmenu.hidden { display: none; }
+  .mi { display: flex; align-items: center; gap: 11px; padding: 11px 13px; cursor: pointer;
+    border-bottom: 2px solid var(--ink); }
+  .mi:last-child { border-bottom: none; }
+  .mi:hover { background: var(--accent-soft); }
+  .mi.on { background: var(--accent); color: #fff; }
+  .mi img { width: 24px; height: 24px; }
+  .mi-name { font-weight: 900; font-size: 13.5px; text-transform: uppercase; }
+  .mi small { margin-left: auto; color: var(--faint); font-size: 11px; font-weight: 700; }
+
+  .ctxbar { height: 12px; border: 2px solid var(--ink); margin-top: 11px; }
+  .ctxfill { height: 100%; width: 38%; background: var(--accent); }
+
+  .comet { position: fixed; top: 12%; width: 200px; height: 6px; z-index: 5;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    border: 1px solid var(--ink); pointer-events: none; }
+</style>
+</head>
+<body>
+<script src="../vendor/anime.min.js"></script>
+<script src="_demo.js"></script>
+</body>
+</html>

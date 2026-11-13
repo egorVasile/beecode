@@ -373,6 +373,69 @@ def default_idle_timeout() -> float:
         return 90.0
 
 
+# --- the wire: a transcript as an OpenAI-shaped request ----------------------
+
+def to_openai_history(messages: list[dict]) -> list[dict]:
+    """Session rows as the wire expects them, with matching call ids.
+
+    BeeCode stores a call as `{"tool": ..., "args": {...}}` and its result as a
+    plain `role: "tool"` row. OpenAI wants an id on every call and a
+    `tool_call_id` on every result; sent in the stored shape the history is
+    malformed, and the endpoint refuses the whole conversation — so every turn
+    after a tool use looked like "the provider is down".
+
+    Ids are assigned while walking, deterministically, because the order in the
+    transcript is the order they happened in. Every call of one assistant turn
+    keeps its own id: a turn may ask for several tools, and each result has to
+    answer a specific one.
+    """
+    out: list[dict] = []
+    pending: list[str] = []
+    counter = 0
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role", "user")
+        content = message.get("content") or ""
+        calls = message.get("tool_calls") or []
+        if not isinstance(calls, list):
+            calls = []
+        if role == "tool":
+            if pending:
+                call_id = pending.pop(0)
+            else:
+                # A result with no call in front of it: say so in the text
+                # rather than inventing an id the endpoint will reject.
+                out.append({"role": "user", "content": f"[tool result] {content}"})
+                continue
+            out.append({"role": "tool", "tool_call_id": call_id,
+                        "content": str(content)})
+            continue
+        if role == "assistant" and calls:
+            wire_calls = []
+            for call in calls:
+                call = call if isinstance(call, dict) else {}
+                counter += 1
+                call_id = f"call_{counter:04d}"
+                pending.append(call_id)
+                wire_calls.append({
+                    "id": call_id, "type": "function",
+                    "function": {
+                        "name": str(call.get("tool", "")),
+                        "arguments": json.dumps(call.get("args") or {},
+                                                ensure_ascii=False),
+                    },
+                })
+            out.append({
+                "role": "assistant",
+                "content": content or None,
+                "tool_calls": wire_calls,
+            })
+            continue
+        out.append({"role": role, "content": str(content)})
+    return out
+
+
 # --- the catalogue a provider reports ---------------------------------------
 
 class ModelCatalog:

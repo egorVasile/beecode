@@ -48,6 +48,9 @@ nul
 # beeagent/tools/base.py)
 *.svg
 !docs/**/*.svg
+!desktop/ui/**/*.svg
+desktop/rust-shell/target/
+desktop/release-rust-*/
 *.beecode-tmp
 
 # save_config writes beside the target and moves it in; a save killed halfway also

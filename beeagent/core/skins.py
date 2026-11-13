@@ -1649,8 +1649,6 @@ class Context:
         the host's words through this call instead of reaching into the module.
         """
         try:
-            from beeagent.i18n import L
-
             return L(english, russian)
         except Exception:
             return str(english)

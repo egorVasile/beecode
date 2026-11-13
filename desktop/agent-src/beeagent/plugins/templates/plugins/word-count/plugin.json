@@ -1,0 +1,7 @@
+{
+    "name": "word-count",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Adds a word-count tool for the model, a /wc command, a setting and an event listener",
+    "entry": "plugin.py"
+}

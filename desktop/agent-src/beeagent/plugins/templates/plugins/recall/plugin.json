@@ -1,0 +1,7 @@
+{
+    "name": "recall",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "/recall <words>: search every saved conversation and reopen the one you meant",
+    "entry": "plugin.py"
+}

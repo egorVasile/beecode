@@ -11,18 +11,21 @@ arrives or the attempt fails: the reading of the stream is the shared reader in
 `base.py`, the same one the pool, crax and Ollama answer through.
 """
 from typing import AsyncIterator
+import json
 
 import httpx
 
 from .base import (LIST_REFUSED, LIST_UNREACHABLE, BaseProvider, ProviderAPIError,
                    api_error, body_reason, check_error_frame, default_idle_timeout,
                    parse_json_body, raise_for_api_status, read_answer_stream,
-                   transport_error)
+                   to_openai_history, transport_error)
 
 CONNECT_TIMEOUT = 10.0
 
 
 class OpenAICompatProvider(BaseProvider):
+    supports_tools = True
+
     def __init__(self, base_url: str, api_key: str = "", model: str = "gpt-4",
                  name: str = "openai_compat", models: list | tuple = (),
                  idle_timeout: float | None = None):
@@ -91,7 +94,8 @@ class OpenAICompatProvider(BaseProvider):
             async with self._client() as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
-                    json={"model": model, "messages": messages, "stream": stream},
+                    json={"model": model, "messages": to_openai_history(messages),
+                          "stream": stream},
                     headers=self._headers(),
                 )
         except httpx.HTTPError as e:
@@ -109,6 +113,45 @@ class OpenAICompatProvider(BaseProvider):
         content = message.get("content") if isinstance(message, dict) else None
         return content if isinstance(content, str) else ""
 
+    async def complete(self, messages: list[dict], model: str = "", tools: list[dict] = None) -> dict:
+        """Send native function schemas and return calls without executing them."""
+        from .crax import CraxProvider
+
+        body = {"model": model or self.default_model,
+                "messages": to_openai_history(messages), "stream": False}
+        if tools:
+            body["tools"] = CraxProvider.to_openai_tools(tools)
+            body["tool_choice"] = "auto"
+        try:
+            async with self._client() as client:
+                response = await client.post(f"{self.base_url}/chat/completions",
+                                             json=body, headers=self._headers())
+        except httpx.HTTPError as e:
+            raise transport_error(e, self.name, self.idle_timeout) from e
+        await raise_for_api_status(response, self.name)
+        payload = parse_json_body(response.text or "", self.name)
+        check_error_frame(payload, self.name, exc=ProviderAPIError)
+        choices = payload.get("choices") or []
+        first = choices[0] if isinstance(choices, list) and choices else {}
+        message = first.get("message") if isinstance(first, dict) else None
+        if not isinstance(message, dict):
+            raise ProviderAPIError(f"{self.name}: invalid completion response")
+        calls = []
+        for call in message.get("tool_calls") or []:
+            function = call.get("function") if isinstance(call, dict) else None
+            if not isinstance(function, dict) or not isinstance(function.get("name"), str):
+                raise ProviderAPIError(f"{self.name}: malformed tool call")
+            args = function.get("arguments", "{}")
+            try:
+                args = json.loads(args) if isinstance(args, str) else args
+            except ValueError as e:
+                raise ProviderAPIError(f"{self.name}: invalid tool arguments") from e
+            if not isinstance(args, dict):
+                raise ProviderAPIError(f"{self.name}: tool arguments must be an object")
+            calls.append({"tool": function["name"], "args": args})
+        return {"text": str(message.get("content") or ""), "tool_calls": calls,
+                "usage": payload.get("usage") or {}}
+
     @staticmethod
     def _pieces(event: dict, source: str = "") -> list[tuple[str, str]]:
         """The text one chat-completion frame carries.
@@ -123,7 +166,16 @@ class OpenAICompatProvider(BaseProvider):
             return []
         delta = first.get("delta")
         content = delta.get("content") if isinstance(delta, dict) else None
-        return [("content", content)] if isinstance(content, str) and content else []
+        pieces = []
+        if isinstance(delta, dict):
+            for field in ("reasoning_content", "reasoning", "thinking"):
+                value = delta.get(field)
+                if isinstance(value, str) and value:
+                    pieces.append(("reasoning", value))
+                    break
+        if isinstance(content, str) and content:
+            pieces.append(("content", content))
+        return pieces
 
     async def chat_stream(self, messages: list[dict], model: str = "") -> AsyncIterator[tuple[str, str]]:
         model = model or self.default_model
@@ -138,7 +190,8 @@ class OpenAICompatProvider(BaseProvider):
                 async with client.stream(
                     "POST",
                     f"{self.base_url}/chat/completions",
-                    json={"model": model, "messages": messages, "stream": True},
+                    json={"model": model, "messages": to_openai_history(messages),
+                          "stream": True},
                     headers=headers,
                 ) as resp:
                     await raise_for_api_status(resp, self.name)

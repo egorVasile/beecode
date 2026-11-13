@@ -1,0 +1,7 @@
+{
+    "name": "skin-shimmer",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Answer skin: a honey-to-leaf outline around the reply, list markers and headings that walk the ramp, a railed streaming answer, and a two-row HUD",
+    "entry": "plugin.py"
+}

@@ -148,3 +148,71 @@ def test_the_offer_asks_when_a_newer_version_is_known(tmp_path, monkeypatch):
     assert buttons["yes_text"] and buttons["no_text"]
     # "Later" is remembered, so the same release does not ask again.
     assert json.loads((tmp_path / ".beeagent" / "update.json").read_text())["declined"] == "99.0.0"
+
+
+def test_update_refuses_while_running_as_the_exe(monkeypatch):
+    """pip uninstalling a running beecode.exe leaves 'No module named beeagent'.
+
+    Found as three `~eeagent` debris folders. The refusal has to live in
+    update_self itself: the npm wrapper guards its own path, but `beecode
+    --update`, `python -m beeagent --update` and in-REPL `/update` all land
+    here, already running.
+    """
+    import os
+    import sys
+
+    from beeagent import cli
+
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(sys, "executable", r"C:\v\Scripts\beecode.exe")
+    assert cli._other_beecode_running() is True
+
+
+def test_update_self_refuses_instead_of_uninstalling_live_files(tmp_path, monkeypatch):
+    """The refusal has to bite at the update_self door, not just in the
+    helper: in-REPL `/update` lands here with the exe running."""
+    import os
+    import sys
+
+    from beeagent import cli
+
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(sys, "executable", r"C:\v\Scripts\beecode.exe")
+    assert cli.update_self(root=tmp_path) == 1
+
+
+def test_update_runs_when_no_window_is_open(monkeypatch):
+    """The guard must not cry wolf: a dev python with no beecode.exe in the
+    task list updates normally — otherwise every update needs explaining."""
+    import os
+    import subprocess
+    import sys
+
+    from beeagent import cli
+
+    class Done:
+        stdout = '"python.exe","99999","Console","1","1 K"'
+
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(sys, "executable", r"C:\Python312\python.exe")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done())
+    monkeypatch.setattr(os, "getpid", lambda: 12345)
+    assert cli._other_beecode_running() is False
+
+
+def test_update_sees_a_second_window(monkeypatch):
+    """One beecode.exe with another pid is another window holding the files."""
+    import os
+    import subprocess
+    import sys
+
+    from beeagent import cli
+
+    class Done:
+        stdout = '"beecode.exe","777","Console","1","10,240 K"'
+
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(sys, "executable", r"C:\Python312\python.exe")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done())
+    monkeypatch.setattr(os, "getpid", lambda: 12345)
+    assert cli._other_beecode_running() is True

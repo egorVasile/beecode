@@ -1,0 +1,790 @@
+"""crax-gpt — an OpenAI-compatible endpoint with two different limits.
+
+Their API publishes two kinds of 429, and telling them apart is the whole value
+of this provider, because the fix is opposite for each:
+
+* a **per-IP** rate limit (40/min, burst 30) — another key does not help, the
+  account was never the problem. Waiting, or leaving through another address, does;
+* a **daily allowance** (`daily_limit_exceeded`) — waiting does not help until
+  midnight. Another key, which is another account, does.
+
+So the rotation only spends spare keys on the second kind, and on the first it
+asks instead of pretending: wait out the seconds the endpoint named, or raise the
+address with the user's own command. Nothing is switched on by itself — a command
+is shown in full and runs only after the user pressed "yes".
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import threading
+import time
+from typing import AsyncIterator, Callable, Optional
+
+import httpx
+
+from .base import (LIST_REFUSED, LIST_SEAT_REFUSED, LIST_SHIPPED, LIST_UNREACHABLE,
+                   BaseProvider, ModelCatalog, ProviderStreamError, body_reason,
+                   check_error_frame, default_idle_timeout, read_answer_stream,
+                   to_openai_history, transport_error)
+
+BASE_URL = "https://gpt.crax.lol/v1"
+CONNECT_TIMEOUT = 10.0
+KEY_COOLDOWN = 90.0           # a spent-for-the-day account is not retried this hour
+LABEL = "crax-gpt"
+# A key that answered a streamed request with a 200 and no text is not asked again
+# this minute — it answers the same way, and every one of those answers is billed to
+# somebody's account. One extra ask per turn, then the honest failure.
+EMPTY_STREAM_EXTRA_TRIES = 1
+EMPTY_STREAM_COOLDOWN = 20.0
+# A catalogue read while a person looks at the picker: short, because the shipped
+# list is there to answer instead of it.
+MODELS_WAIT = 15.0
+
+
+def _min_interval() -> float:
+    """Seconds between request starts: the documented 40/min/IP is one every
+    1.5 s, and back-to-back turns used to spend themselves straight into the
+    IP 429. `BEECODE_CRAX_MIN_INTERVAL` tunes it; tests never wait."""
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return 0.0
+    try:
+        return max(0.0, float(os.environ.get("BEECODE_CRAX_MIN_INTERVAL") or 1.5))
+    except (TypeError, ValueError):
+        return 1.5
+
+
+# Process-wide: the IP limit is shared across keys and instances, so per-object
+# pacing would let three providers triple the rate the limit counts as one.
+_pace_lock = threading.Lock()
+_next_allowed_at = 0.0
+
+
+def _reserve_slot() -> float:
+    """Seconds to wait before starting now; the slot is already taken."""
+    global _next_allowed_at
+    interval = _min_interval()
+    with _pace_lock:
+        now = time.monotonic()
+        start = max(now, _next_allowed_at)
+        _next_allowed_at = start + interval
+        return max(0.0, start - now)
+
+
+async def _pace() -> None:
+    wait = _reserve_slot()
+    if wait > 0:
+        await asyncio.sleep(wait)
+
+
+def _first_content(body) -> str:
+    """The answer inside a non-stream JSON body, or "" when it holds none."""
+    choices = body.get("choices") or [] if isinstance(body, dict) else []
+    if not choices or not isinstance(choices[0], dict):
+        return ""
+    message = choices[0].get("message") or {}
+    if not isinstance(message, dict):
+        return ""
+    return str(message.get("content") or "")
+
+# The same list the pool server keeps. An endpoint that also sells image, video
+# and audio generation will answer for those models, and a coding agent has no
+# use for the answer — but the request is still spent, and it is the kind of
+# request an account owner gets reported for. So they are never even offered:
+# the picker shows chat models, and the pool refuses anything else that arrives.
+NON_CHAT = ("image", "video", "seedream", "dall-e", "whisper", "tts", "embedding",
+            "moderation", "realtime")
+
+
+def is_chat_model(model: str) -> bool:
+    name = (model or "").lower()
+    return not any(shape in name for shape in NON_CHAT)
+
+
+class CraxError(RuntimeError):
+    """Anything the provider could not answer by itself."""
+
+    def __init__(self, kind: str, message: str, *, retry_after: int = 0):
+        super().__init__(message)
+        self.kind = kind          # "auth" | "ip" | "daily" | "network" | "other"
+        self.retry_after = retry_after
+
+
+def keys_from(value: str) -> list[str]:
+    """One key, or several separated by commas — the usual shape of a key pool."""
+    return [part.strip() for part in (value or "").split(",") if part.strip()]
+
+
+#: Answers shaped like these mean the model never saw the `tools` field. The
+#: native system prompt tells it "YOU HAVE TOOLS — call them", while the
+#: request's `tools` array was dropped by the model's own front end on the way
+#: in — so the denial is about the request, not the task. Seen live on the
+#: GPT/Claude routes: 200 OK carrying "I have no access to your files".
+#: Seen live 2026-10-07: the "no tools in this session, only web search"
+#: shape — "в этой сессии у меня нет доступа к файловой системе и терминалу,
+#: подключены только веб-поиск и генерация картинок". Same denial, new words.
+_REFUSAL_HINTS = (
+    "no access", "don't have access", "do not have access", "can't access",
+    "cannot access", "unable to access", "no data access",
+    "don't have the ability", "do not have the ability",
+    "attach", "paste the file", "paste the contents",
+    "file system", "terminal", "in this session", "only web search",
+    "web search", "no tools",
+    "нет доступа", "не имею доступа", "не могу получить доступ",
+    "не могу открыть", "прикрепи", "вставь", "пришли файл",
+    "файловой системе", "терминал", "в этой сессии", "только веб-поиск",
+    "нет инструментов",
+)
+
+#: Models measured to ignore the native `tools` field go straight to the JSON
+#: protocol — no wasted native request first. Seven days, like a catalogue
+#: that is rewritten without a release: the route may be fixed tomorrow.
+FALLBACK_TTL = 7 * 24 * 3600
+TOOLS_CACHE = ".beeagent/crax_tools.json"
+
+
+def _looks_like_refusal(text: str) -> bool:
+    """A denial where a tool call should have been — only ever read after a
+    native request that carried tools and got zero calls back, so a stray
+    "attached the log" in a normal answer can never trigger a retry."""
+    lowered = (text or "").lower()
+    return any(hint in lowered for hint in _REFUSAL_HINTS)
+
+
+def _fallback_cache() -> dict:
+    """{model: {"at": epoch}} for models on the JSON protocol, or {}."""
+    from pathlib import Path
+
+    try:
+        body = json.loads((Path.cwd() / TOOLS_CACHE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _fallback_cached(model: str) -> bool:
+    entry = _fallback_cache().get(model or "")
+    return bool(isinstance(entry, dict) and time.time() - float(entry.get("at", 0))
+                < FALLBACK_TTL)
+
+
+def _fallback_remember(model: str, use: bool) -> None:
+    """File the verdict about this model id. Best effort: a cache that cannot
+    be written only costs one extra request next turn, never a turn."""
+    from pathlib import Path
+
+    try:
+        cache = _fallback_cache()
+        if use:
+            cache[model or ""] = {"at": time.time()}
+        elif (model or "") not in cache:
+            return                     # nothing filed, nothing to unfile: no write
+        else:
+            del cache[model or ""]
+        path = Path.cwd() / TOOLS_CACHE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def classify(status: int, body: dict, retry_after: int, raw: str = "") -> CraxError:
+    """The provider's error, in our words, with the wait it told us about."""
+    error = body.get("error") if isinstance(body.get("error"), dict) else {}
+    code = str(error.get("type") or error.get("code") or "").lower()
+    detail = str(error.get("message") or "").strip()
+    if not detail and raw:
+        # A gateway that answers 502 with a plain body used to leave the user
+        # with "crax-gpt answered 502" and nothing to show support.
+        detail = " ".join(raw.split())[:180]
+    if status == 401 or "auth" in code:
+        # The endpoint's own words are "log in at the site" — useless to someone
+        # holding a key. Say where the key goes.
+        from beeagent.i18n import L
+        return CraxError("auth", (detail or "crax-gpt did not accept this key")
+                         + " — " + L("put your own key in: /key crax crk_live_…",
+                                     "впиши свой ключ: /key crax crk_live_…"))
+    if status == 429:
+        if "daily" in code or "daily" in detail.lower():
+            return CraxError("daily", detail or "this account's daily allowance is spent",
+                             retry_after=retry_after)
+        return CraxError("ip", detail or "crax-gpt is limiting this IP address",
+                         retry_after=retry_after)
+    return CraxError("other", detail or f"crax-gpt answered {status}", retry_after=retry_after)
+
+
+class _AskAnotherKey(Exception):
+    """This key's turn is over; the provider decided who to ask next.
+
+    An internal signal rather than a return value: the answer is streamed, so
+    there is nothing to hand back to the loop but an exception.
+    """
+
+    def __init__(self, same_key: bool = False):
+        super().__init__("ask another key")
+        self.same_key = same_key     # a per-IP wait is not cured by another account
+
+
+class CraxProvider(BaseProvider):
+    name = "crax"
+    # The catalogue is read from the endpoint on demand (`/pool models`, /models);
+    # asking for it on every start would be a request that is not a chat, and the
+    # whole point of these keys is that only chat goes out.
+    # Re-measured 2026-09-30: one short chat probe per id, all 17 answer —
+    # the three GLMs plus `instant`, `claude-opus-5`, `claude-opus-4-8`,
+    # `claude-sonnet-5`, `claude-fable-5-1`, `gpt-5-6-sol`, `gpt-5-5`,
+    # `gpt-5-4`, `gpt-6-astra`, `gemini-3-8-flash`, `deepseek-v4-pro`,
+    # `kimi-k3`, `kimi-k2-6`, `grok-4-6`. The old twelve
+    # (`qwen3-coder-480b`, `gemma-3-12b`, both groks, both kimis,
+    # `gpt-5-6-luna`, `llama-4-maverick`, `deepseek-v4-flash`) are gone from
+    # the live catalogue: it is rewritten without a release, so a list kept
+    # here is a snapshot with a date on it.
+    #
+    # What the endpoint answers for changes without a release, so this is the list
+    # shown *until* it is asked: `discover_models()` replaces what `models` reports
+    # (see `ModelCatalog`), and routing asks the endpoint's list rather than this
+    # one — otherwise a model the picker took from the live catalogue is quietly
+    # swapped for the first name written here.
+    models = ModelCatalog(("glm-5.3", "glm-5.3-flash", "glm-5.2", "instant",
+                           "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5",
+                           "claude-fable-5-1", "gpt-5-6-sol", "gpt-5-5", "gpt-5-4",
+                           "gpt-6-astra", "gemini-3-8-flash", "deepseek-v4-pro",
+                           "kimi-k3", "kimi-k2-6", "grok-4-6"))
+    label = LABEL
+    list_source = (LABEL, LABEL)
+    # Verified against the endpoint: it answers `finish_reason: "tool_calls"` and
+    # accepts the OpenAI history shape back. So the tool call never has to be
+    # written as JSON inside a sentence — which is where every parser bug came from.
+    supports_tools = True
+
+    def __init__(self, api_key: str = "", base_url: str = BASE_URL,
+                 idle_timeout: float | None = None, ask: Optional[Callable] = None):
+        self.keys = keys_from(api_key)
+        self.base_url = (base_url or BASE_URL).rstrip("/")
+        self.idle_timeout = float(idle_timeout) if idle_timeout else default_idle_timeout()
+        self.spent: dict[int, float] = {}      # key index -> retry not before
+        # The REPL installs this: it is the only place allowed to ask a question.
+        self.ask = ask
+
+    # --- the native protocol ------------------------------------------------
+
+    @staticmethod
+    def to_openai_tools(schemas: list[dict], max_description: int = 240) -> list[dict]:
+        """Our tool descriptions as OpenAI's, so the endpoint can call them.
+
+        The descriptions are trimmed to their first clause on purpose. The full
+        text is written for the old protocol, where the model had to be talked out
+        of inventing `read_directory` and of putting a whole file in prose; the
+        endpoint's front end rejects a tools request over roughly 6 KB, and all ten
+        tools verbatim come to 5.1 KB before the user has typed anything.
+        """
+        out = []
+        for schema in schemas or []:
+            # A None entry used to raise AttributeError out of the turn.
+            if not isinstance(schema, dict):
+                continue
+            text = str(schema.get("description", ""))
+            for stop in (". ", "; ", " — "):
+                cut = text.find(stop)
+                if 0 < cut < max_description:
+                    text = text[:cut + 1]
+                    break
+            out.append({"type": "function", "function": {
+                "name": schema.get("name", ""),
+                "description": text[:max_description],
+                "parameters": schema.get("parameters") or {"type": "object", "properties": {}},
+            }})
+        return out
+
+    @staticmethod
+    def to_openai_history(messages: list[dict]) -> list[dict]:
+        """Session rows as the wire expects them, with matching call ids.
+
+        The rule lives in `base.to_openai_history` because every provider that
+        speaks the OpenAI shape needs it. Kept here as a name because callers
+        reach for it on this class.
+        """
+        return to_openai_history(messages)
+
+    async def complete(self, messages: list[dict], model: str = "", tools: list[dict] = None) -> dict:
+        """One request, the whole answer: text and/or the calls the model made.
+
+        Non-streaming on purpose. A tool call streamed in fragments has to be
+        reassembled before it means anything, and the turn is not shown to the
+        user until then anyway — so streaming would only add a second place where
+        the arguments can come apart.
+        """
+        self._require_key()
+        self._only_chat(model)
+        model_id = model or (self.models[0] if self.models else "")
+        if tools and _fallback_cached(model_id):
+            # Measured before: this id's front end drops the `tools` field.
+            # One request in the JSON protocol, never a wasted native one.
+            return await self._complete_json(messages, model_id, tools)
+        body: dict = {"model": model_id,
+                      "messages": self.to_openai_history(messages),
+                      # Without this the endpoint answers with SSE even when we
+                      # asked for one object — measured, not assumed.
+                      "stream": False}
+        if tools:
+            body["tools"] = self.to_openai_tools(tools)
+            body["tool_choice"] = "auto"
+        attempts = 0
+        while attempts < max(1, len(self.keys)):
+            usable = self._usable()
+            if not usable:
+                raise CraxError("daily", "every configured key is cooling down")
+            index, key = usable[0]
+            attempts += 1
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout()) as client:
+                    response = await client.post(self.base_url + "/chat/completions",
+                                                 json=body, headers=self._headers(key))
+            except httpx.HTTPError as e:
+                raise CraxError("network", f"crax-gpt is not reachable: {e}")
+            if response.status_code != 200:
+                error = classify(response.status_code, _json_or_empty(response.text),
+                                 _retry_after(response), response.text)
+                await self._handle_limit(index, error)
+                continue
+            payload = _json_or_empty(response.text)
+            choices = payload.get("choices") or []
+            message = (choices[0] if choices else {}).get("message") or {}
+            calls = []
+            for call in message.get("tool_calls") or []:
+                function = call.get("function") or {}
+                try:
+                    args = json.loads(function.get("arguments") or "{}")
+                except ValueError:
+                    args = {}
+                calls.append({"tool": function.get("name", ""), "args": args if isinstance(args, dict) else {}})
+            text = str(message.get("content") or "")
+            if tools and not calls and _looks_like_refusal(text):
+                # 200 OK carrying "I have no access": the model was told it has
+                # tools and given none — its front end dropped the field. File
+                # the verdict and re-ask in the protocol it does speak.
+                _fallback_remember(model_id, True)
+                return await self._complete_json(messages, model_id, tools)
+            _fallback_remember(model_id, False)
+            return {"text": text, "tool_calls": calls,
+                    "usage": payload.get("usage") or {}, "key": index}
+        raise CraxError("other", CraxProvider._refused_every_key(model_id))
+
+    @staticmethod
+    def _refused_every_key(model_id: str) -> str:
+        """What all-keys-failing means depends on what was asked: a dead model
+        route 502s on every key while the accounts are fine, and "refused every
+        key" sent a user to retype keys that were never the problem."""
+        from beeagent.i18n import L
+        name = model_id or "this model"
+        return L(f"crax-gpt could not serve “{name}” on any configured key — that "
+                 f"model's route is down, the keys are not the problem. "
+                 f"Pick a live one with /models.",
+                 f"crax-gpt не смог обслужить «{name}» ни на одном ключе — лежит "
+                 f"маршрут модели, а не ключи. Живую выбери через /models.")
+
+    async def _complete_json(self, messages: list[dict], model_id: str,
+                             tools: list[dict]) -> dict:
+        """One request in the old JSON protocol, for a model whose front end
+        drops the native `tools` field: the catalog as prose, the call parsed
+        back out of the text. A single attempt per key like the native path;
+        when even prose yields no call, the latest answer goes back untouched —
+        a fallback must never eat the reply it was asked to repair."""
+        from beeagent.core.parser import CommandParser
+
+        parser = CommandParser()
+        prose = parser.format_tool_prompt(tools)
+        retry = [dict(message) for message in messages]
+        for position in range(len(retry) - 1, -1, -1):
+            if retry[position].get("role") == "user":
+                retry[position] = {**retry[position],
+                                   "content": (retry[position].get("content") or "")
+                                   + "\n\n" + prose}
+                break
+        else:
+            retry = retry + [{"role": "user", "content": prose}]
+        body: dict = {"model": model_id,
+                      "messages": self.to_openai_history(retry),
+                      "stream": False}
+        attempts = 0
+        while attempts < max(1, len(self.keys)):
+            usable = self._usable()
+            if not usable:
+                raise CraxError("daily", "every configured key is cooling down")
+            index, key = usable[0]
+            attempts += 1
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout()) as client:
+                    response = await client.post(self.base_url + "/chat/completions",
+                                                 json=body, headers=self._headers(key))
+            except httpx.HTTPError as e:
+                raise CraxError("network", f"crax-gpt is not reachable: {e}")
+            if response.status_code != 200:
+                error = classify(response.status_code, _json_or_empty(response.text),
+                                 _retry_after(response), response.text)
+                await self._handle_limit(index, error)
+                continue
+            message = ((_json_or_empty(response.text).get("choices") or [{}])[0]
+                         .get("message") or {})
+            if not isinstance(message, dict):
+                message = {}
+            text = str(message.get("content") or "")
+            parsed = parser.parse(text)
+            calls = [{"tool": cmd.tool, "args": cmd.args} for cmd in parsed.commands]
+            return {"text": parsed.text or text, "tool_calls": calls,
+                    "usage": _json_or_empty(response.text).get("usage") or {},
+                    "key": index}
+        raise CraxError("other", CraxProvider._refused_every_key(model_id))
+
+    # --- key bookkeeping ----------------------------------------------------
+
+    def _usable(self) -> list[tuple[int, str]]:
+        now = time.time()
+        return [(i, key) for i, key in enumerate(self.keys) if self.spent.get(i, 0) <= now]
+
+    def _cool(self, index: int, seconds: float) -> None:
+        # Bounded by a day, not by our own cooldown constant: an endpoint that
+        # names a reset time knows better than we do.
+        self.spent[index] = time.time() + max(1.0, min(seconds, 24 * 3600))
+
+    def _headers(self, key: str) -> dict:
+        from beeagent import __version__
+
+        return {"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                "User-Agent": f"beecode/{__version__}"}
+
+    def _require_key(self) -> None:
+        if not self.keys:
+            from beeagent.i18n import L
+            raise CraxError("auth", L("no crax-gpt key — /key crax crk_live_…",
+                                      "нет ключа crax-gpt — /key crax crk_live_…"))
+
+    # --- the two limits, told apart ----------------------------------------
+
+    async def _handle_limit(self, index: int, error: CraxError) -> None:
+        """Decide what a 429 means for this key, and what to do about it.
+
+        Raises so the caller stops; returns only when the user chose something
+        that can actually be honoured.
+        """
+        from beeagent.i18n import L
+
+        if error.kind == "daily":
+            # Never shorter than the endpoint's own stated reset: retrying a
+            # spent account an hour before midnight just spends the attempt.
+            self._cool(index, max(KEY_COOLDOWN, error.retry_after or KEY_COOLDOWN))
+            if self._usable():
+                return                       # the next key is another account: try it
+            raise CraxError("daily", L(
+                f"every crax-gpt key in the config has spent its day — {error.retry_after}s "
+                "until the allowance resets, or add another key with /key crax …",
+                f"все ключи crax-gpt выбрали дневную норму — сброс через {error.retry_after} с, "
+                "или добавь ещё ключ: /key crax …"), retry_after=error.retry_after)
+
+        if error.kind == "ip":
+            answer = None
+            if self.ask is not None:
+                answer = await self.ask(error)
+            if answer == "wait":
+                await _sleep(error.retry_after or 5)
+                return
+            raise CraxError("ip", L(
+                f"crax-gpt is limiting this IP — wait {error.retry_after or 60}s",
+                f"crax-gpt ограничил этот IP — подожди {error.retry_after or 60} с"),
+                retry_after=error.retry_after or 60)
+
+        raise error
+
+    # --- the wire -----------------------------------------------------------
+
+    def _only_chat(self, model: str) -> None:
+        """Refuse a generation model before the request, not after it.
+
+        The endpoint sells image, video and audio models on the same keys, and an
+        account used for them is the kind of activity that gets reported. A
+        refused request costs nothing; a sent one costs the account.
+        """
+        if not is_chat_model(model):
+            from beeagent.i18n import L
+            raise CraxError("other", L(f"“{model}” is not a chat model — BeeCode only "
+                                       f"asks crax-gpt for text answers. Pick one with /model",
+                                       f"«{model}» — не чат-модель. BeeCode просит у crax-gpt "
+                                       "только текстовые ответы, выбери модель через /model"))
+
+    def _payload(self, messages: list[dict], model: str, stream: bool) -> dict:
+        self._only_chat(model)
+        return {"model": model or (self.models[0] if self.models else ""),
+                "messages": messages, "stream": stream, "include_reasoning": True}
+
+    async def chat(self, messages: list[dict], model: str = "", stream: bool = False) -> str:
+        # A plain non-stream POST is cheapest when the endpoint honors it; this
+        # one answers SSE even when asked not to, so an empty 200 falls back to
+        # reading the same key as a stream instead of billing the next account
+        # for the same silence. Rotation across keys is unchanged.
+        self._require_key()
+        await _pace()
+        attempts = 0
+        while attempts < max(1, len(self.keys)):
+            usable = self._usable()
+            if not usable:
+                raise CraxError("daily", "every configured key is cooling down")
+            index, key = usable[0]
+            attempts += 1
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout()) as client:
+                    response = await client.post(self.base_url + "/chat/completions",
+                                                 json=self._payload(messages, model, False),
+                                                 headers=self._headers(key))
+            except httpx.HTTPError as e:
+                raise CraxError("network", f"crax-gpt is not reachable: {e}")
+            if response.status_code == 200:
+                text = _first_content(_json_or_empty(response.text))
+                if text:
+                    return text
+                streamed = await self._stream_one(messages, model, key)
+                if streamed:
+                    return streamed
+                continue
+            error = classify(response.status_code, _json_or_empty(response.text),
+                             _retry_after(response), response.text)
+            await self._handle_limit(index, error)
+        raise CraxError("other", "crax-gpt refused every configured key")
+
+    async def _stream_one(self, messages: list[dict], model: str, key: str) -> str:
+        """Read one key as a stream and join it; "" when it says nothing."""
+        parts: list[str] = []
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout()) as client:
+                async with client.stream(
+                        "POST", self.base_url + "/chat/completions",
+                        json=self._payload(messages, model, True),
+                        headers=self._headers(key)) as response:
+                    if response.status_code != 200:
+                        return ""
+                    async for chunk in response.aiter_text():
+                        for line in chunk.splitlines():
+                            line = line.strip()
+                            if not line.startswith("data:"):
+                                continue
+                            payload = line[5:].strip()
+                            if payload == "[DONE]":
+                                continue
+                            try:
+                                data = json.loads(payload)
+                            except ValueError:
+                                continue
+                            for choice in data.get("choices", []):
+                                if not isinstance(choice, dict):
+                                    continue
+                                delta = choice.get("delta") or {}
+                                text = delta.get("content") if isinstance(delta, dict) else None
+                                if text:
+                                    parts.append(str(text))
+        except (httpx.HTTPError, asyncio.CancelledError):
+            raise
+        except Exception:
+            return ""
+        return "".join(parts)
+
+    def _next_key(self, tried: list[int]) -> Optional[tuple[int, str]]:
+        """The first key that is neither cooling down nor already asked this turn."""
+        for index, key in self._usable():
+            if index not in tried:
+                return index, key
+        return None
+
+    async def chat_stream(self, messages: list[dict], model: str = "") -> AsyncIterator:
+        """The answer, or the reason there is none — and never the same key twice.
+
+        A 200 that streamed nothing is worth exactly one more ask, and it is asked
+        of a *different* key: the one that answered with silence answers with
+        silence again. Measured before this was bounded, one user message with
+        three configured keys cost 9 upstream POSTs, all of them billed to the
+        first key.
+        """
+        self._require_key()
+        await _pace()
+        tried: list[int] = []
+        empties = 0
+        asks = 0
+        last_error: Optional[Exception] = None
+        while asks < max(1, len(self.keys)) + EMPTY_STREAM_EXTRA_TRIES:
+            choice = self._next_key(tried)
+            if choice is None:
+                break
+            index, key = choice
+            asks += 1
+            flowed = 0
+            try:
+                async for pair in self._stream(messages, model, key, index):
+                    flowed += len(pair[1])
+                    yield pair
+                return
+            except _AskAnotherKey as step:
+                if not step.same_key:
+                    tried.append(index)
+                continue
+            except ProviderStreamError as failure:
+                tried.append(index)
+                last_error = failure
+                if getattr(failure, "code", "") != "empty":
+                    # Either the endpoint named a reason or the answer was cut in
+                    # the middle: both are told to the user as they stand, and
+                    # neither is a cue to bill another account.
+                    raise
+                self._cool(index, EMPTY_STREAM_COOLDOWN)
+                empties += 1
+                if empties > EMPTY_STREAM_EXTRA_TRIES:
+                    raise
+                continue
+            except httpx.HTTPError as e:
+                if flowed:
+                    # The answer stopped mid-sentence. Handing it back as if it
+                    # were finished is how a half-written file gets reported as
+                    # written — the caller retries, and only the retry knows.
+                    raise CraxError("network",
+                                    f"crax-gpt stopped after {flowed} characters: {e}") from e
+                raise CraxError("network", f"crax-gpt is not reachable: {e}") from e
+        if last_error is not None:
+            raise last_error
+        from beeagent.i18n import L
+        raise CraxError("other", L("crax-gpt has no key left to ask this turn — every "
+                                   "configured key is cooling down",
+                                   "у crax-gpt не осталось ключей на этот ход — все "
+                                   "настроенные ключи остывают"))
+
+    async def _stream(self, messages: list[dict], model: str, key: str,
+                      index: int) -> AsyncIterator:
+        """One ask of one key, read through the shared SSE reader.
+
+        The frames are OpenAI-shaped and `_pieces` says what each carries; the
+        reading of them is not this provider's business. Reading `aiter_lines()`
+        line by line here is what dropped a split event and left a truncated
+        answer on screen as if it had finished.
+        """
+        async with httpx.AsyncClient(timeout=self._timeout()) as client:
+            async with client.stream("POST", self.base_url + "/chat/completions",
+                                     json=self._payload(messages, model, True),
+                                     headers=self._headers(key)) as response:
+                if response.status_code != 200:
+                    await response.aread()
+                    error = classify(response.status_code, _json_or_empty(response.text),
+                                     _retry_after(response), response.text)
+                    await self._handle_limit(index, error)
+                    # `_handle_limit` raising means the user was told. Getting past
+                    # it means it chose to go on: another account for a spent day,
+                    # or this one again after the wait an IP limit named.
+                    raise _AskAnotherKey(same_key=error.kind == "ip")
+                async for piece in read_answer_stream(response.aiter_lines(), self._pieces,
+                                                      source=self.label):
+                    yield piece
+
+    @staticmethod
+    def _pieces(event: dict) -> list[tuple[str, str]]:
+        """The text pieces one OpenAI-shaped frame of crax's stream carries.
+
+        An `error` frame is crax explaining itself mid-answer; keeping the
+        truncated text and dropping the reason is how "this model is overloaded"
+        reached the user as a finished reply.
+        """
+        check_error_frame(event, LABEL)
+        choices = event.get("choices")
+        first = choices[0] if isinstance(choices, list) and choices else None
+        if not isinstance(first, dict):
+            return []
+        delta = first.get("delta")
+        if not isinstance(delta, dict):
+            return []
+        out: list[tuple[str, str]] = []
+        content = delta.get("content")
+        if isinstance(content, str) and content:
+            out.append(("content", content))
+        for field in ("reasoning", "reasoning_content", "thinking"):
+            value = delta.get(field)
+            if isinstance(value, str) and value:
+                out.append(("reasoning", value))
+        return out
+
+    def _timeout(self) -> httpx.Timeout:
+        return httpx.Timeout(self.idle_timeout, connect=CONNECT_TIMEOUT)
+
+    def discover_models(self) -> list[str]:       # type: ignore[override]
+        """The live catalogue; each entry carries its context length too.
+
+        Filtered to chat: the endpoint lists its image and video models here, and
+        an agent that offers them spends requests on answers it cannot use.
+
+        The shipped list answers when this fails — crax's Cloudflare answers error
+        1010 to some networks, and the client cannot ask the endpoint at all there.
+        That is a fallback, and it is recorded as one, because an offline list
+        shown without a word reads as "this is what the endpoint serves today".
+        """
+        from beeagent.i18n import L
+
+        if not self.keys:
+            self.report_model_list_failure(LIST_SHIPPED,
+                                           L("no crax-gpt key configured",
+                                             "ключ crax-gpt не настроен"))
+            return list(self.models)
+        try:
+            with httpx.Client(timeout=MODELS_WAIT) as client:
+                response = client.get(self.base_url + "/models",
+                                      headers=self._headers(self.keys[0]))
+        except httpx.HTTPError as e:
+            self.report_model_list_failure(LIST_UNREACHABLE,
+                                           str(transport_error(e, LABEL)))
+            return list(self.models)
+        if response.status_code != 200:
+            reason = body_reason(response.text) or f"HTTP {response.status_code}"
+            self.report_model_list_failure(
+                LIST_SEAT_REFUSED if response.status_code in (401, 403) else LIST_REFUSED,
+                reason)
+            return list(self.models)
+        try:
+            body = response.json()
+        except ValueError:
+            self.report_model_list_failure(LIST_REFUSED,
+                                           body_reason(response.text) or "not JSON")
+            return list(self.models)
+        found = self.remember_live_models([
+            item.get("id") for item in body.get("data") or body.get("models") or []
+            if isinstance(item, dict) and item.get("id") and is_chat_model(str(item["id"]))])
+        if not found:
+            self.report_model_list_failure(LIST_UNREACHABLE,
+                                           L("crax-gpt listed no chat model",
+                                             "crax-gpt не назвал ни одной чат-модели"))
+        return found or list(self.models)
+
+
+def _retry_after(response) -> int:
+    """Seconds, from either shape the header is allowed to take."""
+    raw = (response.headers.get("Retry-After") or "").strip()
+    if not raw:
+        return 0
+    try:
+        return max(0, int(float(raw)))
+    except ValueError:
+        pass
+    try:
+        from datetime import datetime, timezone
+        from email.utils import parsedate_to_datetime
+
+        when = parsedate_to_datetime(raw)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return max(0, int((when - datetime.now(timezone.utc)).total_seconds()))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _json_or_empty(text: str) -> dict:
+    try:
+        body = json.loads(text or "{}")
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+async def _sleep(seconds: float) -> None:
+    await asyncio.sleep(max(0.0, min(float(seconds or 0), 300.0)))

@@ -212,6 +212,42 @@ class PluginManager:
                 continue
             trust.record_install(root, digest, name=item.name, kind="plugin")
 
+    def install_local(self, name: str, type: str, description: str = "") -> dict:
+        """Install a locally authored pack the model just wrote.
+
+        The files already sit at `.beeagent/plugins/<name>/` (written with the
+        `write` tool, so gated and undoable like any other edit) — this only
+        validates presence, records the state entry, and pins the bytes for
+        the trust gate, exactly like `_remember_trust` does for catalog
+        installs. Loading itself stays the loader's job, so a forged pack
+        faces the same gate as a downloaded one.
+        """
+        if type not in ("plugin", "skill"):
+            raise ValueError(f"'{type}' is not installable here — 'plugin' "
+                             f"(plugin.py) or 'skill' (SKILL.md)")
+        dst = self._plugin_dir(name)      # jailed; hostile names refused here
+        if not dst.is_dir():
+            raise ValueError(f"'{name}' has no folder at {dst} — write the "
+                             f"files first, then install")
+        markers = [m for m in ("plugin.py", "SKILL.md") if (dst / m).is_file()]
+        if not markers:
+            raise ValueError(f"'{name}' needs plugin.py and/or SKILL.md in it")
+        state = self._state()
+        state.setdefault("installed", {})[name] = {
+            "type": type,
+            "category": "forged",
+            "description": description,
+            "enabled": True,
+            "installed_at": datetime.now().isoformat(),
+            "source": {"kind": "local"},
+        }
+        self._save_state(state)
+        self._remember_trust(CatalogItem(
+            name=name, type=type, category="forged",
+            description=description, source={"kind": "local"}))
+        return {"name": name, "type": type, "description": description,
+                "markers": markers}
+
     def _plugin_dir(self, name: str) -> Path:
         """The install dir for `name`, jailed inside plugins_dir.
 
@@ -219,7 +255,6 @@ class PluginManager:
         find_git/market checks: `../../victim` resolved outside and rmtree
         below deleted it. Names outside the folder alphabet never resolve.
         """
-        from beeagent.plugins.catalog import install_name_ok
         if not install_name_ok(name):
             raise MarketError(L(f"refusing a plugin name that is not a folder name: {name!r}",
                                 f"отказываюсь от имени плагина, которое не имя папки: {name!r}"))
@@ -256,7 +291,7 @@ class PluginManager:
         self._save_mcp_config(cfg)
 
     def _install_git(self, item: CatalogItem) -> None:
-        from beeagent.plugins.catalog import _git_url_refused, install_name_ok
+        from beeagent.plugins.catalog import _git_url_refused
 
         url = item.source["url"]
         # A crafted item handed straight to install() bypasses find_git: the
@@ -391,7 +426,6 @@ class PluginManager:
         """Installed names that are safe to resolve: a hostile plugins.json
         ("../../outside") used to make the loader glob — and execute plugin.py
         — outside the plugins folder."""
-        from beeagent.plugins.catalog import install_name_ok
         return [name for name in self.installed()
                 if install_name_ok(name)]
 

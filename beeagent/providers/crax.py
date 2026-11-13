@@ -27,7 +27,7 @@ import httpx
 from .base import (LIST_REFUSED, LIST_SEAT_REFUSED, LIST_SHIPPED, LIST_UNREACHABLE,
                    BaseProvider, ModelCatalog, ProviderStreamError, body_reason,
                    check_error_frame, default_idle_timeout, read_answer_stream,
-                   transport_error)
+                   to_openai_history, transport_error)
 
 BASE_URL = "https://gpt.crax.lol/v1"
 CONNECT_TIMEOUT = 10.0
@@ -73,8 +73,6 @@ def _reserve_slot() -> float:
 
 
 async def _pace() -> None:
-    import asyncio
-
     wait = _reserve_slot()
     if wait > 0:
         await asyncio.sleep(wait)
@@ -116,6 +114,79 @@ class CraxError(RuntimeError):
 def keys_from(value: str) -> list[str]:
     """One key, or several separated by commas — the usual shape of a key pool."""
     return [part.strip() for part in (value or "").split(",") if part.strip()]
+
+
+#: Answers shaped like these mean the model never saw the `tools` field. The
+#: native system prompt tells it "YOU HAVE TOOLS — call them", while the
+#: request's `tools` array was dropped by the model's own front end on the way
+#: in — so the denial is about the request, not the task. Seen live on the
+#: GPT/Claude routes: 200 OK carrying "I have no access to your files".
+#: Seen live 2026-10-07: the "no tools in this session, only web search"
+#: shape — "в этой сессии у меня нет доступа к файловой системе и терминалу,
+#: подключены только веб-поиск и генерация картинок". Same denial, new words.
+_REFUSAL_HINTS = (
+    "no access", "don't have access", "do not have access", "can't access",
+    "cannot access", "unable to access", "no data access",
+    "don't have the ability", "do not have the ability",
+    "attach", "paste the file", "paste the contents",
+    "file system", "terminal", "in this session", "only web search",
+    "web search", "no tools",
+    "нет доступа", "не имею доступа", "не могу получить доступ",
+    "не могу открыть", "прикрепи", "вставь", "пришли файл",
+    "файловой системе", "терминал", "в этой сессии", "только веб-поиск",
+    "нет инструментов",
+)
+
+#: Models measured to ignore the native `tools` field go straight to the JSON
+#: protocol — no wasted native request first. Seven days, like a catalogue
+#: that is rewritten without a release: the route may be fixed tomorrow.
+FALLBACK_TTL = 7 * 24 * 3600
+TOOLS_CACHE = ".beeagent/crax_tools.json"
+
+
+def _looks_like_refusal(text: str) -> bool:
+    """A denial where a tool call should have been — only ever read after a
+    native request that carried tools and got zero calls back, so a stray
+    "attached the log" in a normal answer can never trigger a retry."""
+    lowered = (text or "").lower()
+    return any(hint in lowered for hint in _REFUSAL_HINTS)
+
+
+def _fallback_cache() -> dict:
+    """{model: {"at": epoch}} for models on the JSON protocol, or {}."""
+    from pathlib import Path
+
+    try:
+        body = json.loads((Path.cwd() / TOOLS_CACHE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _fallback_cached(model: str) -> bool:
+    entry = _fallback_cache().get(model or "")
+    return bool(isinstance(entry, dict) and time.time() - float(entry.get("at", 0))
+                < FALLBACK_TTL)
+
+
+def _fallback_remember(model: str, use: bool) -> None:
+    """File the verdict about this model id. Best effort: a cache that cannot
+    be written only costs one extra request next turn, never a turn."""
+    from pathlib import Path
+
+    try:
+        cache = _fallback_cache()
+        if use:
+            cache[model or ""] = {"at": time.time()}
+        elif (model or "") not in cache:
+            return                     # nothing filed, nothing to unfile: no write
+        else:
+            del cache[model or ""]
+        path = Path.cwd() / TOOLS_CACHE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def classify(status: int, body: dict, retry_after: int, raw: str = "") -> CraxError:
@@ -230,51 +301,12 @@ class CraxProvider(BaseProvider):
     def to_openai_history(messages: list[dict]) -> list[dict]:
         """Session rows as the wire expects them, with matching call ids.
 
-        BeeCode stores a call as `{"tool": …, "args": {…}}` and the result as a
-        plain tool message. OpenAI wants ids that tie the two together, so they
-        are assigned while walking — deterministically, because the order in the
-        transcript is the order they happened in.
+        The rule lives in `base.to_openai_history` because every provider that
+        speaks the OpenAI shape needs it — the pool replayed the stored shape
+        and had every post-tool turn refused. Kept here as a name because
+        callers and tests reach for it on this class.
         """
-        out: list[dict] = []
-        pending: list[str] = []
-        counter = 0
-        for message in messages:
-            if not isinstance(message, dict):
-                continue
-            role = message.get("role", "user")
-            content = message.get("content") or ""
-            calls = message.get("tool_calls") or []
-            if not isinstance(calls, list):
-                calls = []
-            if role == "tool":
-                if pending:
-                    call_id = pending.pop(0)
-                else:
-                    # A result with no call in front of it: say so in the text
-                    # rather than inventing an id the endpoint will reject.
-                    out.append({"role": "user", "content": f"[tool result] {content}"})
-                    continue
-                out.append({"role": "tool", "tool_call_id": call_id, "content": str(content)})
-                continue
-            if role == "assistant" and calls:
-                first = calls[0] if isinstance(calls[0], dict) else {}
-                counter += 1
-                call_id = f"call_{counter:04d}"
-                pending.append(call_id)
-                out.append({
-                    "role": "assistant",
-                    "content": content or None,
-                    "tool_calls": [{
-                        "id": call_id, "type": "function",
-                        "function": {
-                            "name": str(first.get("tool", "")),
-                            "arguments": json.dumps(first.get("args") or {}, ensure_ascii=False),
-                        },
-                    }],
-                })
-                continue
-            out.append({"role": role, "content": str(content)})
-        return out
+        return to_openai_history(messages)
 
     async def complete(self, messages: list[dict], model: str = "", tools: list[dict] = None) -> dict:
         """One request, the whole answer: text and/or the calls the model made.
@@ -286,7 +318,12 @@ class CraxProvider(BaseProvider):
         """
         self._require_key()
         self._only_chat(model)
-        body: dict = {"model": model or (self.models[0] if self.models else ""),
+        model_id = model or (self.models[0] if self.models else "")
+        if tools and _fallback_cached(model_id):
+            # Measured before: this id's front end drops the `tools` field.
+            # One request in the JSON protocol, never a wasted native one.
+            return await self._complete_json(messages, model_id, tools)
+        body: dict = {"model": model_id,
                       "messages": self.to_openai_history(messages),
                       # Without this the endpoint answers with SSE even when we
                       # asked for one object — measured, not assumed.
@@ -323,9 +360,83 @@ class CraxProvider(BaseProvider):
                 except ValueError:
                     args = {}
                 calls.append({"tool": function.get("name", ""), "args": args if isinstance(args, dict) else {}})
-            return {"text": str(message.get("content") or ""), "tool_calls": calls,
+            text = str(message.get("content") or "")
+            if tools and not calls and _looks_like_refusal(text):
+                # 200 OK carrying "I have no access": the model was told it has
+                # tools and given none — its front end dropped the field. File
+                # the verdict and re-ask in the protocol it does speak.
+                _fallback_remember(model_id, True)
+                return await self._complete_json(messages, model_id, tools)
+            _fallback_remember(model_id, False)
+            return {"text": text, "tool_calls": calls,
                     "usage": payload.get("usage") or {}, "key": index}
-        raise CraxError("other", "crax-gpt refused every configured key")
+        raise CraxError("other", CraxProvider._refused_every_key(model_id))
+
+    @staticmethod
+    def _refused_every_key(model_id: str) -> str:
+        """What all-keys-failing means depends on what was asked: a dead model
+        route 502s on every key while the accounts are fine, and "refused every
+        key" sent a user to retype keys that were never the problem."""
+        from beeagent.i18n import L
+        name = model_id or "this model"
+        return L(f"crax-gpt could not serve “{name}” on any configured key — that "
+                 f"model's route is down, the keys are not the problem. "
+                 f"Pick a live one with /models.",
+                 f"crax-gpt не смог обслужить «{name}» ни на одном ключе — лежит "
+                 f"маршрут модели, а не ключи. Живую выбери через /models.")
+
+    async def _complete_json(self, messages: list[dict], model_id: str,
+                             tools: list[dict]) -> dict:
+        """One request in the old JSON protocol, for a model whose front end
+        drops the native `tools` field: the catalog as prose, the call parsed
+        back out of the text. A single attempt per key like the native path;
+        when even prose yields no call, the latest answer goes back untouched —
+        a fallback must never eat the reply it was asked to repair."""
+        from beeagent.core.parser import CommandParser
+
+        parser = CommandParser()
+        prose = parser.format_tool_prompt(tools)
+        retry = [dict(message) for message in messages]
+        for position in range(len(retry) - 1, -1, -1):
+            if retry[position].get("role") == "user":
+                retry[position] = {**retry[position],
+                                   "content": (retry[position].get("content") or "")
+                                   + "\n\n" + prose}
+                break
+        else:
+            retry = retry + [{"role": "user", "content": prose}]
+        body: dict = {"model": model_id,
+                      "messages": self.to_openai_history(retry),
+                      "stream": False}
+        attempts = 0
+        while attempts < max(1, len(self.keys)):
+            usable = self._usable()
+            if not usable:
+                raise CraxError("daily", "every configured key is cooling down")
+            index, key = usable[0]
+            attempts += 1
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout()) as client:
+                    response = await client.post(self.base_url + "/chat/completions",
+                                                 json=body, headers=self._headers(key))
+            except httpx.HTTPError as e:
+                raise CraxError("network", f"crax-gpt is not reachable: {e}")
+            if response.status_code != 200:
+                error = classify(response.status_code, _json_or_empty(response.text),
+                                 _retry_after(response), response.text)
+                await self._handle_limit(index, error)
+                continue
+            message = ((_json_or_empty(response.text).get("choices") or [{}])[0]
+                         .get("message") or {})
+            if not isinstance(message, dict):
+                message = {}
+            text = str(message.get("content") or "")
+            parsed = parser.parse(text)
+            calls = [{"tool": cmd.tool, "args": cmd.args} for cmd in parsed.commands]
+            return {"text": parsed.text or text, "tool_calls": calls,
+                    "usage": _json_or_empty(response.text).get("usage") or {},
+                    "key": index}
+        raise CraxError("other", CraxProvider._refused_every_key(model_id))
 
     # --- key bookkeeping ----------------------------------------------------
 
@@ -443,8 +554,6 @@ class CraxProvider(BaseProvider):
 
     async def _stream_one(self, messages: list[dict], model: str, key: str) -> str:
         """Read one key as a stream and join it; "" when it says nothing."""
-        from .base import read_answer_stream
-
         parts: list[str] = []
         try:
             async with httpx.AsyncClient(timeout=self._timeout()) as client:
@@ -671,8 +780,6 @@ def _retry_after(response) -> int:
 
 
 def _json_or_empty(text: str) -> dict:
-    import json
-
     try:
         body = json.loads(text or "{}")
     except ValueError:
@@ -681,6 +788,4 @@ def _json_or_empty(text: str) -> dict:
 
 
 async def _sleep(seconds: float) -> None:
-    import asyncio
-
     await asyncio.sleep(max(0.0, min(float(seconds or 0), 300.0)))

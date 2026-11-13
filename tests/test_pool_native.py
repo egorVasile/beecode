@@ -108,8 +108,8 @@ def test_complete_sends_schemas_and_reads_calls_back(no_wait, monkeypatch):
 
     answer = asyncio.run(provider.complete(MESSAGE_HISTORY, "m", SCHEMAS))
 
-    assert answer == {"text": "", "tool_calls":
-                      [{"tool": "write", "args": {"path": "hi.txt", "content": "ok"}}]}
+    assert answer["text"] == ""
+    assert answer["tool_calls"] == [{"tool": "write", "args": {"path": "hi.txt", "content": "ok"}}]
     sent = wire.seen[0]["body"]
     assert sent["stream"] is False
     assert sent["tool_choice"] == "auto"
@@ -125,8 +125,8 @@ def test_complete_gets_a_nonstandard_message_and_lives(no_wait, monkeypatch):
     wire = Page([(200, {"choices": [{"message": []}]}, None)])
     provider = pool_mod.PoolProvider(url=WIRE, token=SEAT)
     monkeypatch.setattr(pool_mod.httpx, "AsyncClient", wire)
-    assert asyncio.run(provider.complete(MESSAGE_HISTORY, "m")) == \
-        {"text": "", "tool_calls": []}
+    answer = asyncio.run(provider.complete(MESSAGE_HISTORY, "m"))
+    assert answer["text"] == "" and answer["tool_calls"] == []
 
 
 def test_broken_argument_json_reads_as_no_arguments(no_wait, monkeypatch):

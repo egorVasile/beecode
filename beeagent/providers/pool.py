@@ -119,6 +119,21 @@ def _headers(ident: str) -> dict:
     return {"X-Bee-Id": ident, "User-Agent": f"beecode/{__version__}"}
 
 
+def _wire_history(messages: list[dict]) -> list[dict]:
+    """The transcript rows as an OpenAI-shaped request's `messages`.
+
+    BeeCode stores a call as `{"tool": ..., "args": {...}}` and its result as a
+    bare `role: "tool"` row. An upstream wants an id on every call and a matching
+    `tool_call_id` on every result; sent in the stored shape the history is
+    malformed and the provider answers 400/502. The pool could only report that
+    as "could not reach the provider", so the turn after every tool use looked
+    like a dead upstream while the seat was fine.
+    """
+    from .base import to_openai_history
+
+    return to_openai_history(messages)
+
+
 def install_id(public_hex: str = "") -> str:
     """This install's public name, stable across wipes and re-enrolls.
 
@@ -258,6 +273,83 @@ def enroll(url: str, timeout: float = ENROLL_TIMEOUT,
     return data
 
 
+def google_authorize_url(url: str = "") -> str:
+    """The Google sign-in URL for this install, or "" when no pool address.
+
+    Only the public half of the install key goes into the URL — the same bytes
+    `/pool enroll` sends — and nothing secret: Google is the gate, the Ed25519
+    signature stays the proof. After the browser completes the flow the pool has
+    written the seat, and `/pool status` (or `/pool google --status`) sees it.
+    """
+    _seed, public, _device = install_key()
+    ident = install_id(public)
+    base = (url or "").strip().rstrip("/")
+    if not base:
+        return ""
+    from urllib.parse import quote
+    return f"{base}/v1/google/authorize?state={quote(ident)}&pub={public}"
+
+
+def seat_status(url: str, token: str, timeout: float = SEAT_WAIT) -> dict:
+    """This install's seat row, for the sign-in flow to poll until it appears."""
+    endpoint = (url or "").strip().rstrip("/") + "/v1/seat"
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            return _seat_of(client, (url or "").strip().rstrip("/"), token,
+                            min(float(timeout), SEAT_WAIT))
+    except httpx.HTTPError as e:
+        raise PoolError(_asleep((url or "").strip(), e)) from e
+
+
+# Phoning it in, in the good sense: the relay channel the app for the phone
+# drives this install through. The pool is the mailbox; these wrappers sign
+# every call exactly like a chat turn does.
+RELAY_PAIR_WAIT = 300.0
+RELAY_POLL_WAIT = 20.0
+
+
+def _relay_call(url: str, route: str, payload: dict,
+                timeout: float) -> dict:
+    """One signed POST into the relay channel, the pool's JSON back."""
+    seed, public, _device = install_key()
+    endpoint = (url or "").strip().rstrip("/") + route
+    body = json.dumps(payload).encode()
+    headers = {"Content-Type": "application/json",
+               "X-Bee-Id": install_id(public),
+               **signed_headers(seed, public, body)}
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(endpoint, content=body, headers=headers)
+    except httpx.HTTPError as e:
+        raise PoolError(_asleep((url or "").strip(), e)) from e
+    data = _safe_json(response) or {}
+    if response.status_code != 200:
+        raise PoolError(_reason(response.status_code, data))
+    return data
+
+
+def relay_start(url: str) -> dict:
+    """Open the channel: answer carries the five-minute code (`{"code": ...}`)."""
+    return _relay_call(url, "/v1/relay/start", {}, SEAT_WAIT)
+
+
+def relay_wait(url: str, timeout: float | None = None) -> dict:
+    """Long-poll until a phone has joined, so `/pair` can say it out loud."""
+    return _relay_call(url, "/v1/relay/wait", {},
+                       (RELAY_POLL_WAIT if timeout is None else float(timeout)) + 4.0)
+
+
+def relay_poll(url: str, after: int = -1) -> dict:
+    """Instructions typed on the phone since `after` (`{"messages": [...]})."""
+    return _relay_call(url, "/v1/relay/poll", {"after": int(after)},
+                       RELAY_POLL_WAIT + 4.0)
+
+
+def relay_report(url: str, events) -> dict:
+    """File status events for the phone: running / done / whatever comes next."""
+    return _relay_call(url, "/v1/relay/report", {"events": list(events)}, SEAT_WAIT)
+
+
 def approve_seat(url: str, admin_secret: str, token: str,
                  timeout: float = ENROLL_TIMEOUT) -> dict:
     """Approve a seat as the pool operator.
@@ -381,11 +473,12 @@ class PoolProvider(BaseProvider):
     # and `model_list_state` says which of the two the user is looking at.
     models = ModelCatalog(["glm-5.3", "glm-5.3-flash", "glm-5.2"])
     list_source = ("the pool", "пул")
-
-    # The pool forwards OpenAI's own shape, so the schemas travel in the
-    # request the way crax sends them — without this the agent builds the
-    # shed prompt for the pool's models and the schemas ride as prose.
+    # Native tool calling: the pool forwards the request body untouched, so the
+    # `tools` array reaches the upstream that serves this model and the answer
+    # comes back with `tool_calls` — the model works with real function
+    # definitions instead of prose shaped like a call.
     supports_tools = True
+
 
     def __init__(self, url: str = "", token: str = "", idle_timeout: float | None = None):
         self.url = (url or "").strip().rstrip("/")
@@ -396,12 +489,22 @@ class PoolProvider(BaseProvider):
     def configured(self) -> bool:
         return bool(self.url and self.token)
 
+    #: A pool turn is a proxy of proxies: the server's own upstream budget is
+    #: 120 s before it even starts failing over, so a generic 90 s read
+    #: timeout kills slow-but-alive turns and reports a working pool as
+    #: silent. Reads may outlast the idle budget; connecting may not.
+    POOL_READ_TIMEOUT = 300.0
+
+    def _read_timeout(self) -> float:
+        """How long one pool read may stay silent, whatever the idle budget."""
+        return max(self.idle_timeout, PoolProvider.POOL_READ_TIMEOUT)
+
     def _timeout(self) -> httpx.Timeout:
         """The wait this client keeps, in the same budget the agent narrates."""
-        return httpx.Timeout(self.idle_timeout, connect=TIMEOUT_CONNECT)
+        return httpx.Timeout(self._read_timeout(), connect=TIMEOUT_CONNECT)
 
     def _body(self, messages: list[dict], model: str, stream: bool) -> dict:
-        return {"model": model, "messages": messages, "stream": stream}
+        return {"model": model, "messages": _wire_history(messages), "stream": stream}
 
     def _require(self) -> str:
         if not self.url:
@@ -458,8 +561,8 @@ class PoolProvider(BaseProvider):
 
         if isinstance(error, httpx.TimeoutException):
             return PoolError(str(transport_error(error, self.source_name(),
-                                                 self.idle_timeout)))
-        text = str(transport_error(error, self.source_name(), self.idle_timeout))
+                                                 self._read_timeout())))
+        text = str(transport_error(error, self.source_name(), self._read_timeout()))
         if started:
             return PoolError(L(f"{text} — the answer stopped after {started} characters",
                                f"{text} — ответ оборвался на {started} символах"))
@@ -489,6 +592,97 @@ class PoolProvider(BaseProvider):
                 raise self._failure(e) from e
         return ""                       # unreachable: every path returns or raises
 
+    async def complete(self, messages: list[dict], model: str = "",
+                       tools: list[dict] = None) -> dict:
+        """One non-stream request with native tools, like CraxProvider.complete.
+
+        The tools array and `tool_choice` reach the upstream untouched, so the
+        answer carries `tool_calls` — no prose parsing. The history is not left
+        untouched: it is converted to the wire shape first, because a replayed
+        turn after a tool call is exactly where the stored form is invalid.
+        Same discipline as chat: 429s wait bounded, a dead seat re-enrolls
+        once, a cold box gets one wake-up wait.
+        """
+        from .crax import CraxProvider
+
+        token = self._require()
+        body: dict = {"model": model, "messages": _wire_history(messages), "stream": False}
+        if tools:
+            body["tools"] = CraxProvider.to_openai_tools(tools)
+            body["tool_choice"] = "auto"
+        for attempt in (1, 2):
+            try:
+                return await self._complete_once(body, token)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                if attempt == 2:
+                    raise PoolError(_asleep(self.url, e)) from e
+                await asyncio.sleep(COLD_START_WAIT)
+            except PoolError as e:
+                if attempt == 1 and _unknown_seat(e):
+                    fresh = self._re_enroll(token)
+                    if fresh is not None:
+                        token = fresh
+                        continue
+                raise
+            except httpx.HTTPError as e:
+                raise self._failure(e) from e
+        return {"text": "", "tool_calls": []}   # unreachable, like chat()
+
+    async def _complete_once(self, body: dict, token: str) -> dict:
+        response = None
+        rate_left = PoolProvider.POOL_429_RETRIES
+        transient_left = PoolProvider.POOL_TRANSIENT_RETRIES
+        gate_left = PoolProvider.GATE_RETRIES
+        replay_left = PoolProvider.REPLAY_RETRIES
+        while True:
+            # A fresh signature per attempt: the pool records every nonce it
+            # verified, so resending the same bytes is answered as a replay.
+            raw, headers = self._signed(body)
+            async with httpx.AsyncClient(timeout=self._timeout()) as client:
+                response = await client.post(self.url + "/v1/chat/completions",
+                                             content=raw, headers=headers)
+            if response.status_code == 200:
+                break
+            if response.status_code == 429 and rate_left:
+                rate_left -= 1
+                await asyncio.sleep(self._retry_after(response))
+                continue
+            if PoolProvider._transient(response) and transient_left:
+                transient_left -= 1
+                await asyncio.sleep(PoolProvider.POOL_TRANSIENT_WAIT)
+                continue
+            if PoolProvider._gate(response):
+                if gate_left:
+                    gate_left -= 1
+                    await asyncio.sleep(PoolProvider.GATE_WAIT)
+                    continue
+                raise PoolError(_asleep(self.url, httpx.ReadTimeout("gate page")))
+            if PoolProvider._replay(response) and replay_left:
+                replay_left -= 1
+                await asyncio.sleep(2.0)
+                continue
+            raise PoolError(_reason(response.status_code, _safe_json(response)))
+        assert response is not None  # the last attempt raises, never falls through
+        payload = _safe_json(response) or {}
+        choices = payload.get("choices") or []
+        message = (choices[0] if choices and isinstance(choices[0], dict)
+                   else {}).get("message") or {}
+        if not isinstance(message, dict):
+            message = {}
+        calls = []
+        for call in message.get("tool_calls") or []:
+            function = call.get("function") if isinstance(call, dict) else None
+            if not isinstance(function, dict):
+                continue
+            try:
+                args = json.loads(function.get("arguments") or "{}")
+            except ValueError:
+                args = {}
+            calls.append({"tool": str(function.get("name", "")),
+                          "args": args if isinstance(args, dict) else {}})
+        return {"text": str(message.get("content") or ""), "tool_calls": calls,
+                "usage": payload.get("usage") or {}}
+
     def _signed(self, body: dict) -> tuple[bytes, dict]:
         """The bytes to send and the headers that vouch for them.
 
@@ -507,6 +701,28 @@ class PoolProvider(BaseProvider):
     # truly spent budget still surfaces instead of hanging the turn.
     POOL_429_RETRIES = 3
     POOL_429_WAIT_CAP = 20.0
+
+    # "The pool could not reach the provider" is the pool saying every key it
+    # tried produced no response at all: nothing was billed, and the same bytes
+    # may well work a second later — the box's own egress to the upstream is the
+    # flaky part, not the seat and not the model. A tool-using turn makes
+    # several requests in a row, so one such blip used to kill the whole turn
+    # right after a tool ran, which reads as "the model died on read".
+    POOL_TRANSIENT_RETRIES = 2
+    POOL_TRANSIENT_WAIT = 3.0
+
+    @staticmethod
+    def _transient(response) -> bool:
+        """A 502 that is a blip, not a model that does not exist.
+
+        The pool names a broken model with "the account answered <code> for
+        <model>"; that answer will not change on a retry. The bare sentence is
+        the upstream being unreachable from the box.
+        """
+        if response.status_code != 502:
+            return False
+        said = str((_safe_json(response) or {}).get("error") or "")
+        return "could not reach the provider" in said and "the account answered" not in said
 
     # A sleeping box answers through the platform's front door: 502 with an
     # HTML page about waking instead of the pool's JSON. Nothing was served,
@@ -565,6 +781,7 @@ class PoolProvider(BaseProvider):
         body = self._body(messages, model, False)
         response = None
         gate_left = PoolProvider.GATE_RETRIES
+        transient_left = PoolProvider.POOL_TRANSIENT_RETRIES
         rate_left = PoolProvider.POOL_429_RETRIES
         replay_left = PoolProvider.REPLAY_RETRIES
         while True:
@@ -580,6 +797,10 @@ class PoolProvider(BaseProvider):
             if response.status_code == 429 and rate_left:
                 rate_left -= 1
                 await asyncio.sleep(self._retry_after(response))
+                continue
+            if PoolProvider._transient(response) and transient_left:
+                transient_left -= 1
+                await asyncio.sleep(PoolProvider.POOL_TRANSIENT_WAIT)
                 continue
             if PoolProvider._gate(response):
                 if gate_left:
@@ -604,82 +825,6 @@ class PoolProvider(BaseProvider):
         if not isinstance(message, dict):
             return ""
         return str(message.get("content") or "")
-
-    async def complete(self, messages: list[dict], model: str = "",
-                       tools: list[dict] = None) -> dict:
-        """One request, the whole answer: text and/or the calls the model made.
-
-        The pool ships OpenAI's own shape, so the tool schemas travel in the
-        body the way crax sends them: history and schemas go through the same
-        converters, the ask carries `stream: False`, and `message.tool_calls`
-        comes back parsed into BeeCode's `{"tool": …, "args": {…}}` rows.
-        A model that ignored the `tools` field is not lost either: the agent
-        runs the shed parser over the text that came back, so a ```json block
-        still lands as a call.
-
-        Non-streaming on purpose, for the same reason crax is: a call streamed
-        in fragments has to be reassembled before it means anything, and the
-        turn is not shown to the user until then anyway.
-        """
-        from beeagent.providers.crax import CraxProvider
-
-        body = self._body(CraxProvider.to_openai_history(messages), model, False)
-        if tools:
-            body["tools"] = CraxProvider.to_openai_tools(tools)
-            body["tool_choice"] = "auto"
-        gate_left = PoolProvider.GATE_RETRIES
-        rate_left = PoolProvider.POOL_429_RETRIES
-        replay_left = PoolProvider.REPLAY_RETRIES
-        while True:
-            raw, headers = self._signed(body)  # a fresh nonce per attempt
-            async with httpx.AsyncClient(timeout=self._timeout()) as client:
-                response = await client.post(self.url + "/v1/chat/completions",
-                                             content=raw, headers=headers)
-            if response.status_code == 200:
-                break
-            if response.status_code == 429 and rate_left:
-                rate_left -= 1
-                await asyncio.sleep(self._retry_after(response))
-                continue
-            if PoolProvider._gate(response):
-                if gate_left:
-                    gate_left -= 1
-                    await asyncio.sleep(PoolProvider.GATE_WAIT)
-                    continue
-                raise PoolError(_asleep(self.url, httpx.ReadTimeout("gate page")))
-            if PoolProvider._replay(response) and replay_left:
-                replay_left -= 1
-                await asyncio.sleep(2.0)
-                continue
-            raise PoolError(_reason(response.status_code, _safe_json(response)))
-        answer = _safe_json(response) or {}
-        empty: dict = {"text": "", "tool_calls": []}
-        choices = answer.get("choices") or []
-        if not choices or not isinstance(choices[0], dict):
-            return empty
-        message = choices[0].get("message") or {}
-        if not isinstance(message, dict):
-            return empty
-        calls: list[dict] = []
-        for call in message.get("tool_calls") or []:
-            if not isinstance(call, dict):
-                continue
-            function = call.get("function") or {}
-            if not isinstance(function, dict):
-                continue
-            name = str(function.get("name") or "")
-            raw_args = function.get("arguments")
-            args: object = {}
-            if isinstance(raw_args, str) and raw_args.strip():
-                try:
-                    args = json.loads(raw_args)
-                except ValueError:
-                    args = {}
-            elif isinstance(raw_args, dict):
-                args = raw_args
-            if name and isinstance(args, dict):
-                calls.append({"tool": name, "args": args})
-        return {"text": str(message.get("content") or ""), "tool_calls": calls}
 
     async def chat_stream(self, messages: list[dict], model: str = "") -> AsyncIterator:
         token = self._require()
@@ -726,6 +871,7 @@ class PoolProvider(BaseProvider):
         who = self.source_name()
         calls: list[dict] = []          # tool fragments this stream gathers
         gate_left = PoolProvider.GATE_RETRIES
+        transient_left = PoolProvider.POOL_TRANSIENT_RETRIES
         rate_left = PoolProvider.POOL_429_RETRIES
         replay_left = PoolProvider.REPLAY_RETRIES
         while True:
@@ -738,6 +884,10 @@ class PoolProvider(BaseProvider):
                         if response.status_code == 429 and rate_left:
                             rate_left -= 1
                             await asyncio.sleep(self._retry_after(response))
+                            continue
+                        if PoolProvider._transient(response) and transient_left:
+                            transient_left -= 1
+                            await asyncio.sleep(PoolProvider.POOL_TRANSIENT_WAIT)
                             continue
                         if PoolProvider._gate(response):
                             if gate_left:
