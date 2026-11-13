@@ -4,7 +4,7 @@ BeeCode is an AI coding agent for the terminal and Windows desktop. It can work 
 
 ## Windows desktop
 
-Download **BeeCode Rust Setup 5.0.2.exe** from [Releases](https://github.com/egorVasile/beecode/releases) and run the installer. The desktop uses a Rust shell and WebView2; it requires Python 3.10 or newer. On first launch it creates a Python environment and may download dependencies.
+Download **BeeCode.Rust.Setup.5.0.2.exe** from [Releases](https://github.com/egorVasile/beecode/releases) and run the installer. The desktop uses a Rust shell and WebView2; it requires Python 3.10 or newer. On first launch it creates a Python environment and may download dependencies.
 
 The desktop source, bundled agent, build scripts and installer configuration are in [`desktop/`](desktop/). Desktop and CLI versions are numbered separately.
 
