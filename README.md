@@ -20,7 +20,7 @@ BeeCode is an AI coding agent for the terminal and Windows desktop. Describe a t
 
 ### Windows desktop
 
-1. Download [BeeCode.Rust.Setup.5.0.2.exe](https://github.com/egorVasile/beecode/releases/latest) from Releases and run it.
+1. Download [BeeCode.Rust.Setup.5.0.3.exe](https://github.com/egorVasile/beecode/releases/latest) from Releases and run it.
 2. Open BeeCode, then choose a provider and model in **Settings → Providers**.
 3. Start a chat. The default working folder is `Documents/BeeCode Clean`. For supported OpenAI-compatible models, configure the available reasoning levels in the provider settings to select one beside the model.
 
