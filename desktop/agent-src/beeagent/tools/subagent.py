@@ -205,3 +205,4 @@ class SubagentTool(BaseTool):
                     job["cancelled"] = True
                     if job["agent"]:
                         job["agent"].stop_requested = True
+

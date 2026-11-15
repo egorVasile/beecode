@@ -148,6 +148,7 @@
       <button id="set-close" title="Закрыть">✕</button>
     </div>
     <div class="set-tabs">
+      <button data-tab="pet">Пет</button>
       <button data-tab="appearance">Оформление</button>
       <button data-tab="extensions">Расширения</button>
       <button data-tab="providers" class="on">Провайдеры</button>
@@ -159,6 +160,17 @@
       <button data-tab="folder">Папка</button>
     </div>
     <div class="set-body">
+      <section data-pane="pet" class="hidden">
+        <div class="pet-settings-head"><div><h2>Твой пет</h2><p class="set-note">Он будет рядом и покажет, чем занят агент.</p></div><label class="pet-switch"><span>Показывать пета</span><input id="pet-enabled" type="checkbox"><span class="pet-switch-track" aria-hidden="true"></span></label></div>
+        <div id="pet-stage" class="pet-stage hidden" aria-hidden="true"><div class="pet-stage-sprite"></div></div>
+        <div class="pet-section-label">Внешний вид</div>
+        <div class="pet-choices" role="group" aria-label="Выбор пета">
+          <button type="button" class="pet-choice" data-pet="black" disabled><img src="pet-black.png" alt=""><span class="pet-choice-copy"><b>Чёрный</b><small>Тёмный корпус</small></span><i aria-hidden="true">✓</i></button>
+          <button type="button" class="pet-choice" data-pet="yellow" disabled><img src="pet-yellow.png" alt=""><span class="pet-choice-copy"><b>Жёлтый</b><small>Пчелиный корпус</small></span><i aria-hidden="true">✓</i></button>
+        </div>
+        <p class="pet-help" id="pet-help">Включи пета, чтобы выбрать внешний вид.</p>
+        <div id="pet-message" class="form-msg" role="status"></div>
+      </section>
       <section data-pane="extensions" class="hidden">
         <p class="set-note">Навыки доступны агенту по мере необходимости. MCP-серверы запускаются после подключения и проверки доверия к папке.</p>
         <div class="set-label">Навыки</div>

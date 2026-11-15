@@ -1,7 +1,7 @@
 Unicode true
 !include "MUI2.nsh"
 Name "BeeCode Rust"
-OutFile "${OUTPUT}\BeeCode Rust Setup 5.0.2.exe"
+OutFile "${OUTPUT}\BeeCode Rust Setup 5.0.3.exe"
 InstallDir "$LOCALAPPDATA\Programs\BeeCode Rust"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
@@ -21,7 +21,7 @@ Section "BeeCode Rust"
   CreateShortcut "$SMPROGRAMS\BeeCode Rust\BeeCode Rust.lnk" "$INSTDIR\beecode-desktop-rust.exe"
   CreateShortcut "$SMPROGRAMS\BeeCode Rust\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeeCodeRust" "DisplayName" "BeeCode Rust"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeeCodeRust" "DisplayVersion" "5.0.2"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeeCodeRust" "DisplayVersion" "5.0.3"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeeCodeRust" "UninstallString" '"$INSTDIR\Uninstall.exe"'
 SectionEnd
 Section "Uninstall"
@@ -30,6 +30,7 @@ Section "Uninstall"
   RMDir "$SMPROGRAMS\BeeCode Rust"
   Delete "$INSTDIR\beecode-desktop-rust.exe"
   Delete "$INSTDIR\Uninstall.exe"
+  Delete "$INSTDIR\resources\BeeCodePet.exe"
   RMDir /r "$INSTDIR\resources\ui"
   RMDir /r "$INSTDIR\resources\agent-src"
   RMDir "$INSTDIR\resources"

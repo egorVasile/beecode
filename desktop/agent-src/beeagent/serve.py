@@ -189,6 +189,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         path, query = parsed.path, urllib.parse.parse_qs(parsed.query)
+        if path == "/api/pet":
+            from beeagent.pet_bridge import read
+            return _send_json(self, 200, read())
         if path == "/api/health":
             from beeagent import __version__
 
@@ -301,6 +304,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        if path == "/api/pet":
+            from beeagent.pet_bridge import update
+            body = _read_json(self)
+            if body is None:
+                return _send_json(self, 400, {"error": "invalid request"})
+            try:
+                return _send_json(self, 200, update(body))
+            except (ValueError, OSError) as exc:
+                return _send_json(self, 400, {"error": str(exc)})
         if path == "/api/sessions/new":
             return self._session_new()
         if path == "/api/projects":

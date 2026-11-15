@@ -1,10 +1,14 @@
+param([string]$PetExecutable = (Join-Path $PSScriptRoot '..\pet\dist\BeeCodePet.exe'))
 $ErrorActionPreference = 'Stop'
+if (-not (Test-Path -LiteralPath $PetExecutable)) { throw 'Build the pet first using pet/build.ps1 or pass -PetExecutable.' }
 $sourceRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$releaseRoot = Join-Path $sourceRoot 'release-rust-clean-5.0.2'
+$releaseRoot = Join-Path $sourceRoot 'release-rust-clean-5.0.3'
 $payloadRoot = Join-Path $releaseRoot 'payload'
 if (Test-Path -LiteralPath $releaseRoot) { throw "Release directory already exists: $releaseRoot" }
 New-Item -ItemType Directory -Path $payloadRoot | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'target\release\beecode-desktop-rust.exe') -Destination $payloadRoot
+New-Item -ItemType Directory -Force -Path (Join-Path $payloadRoot 'resources') | Out-Null
+Copy-Item -LiteralPath $PetExecutable -Destination (Join-Path $payloadRoot 'resources\BeeCodePet.exe')
 $uiDest = Join-Path $payloadRoot 'resources\ui'
 $agentDest = Join-Path $payloadRoot 'resources\agent-src\beeagent'
 & robocopy (Join-Path $sourceRoot 'ui') $uiDest /E /XD '__pycache__' /XF '*.pyc' 'keys.json' 'beeagent.json' '.env' /NJH /NJS /NDL /NFL /NP | Out-Null
@@ -17,4 +21,4 @@ foreach ($name in @('pyproject.toml','README.md','LICENSE')) {
 $nsis = Join-Path $env:LOCALAPPDATA 'electron-builder\Cache\nsis\nsis-3.0.4.1\makensis.exe'
 & $nsis "/DPAYLOAD=$payloadRoot" "/DOUTPUT=$releaseRoot" (Join-Path $PSScriptRoot 'installer.nsi')
 if ($LASTEXITCODE -ne 0) { throw "Installer creation failed: $LASTEXITCODE" }
-Get-Item -LiteralPath (Join-Path $releaseRoot 'BeeCode Rust Setup 5.0.2.exe') | Select-Object FullName,Length
+Get-Item -LiteralPath (Join-Path $releaseRoot 'BeeCode Rust Setup 5.0.3.exe') | Select-Object FullName,Length

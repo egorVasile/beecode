@@ -353,3 +353,4 @@ def _mtime_of(path) -> float:
         return os.path.getmtime(str(path))
     except OSError:
         return 0.0
+

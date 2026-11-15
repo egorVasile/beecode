@@ -30,13 +30,13 @@ class ProviderRegistry:
     def unregister(self, name: str) -> bool:
         """Drop a provider; True when one was actually removed."""
         return self._providers.pop(name, None) is not None
-
+    
     def get(self, name: str) -> Optional[BaseProvider]:
         return self._providers.get(name)
-
+    
     def list_names(self) -> list[str]:
         return list(self._providers.keys())
-
+    
     def select(self, preferred: str) -> BaseProvider:
         """The provider the user asked for, or a clear error.
 

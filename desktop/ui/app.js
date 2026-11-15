@@ -1167,6 +1167,7 @@ function askCard(id, question, meta) {
     field.disabled = true;
     try {
       await post("/api/decide", { id, answer });
+      petState("working");
       btn.textContent = "Отправлено";
     } catch {
       btn.textContent = "Не вышло";
@@ -1206,6 +1207,7 @@ function pathGrantCard(id, question, meta) {
       row.querySelectorAll("button").forEach((b) => { b.disabled = true; });
       try {
         await post("/api/decide", { id, answer });
+      petState("working");
         btn.textContent = answer === "deny" ? "Denied" : "Applied";
         div.classList.add(answer === "deny" ? "denied" : "granted");
       } catch {
@@ -1383,6 +1385,7 @@ async function sendMessage() {
   const pendingRow = userRow(text.length > 4000 ? text.slice(0, 4000) + "\n…(содержимое вложения сокращено)" : text);
 
   setBusy(true);
+  petLastState = ""; petState("working");
   const turn = { box: assistantBox(), hadText: false };
   const controller = new AbortController();
   streamAbort = controller;
@@ -1402,6 +1405,7 @@ async function sendMessage() {
       attached = draftFiles.concat(attached);
       renderChips();
       autogrow();
+      petState("error");
       infoRow("⚠ " + (body.error || ("HTTP " + response.status)));
       setBusy(false);
       return;
@@ -1423,6 +1427,7 @@ async function sendMessage() {
     }
   } catch (error) {
     if (error && error.name !== "AbortError") {
+      petState("error");
       if (!accepted) {
         pendingRow.remove();
         turn.box.div.remove();
@@ -1471,7 +1476,8 @@ function onFrame(frame, turn) {
     refreshSessions();
   } else if (type === "delta") {
     // Providers can stream reasoning separately; it is not part of the answer.
-    if (data.kind === "reasoning_delta") return;
+    if (data.kind === "reasoning_delta") { petState("thinking"); return; }
+    petState("working");
     turn.activityRaw = (turn.activityRaw || '') + (data.text || '');
     const activity = extractActivity(turn.activityRaw);
     if (activity.label && turn.activitySeen !== activity.sequence) {
@@ -1487,6 +1493,7 @@ function onFrame(frame, turn) {
     if (!rawTool) renderStreaming(box);
     scrollDown();
   } else if (type === "tool") {
+    petState("working");
     if (turn.box) flushBox(turn);
     // A pristine "waiting" box (typing dots, no text yet) right before a tool
     // block is pure noise: the tool block itself is the progress indicator.
@@ -1510,10 +1517,12 @@ function onFrame(frame, turn) {
     deniedRow(data);
     turn.box = null;
   } else if (type === "ask") {
+    petState("waiting");
     if (turn.box) flushBox(turn);
     askCard(data.id, data.question, data.meta || {});
     turn.box = null;
   } else if (type === "done") {
+    turn.petTerminal = true; petState("done");
     const finalActivity = extractActivity(data.text || '', true);
     if (finalActivity.label && turn.activitySeen !== finalActivity.sequence) applyActivityLabel(finalActivity.label);
     if (!turn.box && finalActivity.text.trim() && !turn.hadText) ensureTurnBox(turn);
@@ -1547,12 +1556,15 @@ function onFrame(frame, turn) {
       drawSessions(sessionCache);
     }
   } else if (type === "ready") {
+    if (!turn.petTerminal) petState("done");
     if (data.session_id) sessionId = data.session_id;
     if (data.usage) paintBar(data.usage.contextPct ?? data.usage.pct ?? 0, data.usage.tokens || 0, data.usage.contextWindow || data.usage.limit || 0, data.usage.limit || 0, data.usage.contextEstimated);
     refreshSessions();
   } else if (type === "error") {
+    turn.petTerminal = true; petState("error");
     infoRow("❌ " + (data.message || "error"));
   } else if (type === "stopped") {
+    turn.petTerminal = true; petState("stopped");
     infoRow("Остановлено.");
   } else if (type === "info" && data.name === "context_trimmed") {
     infoRow("История ужата под окно.");
@@ -2478,6 +2490,7 @@ async function boot() {
   $("send").onclick = sendMessage;
   $("stop").onclick = async () => {
     try { await post("/api/stop"); } catch { /* already done */ }
+    petState("stopped");
     if (streamAbort) streamAbort.abort();
   };
   $("attach").onclick = attachFiles;
@@ -2576,6 +2589,151 @@ async function boot() {
   input.focus();
 }
 
+/* The optional companion receives only coarse state, never chat content. */
+let petSettings = {enabled:false, variant:'black'};
+let petQueue = Promise.resolve(), petLastState = '';
+let petSceneActive = false, petSceneTimer = 0, petSceneGeneration = 0, petIntroRunning = false, petAwaitChoice = false, petPressingClose = false;
+function petUpdate(data) {
+  petQueue = petQueue.catch(() => {}).then(async () => {
+    const result = await post('/api/pet', data);
+    petSettings = result;
+    return result;
+  });
+  return petQueue;
+}
+function petState(state) {
+  if (!petSettings.enabled || state === petLastState) return;
+  petLastState = state;
+  petUpdate({state}).catch(() => { petLastState = ''; });
+}
+function petSprite(node, variant) {
+  node.style.backgroundImage = `url("pet-portal-${variant}.png")`;
+}
+const petAnimations = new WeakMap();
+function animatePetFrames(node, order, ms = 140) {
+  const previous = petAnimations.get(node);
+  if (previous) { clearTimeout(previous.timer); previous.resolve(); }
+  let index = 0;
+  return new Promise(resolve => {
+    const animation = {timer: 0, resolve};
+    petAnimations.set(node, animation);
+    const advance = () => {
+      if (index >= order.length || !node.isConnected) {
+        if (petAnimations.get(node) === animation) petAnimations.delete(node);
+        resolve(); return;
+      }
+      const entry = order[index++];
+      const [frame, hold] = Array.isArray(entry) ? entry : [entry, ms];
+      node.style.backgroundPosition = `${frame * 100 / 47}% 50%`;
+      animation.timer = setTimeout(advance, hold);
+    };
+    advance();
+  });
+}
+async function petSceneOpen() {
+  if (!petSettings.enabled || petSceneActive) return;
+  petSceneActive = true;
+  document.querySelectorAll('.pet-away').forEach(card => card.classList.remove('pet-away'));
+  await petUpdate({scene:'settings'}).catch(() => {});
+  if (!petSceneActive || !petSettings.enabled || $('settings-back').classList.contains('hidden') || document.querySelector('[data-pane=pet]').classList.contains('hidden')) return;
+  clearInterval(petSceneTimer);
+  petSceneTimer = setInterval(() => { if (petSceneActive && petSettings.enabled) petUpdate({scene:'settings'}).catch(() => {}); }, 3000);
+  const stage = $('pet-stage'), sprite = stage.querySelector('.pet-stage-sprite');
+  const chosen = document.querySelector(`[data-pet="${petSettings.variant}"]`); if (chosen) chosen.append(stage);
+  stage.classList.remove('hidden'); petSprite(sprite, petSettings.variant);
+  if (!reduceMotion()) await animatePetFrames(sprite, [36,37,38,39,40,41,42,43,44,45,46,47], 95);
+}
+function petSceneClose(landing) {
+  petSceneGeneration++;
+  petSceneActive = false; clearInterval(petSceneTimer);
+  if (petSettings.enabled) petUpdate(landing ? {scene:'desktop', landing} : {scene:'desktop'}).catch(() => {});
+}
+function showPetPortal(x, y, delay = 0) {
+  const portal = document.createElement('img');
+  portal.className = 'pet-portal-effect'; portal.src = 'pet-portal-effect.png'; portal.alt = '';
+  portal.style.left = `${x}px`; portal.style.top = `${y}px`;
+  document.body.append(portal);
+  portal.animate([{opacity:0,transform:'scale(.35)'},{opacity:1,transform:'scale(1)',offset:.28},{opacity:1,transform:'scale(1)',offset:.55},{opacity:0,transform:'scale(.25)'}],
+    {delay,duration:1250,easing:'ease-in-out',fill:'both'}).finished.catch(()=>{}).finally(()=>portal.remove());
+}
+async function petIntro() {
+  if (petIntroRunning || reduceMotion()) return;
+  petIntroRunning = true;
+  const token = ++petSceneGeneration;
+  const stage = $('pet-stage'), sprite = stage.querySelector('.pet-stage-sprite');
+  const chosen = document.querySelector(`[data-pet="${petSettings.variant}"]`); if (chosen) chosen.append(stage);
+  stage.classList.remove('hidden'); petSprite(sprite, petSettings.variant);
+  // Give the wave, catch and aimed shot enough time to read.
+  await animatePetFrames(sprite, [[0,180],[1,170],[2,210],[1,160],[3,150],[4,170],[5,150],[6,150],[7,170],[8,150],[9,170],[10,220],[11,180]]);
+  if (token !== petSceneGeneration) { petIntroRunning = false; return; }
+  stage.classList.add('hidden');
+  if (chosen) chosen.classList.add('pet-away');
+  const close = $('set-close').getBoundingClientRect();
+  const traveler = document.createElement('div'); traveler.className = 'pet-traveler';
+  petSprite(traveler, petSettings.variant); traveler.style.backgroundPosition = `${12 * 100 / 47}% 50%`;
+  traveler.style.left = `${close.left - 80}px`; traveler.style.top = `${close.top - 25}px`;
+  document.body.append(traveler);
+  await traveler.animate([{opacity:0,transform:'translateY(-12px) scale(.7)'},{opacity:1,transform:'translateY(0) scale(1)'}],{duration:350,fill:'forwards'}).finished.catch(()=>{});
+  if (token !== petSceneGeneration) { traveler.remove(); petIntroRunning = false; return; }
+  await animatePetFrames(traveler,[[12,130],[13,130],[14,120],[15,130],[16,150],[17,160],[18,230]]);
+  if (token !== petSceneGeneration) { traveler.remove(); petIntroRunning = false; return; }
+  $('set-close').classList.add('pet-touch');
+  await new Promise(resolve => setTimeout(resolve, 120));
+  if (token !== petSceneGeneration) { $('set-close').classList.remove('pet-touch'); traveler.remove(); petIntroRunning = false; return; }
+  petPressingClose = true; $('set-close').click(); if (!$('settings-back').classList.contains('hidden')) closeSettings(); petPressingClose = false; $('set-close').classList.remove('pet-touch');
+  const composer = $('composer-bar').getBoundingClientRect();
+  const x = composer.left + Math.min(composer.width * .68, composer.width - 75), y = composer.top - 119;
+  // Finish leaving the window while its portal stays fixed at the edge.
+  await animatePetFrames(traveler,[19,20,21,22,23],130);
+  if (token !== petSceneGeneration) { traveler.remove(); petIntroRunning = false; return; }
+  const startX=close.left-80, startY=close.top-25, dx=x-startX, dy=y-startY;
+  showPetPortal(close.left-15, close.top-60);
+  // The second effect is a separate fixed element, not part of the moving sprite.
+  showPetPortal(startX+dx*.35+90, startY+dy*.35+15, 350);
+  // The arc is separate from the sprite frames and both portals stay in place.
+  await Promise.all([
+    animatePetFrames(traveler,[[24,120],[25,130],[26,140],[27,180],[28,150],[29,130],[30,130],[31,120],[32,140],[33,140],[34,140],[35,200]]),
+    traveler.animate([
+      {transform:'translate(0,0)'},
+      {transform:`translate(${dx*.37}px,${dy*.25-20}px)`,offset:.37},
+      {transform:`translate(${dx*.77}px,${dy*.76-8}px)`,offset:.77},
+      {transform:`translate(${dx}px,${dy}px)`}
+    ],{duration:1720,easing:'ease-in-out',fill:'forwards'}).finished.catch(()=>{})
+  ]);
+  traveler.remove();
+  if (token === petSceneGeneration) petSceneClose({x:Math.round(window.screenX+x), y:Math.round(window.screenY+y)});
+  petIntroRunning = false;
+}
+function drawPetSettings() {
+  $('pet-enabled').checked = !!petSettings.enabled;
+  $('pet-help').textContent = petSettings.enabled ? 'Перетаскивай пета мышью. Его состояние меняется вместе с работой BeeCode.' : 'Включи пета, чтобы выбрать внешний вид.';
+  document.querySelectorAll('[data-pet]').forEach(button => { button.disabled = !petSettings.enabled; button.setAttribute('aria-pressed', String(petSettings.enabled && button.dataset.pet === petSettings.variant)); });
+  const chosen = document.querySelector(`[data-pet="${petSettings.variant}"]`); if (chosen) chosen.append($('pet-stage'));
+  if (!petSettings.enabled) $('pet-stage').classList.add('hidden');
+}
+async function loadPetPane() {
+  try { petSettings = await api('/api/pet'); drawPetSettings(); await petSceneOpen(); }
+  catch (error) { $('pet-message').textContent = 'Не удалось загрузить настройки пета.'; }
+  $('pet-enabled').onchange = async event => {
+    const enabled = event.target.checked;
+    try { await petUpdate({enabled, state:'idle'}); petLastState = ''; $('pet-message').textContent = ''; if (enabled) { petAwaitChoice = true; await petSceneOpen(); $('pet-message').textContent = 'Выбери пета, чтобы познакомиться.'; } else { petAwaitChoice = false; petSceneClose(); } }
+    catch (error) { $('pet-message').textContent = String(error); }
+    drawPetSettings();
+  };
+  document.querySelectorAll('[data-pet]').forEach(button => button.onclick = async () => {
+    if (petIntroRunning) return;
+    try { await petUpdate({variant:button.dataset.pet}); $('pet-message').textContent = ''; const sprite=$('pet-stage').querySelector('.pet-stage-sprite'); petSprite(sprite,petSettings.variant); if (petAwaitChoice) { petAwaitChoice = false; petIntro(); } else if (petSettings.enabled && !reduceMotion()) animatePetFrames(sprite,[36,37,38,39,40,41,42,43,44,45,46,47],90); }
+    catch (error) { $('pet-message').textContent = String(error); }
+    drawPetSettings();
+  });
+}
+async function initPet() {
+  try {
+    petSettings = await api('/api/pet');
+    if (petSettings.enabled) await petUpdate({enabled:true, state:'idle'});
+  } catch (_) { /* BeeCode continues without the optional pet. */ }
+}
+
 /* ---------- settings ---------- */
 
 let providersCache = null;
@@ -2592,10 +2750,12 @@ function openSettings() {
 }
 
 function closeSettings() {
+  if (!petPressingClose) petSceneClose();
   $("settings-back").classList.add("hidden");
 }
 
 function switchTab(name) {
+  if (name !== "pet" && petSceneActive) petSceneClose();
   document.querySelectorAll(".set-tabs button").forEach((btn) => {
     btn.classList.toggle("on", btn.dataset.tab === name);
   });
@@ -2606,6 +2766,7 @@ function switchTab(name) {
       anime({ targets: pane, translateY: [10, 0], duration: 260, easing: "easeOutQuad" });
     }
   });
+  if (name === "pet") loadPetPane();
   if (name === "pool") loadPoolPane();
   if (name === "extensions") loadExtensions();
 }
@@ -3291,4 +3452,6 @@ async function paintFolderPane() {  try {
   }
 }
 
+window.addEventListener("pagehide", () => { if (petSceneActive) fetch("/api/pet", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scene:"desktop"}),keepalive:true}).catch(()=>{}); });
+initPet();
 boot();
